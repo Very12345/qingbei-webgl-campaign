@@ -35,5 +35,6 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
-/work/
+/work/*
+!/work/fetch-osm.mjs
 *.tsbuildinfo
