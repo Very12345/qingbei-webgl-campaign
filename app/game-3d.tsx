@@ -1198,14 +1198,36 @@ export default function Game3D() {
       });
     };
     const textureLoader = new THREE.TextureLoader(),
+      makeSealTexture = (file: string, fallbackText: string, color: string) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = color;
+        context.font = "900 310px Microsoft YaHei";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(fallbackText, 256, 270);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        textureLoader.load(
+          `${import.meta.env.BASE_URL}${file}`,
+          (loaded) => {
+            (texture as THREE.Texture).image = loaded.image;
+            texture.needsUpdate = true;
+          },
+          undefined,
+          () => {
+            texture.needsUpdate = true;
+          },
+        );
+        return texture;
+      },
       emblemTex = {
-        pku: textureLoader.load(`${import.meta.env.BASE_URL}pku-seal.svg`),
-        thu: textureLoader.load(`${import.meta.env.BASE_URL}thu-seal.svg`),
+        pku: makeSealTexture("pku-seal.png", "北", "#b40019"),
+        thu: makeSealTexture("thu-seal.png", "清", "#6f2c91"),
       };
-    emblemTex.pku.colorSpace = THREE.SRGBColorSpace;
-    emblemTex.thu.colorSpace = THREE.SRGBColorSpace;
-    emblemTex.pku.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    emblemTex.thu.anisotropy = renderer.capabilities.getMaxAnisotropy();
     const discCanvas = document.createElement("canvas");
     discCanvas.width = 256;
     discCanvas.height = 256;
