@@ -1,0 +1,5 @@
+.region-switch{position:absolute;z-index:20;left:20px;top:86px;display:flex;gap:7px;padding:6px;border:1px solid #e2c66e;border-radius:12px;background:#16221edd;backdrop-filter:blur(10px)}
+.region-switch button{border:0;border-radius:8px;padding:8px 12px;background:#ffffff0d;color:#e9eadf;cursor:pointer;font-weight:800}
+.region-switch button.active{background:#7c294f;color:#fff3bd;outline:2px solid #ebcf72}
+.command-notice{position:absolute;z-index:18;left:50%;top:86px;transform:translateX(-50%);padding:8px 13px;border:1px solid #e4cb77;border-radius:99px;background:#17231edb;color:#ffe39a;font-size:12px;font-weight:800;pointer-events:none;box-shadow:0 8px 22px #0005}
+@media(max-width:760px){.region-switch{left:8px;top:72px}.region-switch button{padding:6px 8px;font-size:11px}.command-notice{top:auto;bottom:64px;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
