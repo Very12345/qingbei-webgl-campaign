@@ -490,6 +490,7 @@ export default function Game3D() {
     sync: () => void;
     focus: (region: RegionId) => void;
     applyMaterials: (unitUrl: string | null, siteUrl: string | null) => void;
+    clearUnitSelection: () => void;
   } | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -498,6 +499,7 @@ export default function Game3D() {
   const autoDayRef = useRef(true);
   const [clock, setClock] = useState("8月16日 08:00");
   const [selected, setSelected] = useState<number | null>(null);
+  const [selectedUnitCount, setSelectedUnitCount] = useState(0);
   const [region, setRegion] = useState<RegionId>("main");
   const regionRef = useRef<RegionId>("main");
   const [notice, setNotice] = useState("拖动己方据点到目标即可下达命令");
@@ -1319,6 +1321,7 @@ export default function Game3D() {
     scene.add(combatGroup);
     const siteObjects = new Map<number, THREE.Group>();
     const unitObjects = new Map<number, THREE.Group>();
+    const selectedUnitIds = new Set<number>();
     let customSiteTexture: THREE.Texture | null = null,
       customUnitTexture: THREE.Texture | null = null,
       unitMaterialRequest = 0,
@@ -1566,6 +1569,8 @@ export default function Game3D() {
     ) => {
       if (source.destroyed || target.destroyed || source.team !== team)
         return 0;
+      if (target.team !== team && !gameRef.current.campaign.warUnlocked)
+        return 0;
       source.dispatchRatio ??=
         source.stance === "defend"
           ? 0.45
@@ -1612,6 +1617,7 @@ export default function Game3D() {
         unit.tz = targetZ + ((unit.id % 4) - 1.5) * 0.24;
       });
       rebuildCommandLines();
+      refreshRouteHighlights();
       return moving.length;
     };
     const labelTexture = (text: string, color: string) => {
@@ -1689,6 +1695,9 @@ export default function Game3D() {
           const g = new THREE.Group(),
             region = regionForX(site.x),
             isTarget = false,
+            isRouteTarget = gameRef.current.sites.some(
+              (source) => !source.destroyed && source.orderTarget === site.id,
+            ),
             teamColor = TEAM_COLOR[site.team];
           g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
           const outer = new THREE.Mesh(
@@ -1709,6 +1718,37 @@ export default function Game3D() {
           outer.position.y = 0.18;
           outer.renderOrder = 8;
           g.add(outer);
+          const routeHighlight = new THREE.Mesh(
+              new THREE.RingGeometry(1.12, 1.32, 44),
+              new THREE.MeshBasicMaterial({
+                color: 0xffe16d,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide,
+                depthTest: false,
+              }),
+            ),
+            hoverHighlight = new THREE.Mesh(
+              new THREE.RingGeometry(1.38, 1.55, 44),
+              new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.95,
+                side: THREE.DoubleSide,
+                depthTest: false,
+              }),
+            );
+          routeHighlight.rotation.x = -Math.PI / 2;
+          routeHighlight.position.y = 0.21;
+          routeHighlight.visible = isRouteTarget;
+          routeHighlight.renderOrder = 23;
+          hoverHighlight.rotation.x = -Math.PI / 2;
+          hoverHighlight.position.y = 0.23;
+          hoverHighlight.visible = false;
+          hoverHighlight.renderOrder = 24;
+          g.add(routeHighlight, hoverHighlight);
+          g.userData.routeHighlight = routeHighlight;
+          g.userData.hoverHighlight = hoverHighlight;
           const core = new THREE.Mesh(
             new THREE.CylinderGeometry(0.18, 0.25, 0.9, 12),
             new THREE.MeshStandardMaterial({
@@ -1805,6 +1845,19 @@ export default function Game3D() {
           siteObjects.set(site.id, g);
         });
     };
+    const refreshRouteHighlights = () => {
+      const targets = new Set(
+        gameRef.current.sites
+          .filter((source) => !source.destroyed && source.orderTarget != null)
+          .map((source) => source.orderTarget as number),
+      );
+      siteObjects.forEach((object, id) => {
+        const highlight = object.userData.routeHighlight as
+          | THREE.Mesh
+          | undefined;
+        if (highlight) highlight.visible = targets.has(id);
+      });
+    };
     const textureLoader = new THREE.TextureLoader(),
       makeBallTexture = (
         file: string,
@@ -1878,6 +1931,7 @@ export default function Game3D() {
       unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
       unitHandGeometry = new THREE.SphereGeometry(0.09, 8, 6),
       unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 28),
+      unitSelectionGeometry = new THREE.RingGeometry(0.91, 1.04, 32),
       unitBodyMaterials = {
         pku: new THREE.MeshStandardMaterial({
           color: 0xffffff,
@@ -1914,12 +1968,20 @@ export default function Game3D() {
           side: THREE.DoubleSide,
         }),
       },
+      unitSelectionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffdf63,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+        depthTest: false,
+      }),
       sharedUnitGeometries = new Set<THREE.BufferGeometry>([
         hpGeometry,
         unitBodyGeometry,
         unitLimbGeometry,
         unitHandGeometry,
         unitGlowGeometry,
+        unitSelectionGeometry,
       ]),
       sharedUnitMaterials = new Set<THREE.Material>([
         hpBackMaterial,
@@ -1930,6 +1992,7 @@ export default function Game3D() {
         unitLimbMaterial,
         unitGlowMaterials.pku,
         unitGlowMaterials.thu,
+        unitSelectionMaterial,
       ]);
     const disposeUnitObject = (object: THREE.Object3D) => {
       const geometries = new Set<THREE.BufferGeometry>(),
@@ -1997,6 +2060,15 @@ export default function Game3D() {
         glow.rotation.x = -Math.PI / 2;
         glow.position.y = 0.05;
         g.add(glow);
+        const selectionRing = new THREE.Mesh(
+          unitSelectionGeometry,
+          unitSelectionMaterial,
+        );
+        selectionRing.rotation.x = -Math.PI / 2;
+        selectionRing.position.y = 0.075;
+        selectionRing.visible = selectedUnitIds.has(u.id);
+        selectionRing.renderOrder = 45;
+        g.add(selectionRing);
         const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
           hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
         hpBack.scale.set(0.78, 1, 1);
@@ -2009,6 +2081,7 @@ export default function Game3D() {
         hpFill.visible = false;
         g.add(hpBack, hpFill);
         g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
+        g.scale.setScalar(0.72);
         g.userData = {
           unitId: u.id,
           arms,
@@ -2017,11 +2090,19 @@ export default function Game3D() {
           glow,
           hpBack,
           hpFill,
+          selectionRing,
           fightingUntil: 0,
         };
         unitGroup.add(g);
         unitObjects.set(u.id, g);
       });
+    };
+    const refreshUnitSelection = () => {
+      unitObjects.forEach((object, id) => {
+        const ring = object.userData.selectionRing as THREE.Mesh | undefined;
+        if (ring) ring.visible = selectedUnitIds.has(id);
+      });
+      setSelectedUnitCount(selectedUnitIds.size);
     };
     const applyMaterials = (unitUrl: string | null, siteUrl: string | null) => {
       const unitRequest = ++unitMaterialRequest,
@@ -2198,7 +2279,12 @@ export default function Game3D() {
       });
     const ray = new THREE.Raycaster(),
       mouse = new THREE.Vector2();
-    let down: { x: number; y: number; site?: number } | null = null,
+    let down: {
+        x: number;
+        y: number;
+        site?: number;
+        selection?: boolean;
+      } | null = null,
       previewLine: THREE.Object3D | null = null;
     const setRay = (ev: MouseEvent) => {
       const r = renderer.domElement.getBoundingClientRect();
@@ -2206,12 +2292,12 @@ export default function Game3D() {
       mouse.y = (-(ev.clientY - r.top) / r.height) * 2 + 1;
       ray.setFromCamera(mouse, camera);
     };
-    const hitSite = (ev: PointerEvent) => {
+    const hitSite = (ev: MouseEvent) => {
       setRay(ev);
       const hit = ray.intersectObjects(buildingGroup.children, true)[0];
       return hit?.object.userData.siteId as number | undefined;
     };
-    const groundAt = (ev: PointerEvent) => {
+    const groundAt = (ev: MouseEvent) => {
       setRay(ev);
       return ray.intersectObjects(terrainMeshes, false)[0]?.point ?? null;
     };
@@ -2277,27 +2363,75 @@ export default function Game3D() {
       setNotice("临时营地已建立；敌军攻克后会直接拆除");
       return true;
     };
+    const selectedCentroid = () => {
+      const units = gameRef.current.units.filter((unit) =>
+        selectedUnitIds.has(unit.id),
+      );
+      if (!units.length) return null;
+      return new THREE.Vector3(
+        units.reduce((sum, unit) => sum + unit.x, 0) / units.length,
+        1.35,
+        units.reduce((sum, unit) => sum + unit.z, 0) / units.length,
+      );
+    };
+    let hoveredSiteId: number | null = null;
+    const setHoveredSite = (siteId: number | null) => {
+      if (hoveredSiteId != null) {
+        const previous = siteObjects.get(hoveredSiteId)?.userData
+          .hoverHighlight as THREE.Mesh | undefined;
+        if (previous) previous.visible = false;
+      }
+      hoveredSiteId = siteId;
+      if (siteId != null) {
+        const next = siteObjects.get(siteId)?.userData.hoverHighlight as
+          | THREE.Mesh
+          | undefined;
+        if (next) next.visible = true;
+      }
+    };
     renderer.domElement.addEventListener("pointerdown", (e) => {
-      const site = hitSite(e);
-      down = { x: e.clientX, y: e.clientY, site };
-      if (site != null) {
+      const site = hitSite(e),
+        point = site == null ? groundAt(e) : null,
+        selection =
+          !campModeRef.current &&
+          !!point &&
+          [...selectedUnitIds].some((id) => {
+            const unit = gameRef.current.units.find(
+              (candidate) => candidate.id === id,
+            );
+            return !!unit && Math.hypot(unit.x - point.x, unit.z - point.z) < 3;
+          });
+      down = { x: e.clientX, y: e.clientY, site, selection };
+      if (site != null || selection) {
         controls.enabled = false;
         renderer.domElement.setPointerCapture(e.pointerId);
       }
     });
     renderer.domElement.addEventListener("pointermove", (e) => {
-      if (
-        down?.site == null ||
-        Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8
-      )
+      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8)
         return;
-      const p = groundAt(e),
-        s = gameRef.current.sites[down.site];
-      if (!p || !s) return;
+      const p = groundAt(e);
+      if (!p) return;
       if (previewLine) {
         commandGroup.remove(previewLine);
         disposeCommandObject(previewLine);
       }
+      if (down.selection) {
+        setHoveredSite(null);
+        const center = selectedCentroid();
+        if (!center) return;
+        previewLine = addCommandLine(
+          center,
+          new THREE.Vector3(p.x, 1.35, p.z),
+          true,
+        );
+        return;
+      }
+      if (down.site == null) return;
+      const s = gameRef.current.sites[down.site];
+      if (!s) return;
+      const hovered = hitSite(e);
+      setHoveredSite(hovered != null && hovered !== down.site ? hovered : null);
       previewLine = addCommandLine(
         new THREE.Vector3(s.x, 1.2, s.z),
         new THREE.Vector3(p.x, 1.2, p.z),
@@ -2314,8 +2448,33 @@ export default function Game3D() {
         disposeCommandObject(previewLine);
         previewLine = null;
       }
+      setHoveredSite(null);
       const end = hitSite(e),
         moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8;
+      if (moved && down.selection) {
+        const point = groundAt(e),
+          center = selectedCentroid();
+        if (point && center) {
+          const path = findPath(center.x, center.z, point.x, point.z);
+          if (path.length) {
+            const destination = path.at(-1)!;
+            gameRef.current.units
+              .filter(
+                (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+              )
+              .forEach((unit, index) => {
+                unit.targetSiteId = undefined;
+                unit.path = path;
+                unit.pathIndex = 0;
+                unit.tx = destination[0] + ((index % 5) - 2) * 0.18;
+                unit.tz = destination[1] + ((index % 4) - 1.5) * 0.18;
+              });
+            setNotice(`已调动 ${selectedUnitIds.size} 名北大学生`);
+          } else setNotice("目标位置无法到达，调兵命令未执行");
+        }
+        down = null;
+        return;
+      }
       if (campModeRef.current && !moved && down.site == null) {
         const point = groundAt(e);
         if (point) buildCampAt(point);
@@ -2331,6 +2490,11 @@ export default function Game3D() {
         const source = gameRef.current.sites[down.site],
           target = gameRef.current.sites[end];
         if (source.team === "pku") {
+          if (target.team !== "pku" && !gameRef.current.campaign.warUnlocked) {
+            setNotice("8月19日前尚未开放交战：可以自由调兵或增援友方据点");
+            down = null;
+            return;
+          }
           const troops = issueOrder("pku", source, target);
           setNotice(
             troops
@@ -2350,6 +2514,7 @@ export default function Game3D() {
         disposeCommandObject(previewLine);
         previewLine = null;
       }
+      setHoveredSite(null);
       down = null;
     });
     renderer.domElement.addEventListener("dblclick", (e) => {
@@ -2358,22 +2523,42 @@ export default function Game3D() {
           .intersectObjects(commandGroup.children, true)
           .find((item) => item.object.userData.commandSourceId != null),
         sourceId = hit?.object.userData.commandSourceId as number | undefined;
-      if (sourceId == null) return;
-      const source = gameRef.current.sites[sourceId];
-      if (!source) return;
-      source.orderTarget = undefined;
-      source.orderPath = undefined;
-      gameRef.current.units
-        .filter((unit) => unit.siteId === sourceId)
-        .forEach((unit) => {
-          unit.targetSiteId = undefined;
-          unit.path = undefined;
-          unit.pathIndex = undefined;
-          unit.tx = unit.x;
-          unit.tz = unit.z;
-        });
-      rebuildCommandLines();
-      setNotice(`已取消 ${source.name} 的行军命令`);
+      if (sourceId != null) {
+        const source = gameRef.current.sites[sourceId];
+        if (!source) return;
+        source.orderTarget = undefined;
+        source.orderPath = undefined;
+        gameRef.current.units
+          .filter((unit) => unit.siteId === sourceId)
+          .forEach((unit) => {
+            unit.targetSiteId = undefined;
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+            unit.tx = unit.x;
+            unit.tz = unit.z;
+          });
+        rebuildCommandLines();
+        rebuildBuildings();
+        setNotice(`已取消 ${source.displayName ?? source.name} 的持续兵线`);
+        return;
+      }
+      const point = groundAt(e);
+      selectedUnitIds.clear();
+      if (point)
+        gameRef.current.units
+          .filter(
+            (unit) =>
+              unit.team === "pku" &&
+              Math.hypot(unit.x - point.x, unit.z - point.z) < 2.6,
+          )
+          .forEach((unit) => selectedUnitIds.add(unit.id));
+      refreshUnitSelection();
+      setSelected(null);
+      setNotice(
+        selectedUnitIds.size
+          ? `已选中附近 ${selectedUnitIds.size} 名北大学生；从金色选区拖向目标即可调兵`
+          : "附近没有可选中的北大学生",
+      );
     });
     const fireEvent = (id: keyof typeof EVENT_CARDS, apply?: () => void) => {
         const campaign = gameRef.current.campaign;
@@ -2574,8 +2759,10 @@ export default function Game3D() {
             disposeUnitObject(mesh);
           }
           unitObjects.delete(unit.id);
+          selectedUnitIds.delete(unit.id);
         }
         g.units = g.units.filter((unit) => !dead.has(unit.id));
+        refreshUnitSelection();
         rebuildCommandLines();
       }
       for (const site of g.sites) {
@@ -3173,6 +3360,10 @@ export default function Game3D() {
         controls.update();
       },
       applyMaterials,
+      clearUnitSelection: () => {
+        selectedUnitIds.clear();
+        refreshUnitSelection();
+      },
     };
     applyMaterials(
       customMaterialsRef.current.unit,
@@ -3299,6 +3490,7 @@ export default function Game3D() {
       gameRef.current = fresh;
     }
     sceneApi.current?.sync();
+    sceneApi.current?.clearUnitSelection();
     setSelected(null);
     setSaveOpen(false);
     eventQueueRef.current = [];
@@ -3312,6 +3504,7 @@ export default function Game3D() {
   const newGame = () => {
     gameRef.current = makeFreshGame();
     sceneApi.current?.sync();
+    sceneApi.current?.clearUnitSelection();
     setSelected(null);
     eventQueueRef.current = [];
     setActiveEvent(null);
@@ -3421,6 +3614,9 @@ export default function Game3D() {
           ⛺ 建立临时据点
         </button>
         <button onClick={() => setAssetOpen(true)}>🖼 更换材质</button>
+        {selectedUnitCount > 0 && (
+          <span className="selected-squad">◎ 已选 {selectedUnitCount} 人</span>
+        )}
       </nav>
       <div className="command-notice">{notice}</div>
       <aside className="war-overview">

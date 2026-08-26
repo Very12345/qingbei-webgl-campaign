@@ -95,6 +95,15 @@
   color: #fff3bd;
   outline: 2px solid #ebcf72;
 }
+.selected-squad {
+  align-self: center;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: #a77a24;
+  color: #fff8cf;
+  font-size: 11px;
+  font-weight: 900;
+}
 @media (max-width: 760px) {
   .region-switch {
     left: 8px;
