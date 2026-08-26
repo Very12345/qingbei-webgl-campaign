@@ -1,128 +1,2254 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { osmRegions } from '../src/osm-map-data';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { osmRegions } from "../src/osm-map-data";
 
-type Team = 'pku' | 'thu';
-type Stance = 'defend' | 'guard' | 'standby';
-type RegionId = 'main' | 'newYanyuan' | 'medical' | 'wanliu';
-type SiteKind = 'dorm' | 'teaching' | 'gate' | 'target';
-type SiteState = { id: number; name: string; team: Team; x: number; z: number; type: SiteKind; stance: Stance; supply: number; orderTarget?: number; osmKey?: string };
-type UnitState = { id: number; team: Team; x: number; z: number; tx: number; tz: number; hp: number; supply: number; siteId: number; targetSiteId?: number };
-type GameData = { timeOfDay: number; resources: Record<Team, number>; deaths: Record<Team, number>; sites: SiteState[]; units: UnitState[] };
+type Team = "pku" | "thu";
+type Stance = "defend" | "guard" | "standby";
+type RegionId = "main" | "newYanyuan" | "medical" | "wanliu";
+type SiteKind = "dorm" | "teaching" | "gate" | "target";
+type SiteState = {
+  id: number;
+  name: string;
+  team: Team;
+  x: number;
+  z: number;
+  type: SiteKind;
+  stance: Stance;
+  supply: number;
+  orderTarget?: number;
+  osmKey?: string;
+};
+type UnitState = {
+  id: number;
+  team: Team;
+  x: number;
+  z: number;
+  tx: number;
+  tz: number;
+  hp: number;
+  supply: number;
+  siteId: number;
+  targetSiteId?: number;
+};
+type GameData = {
+  timeOfDay: number;
+  resources: Record<Team, number>;
+  deaths: Record<Team, number>;
+  sites: SiteState[];
+  units: UnitState[];
+};
 type Snapshot = GameData & { version: 1 | 2; name: string; savedAt: number };
 
-const SAVE_KEY = 'qingbei-webgl-saves-v1';
+const SAVE_KEY = "qingbei-webgl-saves-v1";
 const TEAM_COLOR: Record<Team, number> = { pku: 0xa20d27, thu: 0x6f3291 };
 
-const seeds: Omit<SiteState, 'id' | 'stance' | 'supply'>[] = [
-  { name:'北大西门',team:'pku',x:-43,z:26,type:'gate' },{ name:'北大东门',team:'pku',x:-20.8,z:17.2,type:'gate' },{ name:'北京大学图书馆',team:'pku',x:-19,z:19,type:'teaching' },{ name:'博雅塔',team:'pku',x:-25,z:7,type:'teaching' },
-  { name:'北京大学化学学院A区',team:'pku',x:-17.19,z:19.64,type:'teaching' },{ name:'北京大学加速器楼',team:'pku',x:-11.76,z:15.71,type:'teaching' },{ name:'北京大学工学大楼',team:'pku',x:-7.5,z:18.1,type:'teaching' },{ name:'北京大学物理学院',team:'pku',x:-4.1,z:21.4,type:'teaching' },{ name:'北京大学技物楼',team:'pku',x:-1.54,z:20.57,type:'teaching' },
-  { name:'百周年纪念讲堂',team:'pku',x:-12,z:27,type:'teaching' },{ name:'北京国际数学研究中心',team:'pku',x:-35,z:5,type:'teaching' },{ name:'文博楼',team:'pku',x:-41,z:8,type:'teaching' },{ name:'生物技术楼',team:'pku',x:-36,z:12,type:'teaching' },
-  { name:'李兆基人文学苑',team:'pku',x:-30,z:11,type:'teaching' },{ name:'经济学院',team:'pku',x:-23,z:12,type:'teaching' },{ name:'政府管理大楼',team:'pku',x:-23.29,z:10.31,type:'teaching' },{ name:'理科一号楼',team:'pku',x:-16,z:18,type:'teaching' },
-  { name:'理科二号楼',team:'pku',x:-12,z:18,type:'teaching' },{ name:'理科三号楼',team:'pku',x:-8,z:18,type:'teaching' },{ name:'第一教学楼',team:'pku',x:-22,z:25,type:'teaching' },{ name:'第二教学楼',team:'pku',x:-17,z:24,type:'teaching' },
-  { name:'燕园28楼',team:'pku',x:-39,z:30,type:'dorm' },{ name:'燕园29楼',team:'pku',x:-34,z:30,type:'dorm' },{ name:'燕园30楼',team:'pku',x:-29,z:31,type:'dorm' },{ name:'燕园31楼',team:'pku',x:-24,z:32,type:'dorm' },{ name:'燕园34A、34B楼',team:'pku',x:-18,z:33,type:'dorm' },
-  { name:'北京大学畅春园',team:'pku',x:-45.13,z:13.85,type:'dorm' },{ name:'北京大学畅春新园',team:'pku',x:-44.24,z:17.9,type:'dorm' },{ name:'北京大学蔚秀园',team:'pku',x:-46.49,z:10.2,type:'dorm' },{ name:'北京大学承泽园',team:'pku',x:-54.9,z:13.84,type:'teaching' },
-  { name:'北京大学中关园',team:'pku',x:-20.8,z:21.75,type:'dorm' },{ name:'北京大学燕东园',team:'pku',x:-18,z:10,type:'teaching' },{ name:'北京大学朗润园',team:'pku',x:-32,z:5.7,type:'teaching' },
-  { name:'清华西门',team:'thu',x:-21.5,z:6.9,type:'gate' },{ name:'二校门',team:'thu',x:10,z:1,type:'gate' },{ name:'清华学堂',team:'thu',x:16,z:-5,type:'teaching' },{ name:'大礼堂',team:'thu',x:22,z:-8,type:'teaching' },
-  { name:'老图书馆',team:'thu',x:17,z:1,type:'teaching' },{ name:'科学馆',team:'thu',x:12,z:8,type:'teaching' },{ name:'主楼',team:'thu',x:31,z:3,type:'teaching' },{ name:'六教',team:'thu',x:23,z:13,type:'teaching' },
-  { name:'新清华学堂',team:'thu',x:28,z:11,type:'teaching' },{ name:'艺术博物馆',team:'thu',x:38,z:14,type:'teaching' },{ name:'综合体育馆',team:'thu',x:25,z:-20,type:'teaching' },{ name:'校医院',team:'thu',x:8,z:15,type:'teaching' },
-  { name:'紫荆1号楼',team:'thu',x:30,z:-24,type:'dorm' },{ name:'紫荆2号楼',team:'thu',x:35,z:-24,type:'dorm' },{ name:'紫荆3号楼',team:'thu',x:40,z:-23,type:'dorm' },{ name:'紫荆6号楼',team:'thu',x:29,z:-29,type:'dorm' },{ name:'紫荆9号楼',team:'thu',x:36,z:-29,type:'dorm' },{ name:'求真书院',team:'thu',x:43,z:-29,type:'target' },
-  { name:'清华南门',team:'thu',x:22,z:26,type:'gate' },{ name:'清华东南门',team:'thu',x:45,z:22,type:'gate' },
-  { name:'清华荷清苑',team:'thu',x:3.47,z:-25.7,type:'dorm' },{ name:'清华双清园',team:'thu',x:26.5,z:-18.2,type:'dorm' },
-  { name:'新燕园北门',team:'pku',x:145,z:-16,type:'gate' },{ name:'新燕园教学楼',team:'pku',x:144,z:0,type:'teaching' },
-  { name:'新燕园计算机学院',team:'pku',x:137,z:-4,type:'teaching' },{ name:'新燕园集成电路学院',team:'pku',x:153,z:-4,type:'teaching' },
-  { name:'新燕园材料学院',team:'pku',x:157,z:4,type:'teaching' },{ name:'新燕园学生公寓',team:'pku',x:135,z:9,type:'dorm' },
-  { name:'新燕园馨园食堂',team:'pku',x:147,z:10,type:'teaching' },
-  { name:'北大医学部南门',team:'pku',x:215,z:12,type:'gate' },{ name:'医学部逸夫教学楼',team:'pku',x:215.88,z:-.68,type:'teaching' },{ name:'医学图书馆',team:'pku',x:211.88,z:-1.09,type:'teaching' },
-  { name:'医学科技楼',team:'pku',x:203.92,z:-6.82,type:'teaching' },{ name:'药学楼',team:'pku',x:211.98,z:1.43,type:'teaching' },{ name:'生化楼',team:'pku',x:210.68,z:-5.96,type:'teaching' },
-  { name:'医学部研究生宿舍',team:'pku',x:205.68,z:6.48,type:'dorm' },{ name:'医学部学生公寓',team:'pku',x:216.13,z:-5.14,type:'dorm' },{ name:'医学部体育馆',team:'pku',x:224.95,z:-3.53,type:'teaching' },
-  { name:'万柳学区西门',team:'pku',x:258,z:0,type:'gate' },{ name:'万柳公寓一区',team:'pku',x:270,z:-4,type:'dorm' },{ name:'万柳公寓二区',team:'pku',x:274,z:-4,type:'dorm' },{ name:'万柳公寓三区',team:'pku',x:278,z:-4,type:'dorm' },
-  { name:'万柳公寓四区',team:'pku',x:270,z:3,type:'teaching' },{ name:'万柳公寓五区',team:'pku',x:275,z:3,type:'teaching' },{ name:'万柳公寓六区',team:'pku',x:280,z:3,type:'teaching' },
+const seeds: Omit<SiteState, "id" | "stance" | "supply">[] = [
+  { name: "北大西门", team: "pku", x: -43, z: 26, type: "gate" },
+  { name: "北大东门", team: "pku", x: -20.8, z: 17.2, type: "gate" },
+  { name: "北京大学图书馆", team: "pku", x: -19, z: 19, type: "teaching" },
+  { name: "博雅塔", team: "pku", x: -25, z: 7, type: "teaching" },
+  {
+    name: "北京大学化学学院A区",
+    team: "pku",
+    x: -17.19,
+    z: 19.64,
+    type: "teaching",
+  },
+  {
+    name: "北京大学加速器楼",
+    team: "pku",
+    x: -11.76,
+    z: 15.71,
+    type: "teaching",
+  },
+  { name: "北京大学工学大楼", team: "pku", x: -7.5, z: 18.1, type: "teaching" },
+  { name: "北京大学物理学院", team: "pku", x: -4.1, z: 21.4, type: "teaching" },
+  { name: "北京大学技物楼", team: "pku", x: -1.54, z: 20.57, type: "teaching" },
+  { name: "百周年纪念讲堂", team: "pku", x: -12, z: 27, type: "teaching" },
+  { name: "北京国际数学研究中心", team: "pku", x: -35, z: 5, type: "teaching" },
+  { name: "文博楼", team: "pku", x: -41, z: 8, type: "teaching" },
+  { name: "生物技术楼", team: "pku", x: -36, z: 12, type: "teaching" },
+  { name: "李兆基人文学苑", team: "pku", x: -30, z: 11, type: "teaching" },
+  { name: "经济学院", team: "pku", x: -23, z: 12, type: "teaching" },
+  { name: "政府管理大楼", team: "pku", x: -23.29, z: 10.31, type: "teaching" },
+  { name: "理科一号楼", team: "pku", x: -16, z: 18, type: "teaching" },
+  { name: "理科二号楼", team: "pku", x: -12, z: 18, type: "teaching" },
+  { name: "理科三号楼", team: "pku", x: -8, z: 18, type: "teaching" },
+  { name: "第一教学楼", team: "pku", x: -22, z: 25, type: "teaching" },
+  { name: "第二教学楼", team: "pku", x: -17, z: 24, type: "teaching" },
+  { name: "燕园28楼", team: "pku", x: -39, z: 30, type: "dorm" },
+  { name: "燕园29楼", team: "pku", x: -34, z: 30, type: "dorm" },
+  { name: "燕园30楼", team: "pku", x: -29, z: 31, type: "dorm" },
+  { name: "燕园31楼", team: "pku", x: -24, z: 32, type: "dorm" },
+  { name: "燕园34A、34B楼", team: "pku", x: -18, z: 33, type: "dorm" },
+  { name: "北京大学畅春园", team: "pku", x: -45.13, z: 13.85, type: "dorm" },
+  { name: "北京大学畅春新园", team: "pku", x: -44.24, z: 17.9, type: "dorm" },
+  { name: "北京大学蔚秀园", team: "pku", x: -46.49, z: 10.2, type: "dorm" },
+  { name: "北京大学承泽园", team: "pku", x: -54.9, z: 13.84, type: "teaching" },
+  { name: "北京大学中关园", team: "pku", x: -20.8, z: 21.75, type: "dorm" },
+  { name: "北京大学燕东园", team: "pku", x: -18, z: 10, type: "teaching" },
+  { name: "北京大学朗润园", team: "pku", x: -32, z: 5.7, type: "teaching" },
+  { name: "清华西门", team: "thu", x: -21.5, z: 6.9, type: "gate" },
+  { name: "二校门", team: "thu", x: 10, z: 1, type: "gate" },
+  { name: "清华学堂", team: "thu", x: 16, z: -5, type: "teaching" },
+  { name: "大礼堂", team: "thu", x: 22, z: -8, type: "teaching" },
+  { name: "老图书馆", team: "thu", x: 17, z: 1, type: "teaching" },
+  { name: "科学馆", team: "thu", x: 12, z: 8, type: "teaching" },
+  { name: "主楼", team: "thu", x: 31, z: 3, type: "teaching" },
+  { name: "六教", team: "thu", x: 23, z: 13, type: "teaching" },
+  { name: "新清华学堂", team: "thu", x: 28, z: 11, type: "teaching" },
+  { name: "艺术博物馆", team: "thu", x: 38, z: 14, type: "teaching" },
+  { name: "综合体育馆", team: "thu", x: 25, z: -20, type: "teaching" },
+  { name: "校医院", team: "thu", x: 8, z: 15, type: "teaching" },
+  { name: "紫荆1号楼", team: "thu", x: 30, z: -24, type: "dorm" },
+  { name: "紫荆2号楼", team: "thu", x: 35, z: -24, type: "dorm" },
+  { name: "紫荆3号楼", team: "thu", x: 40, z: -23, type: "dorm" },
+  { name: "紫荆6号楼", team: "thu", x: 29, z: -29, type: "dorm" },
+  { name: "紫荆9号楼", team: "thu", x: 36, z: -29, type: "dorm" },
+  { name: "求真书院", team: "thu", x: 43, z: -29, type: "target" },
+  { name: "清华南门", team: "thu", x: 22, z: 26, type: "gate" },
+  { name: "清华东南门", team: "thu", x: 45, z: 22, type: "gate" },
+  { name: "清华荷清苑", team: "thu", x: 3.47, z: -25.7, type: "dorm" },
+  { name: "清华双清园", team: "thu", x: 26.5, z: -18.2, type: "dorm" },
+  { name: "新燕园北门", team: "pku", x: 145, z: -16, type: "gate" },
+  { name: "新燕园教学楼", team: "pku", x: 144, z: 0, type: "teaching" },
+  { name: "新燕园计算机学院", team: "pku", x: 137, z: -4, type: "teaching" },
+  { name: "新燕园集成电路学院", team: "pku", x: 153, z: -4, type: "teaching" },
+  { name: "新燕园材料学院", team: "pku", x: 157, z: 4, type: "teaching" },
+  { name: "新燕园学生公寓", team: "pku", x: 135, z: 9, type: "dorm" },
+  { name: "新燕园馨园食堂", team: "pku", x: 147, z: 10, type: "teaching" },
+  { name: "北大医学部南门", team: "pku", x: 215, z: 12, type: "gate" },
+  {
+    name: "医学部逸夫教学楼",
+    team: "pku",
+    x: 215.88,
+    z: -0.68,
+    type: "teaching",
+  },
+  { name: "医学图书馆", team: "pku", x: 211.88, z: -1.09, type: "teaching" },
+  { name: "医学科技楼", team: "pku", x: 203.92, z: -6.82, type: "teaching" },
+  { name: "药学楼", team: "pku", x: 211.98, z: 1.43, type: "teaching" },
+  { name: "生化楼", team: "pku", x: 210.68, z: -5.96, type: "teaching" },
+  { name: "医学部研究生宿舍", team: "pku", x: 205.68, z: 6.48, type: "dorm" },
+  { name: "医学部学生公寓", team: "pku", x: 216.13, z: -5.14, type: "dorm" },
+  { name: "医学部体育馆", team: "pku", x: 224.95, z: -3.53, type: "teaching" },
+  { name: "万柳学区西门", team: "pku", x: 258, z: 0, type: "gate" },
+  { name: "万柳公寓一区", team: "pku", x: 270, z: -4, type: "dorm" },
+  { name: "万柳公寓二区", team: "pku", x: 274, z: -4, type: "dorm" },
+  { name: "万柳公寓三区", team: "pku", x: 278, z: -4, type: "dorm" },
+  { name: "万柳公寓四区", team: "pku", x: 270, z: 3, type: "teaching" },
+  { name: "万柳公寓五区", team: "pku", x: 275, z: 3, type: "teaching" },
+  { name: "万柳公寓六区", team: "pku", x: 280, z: 3, type: "teaching" },
 ];
 
-const osmAliases:Record<string,string[]>={
-  '北大西门':['北大西门'],'北京大学加速器楼':['北京大学-加速器楼'],'北京大学工学大楼':['新奥工学大楼'],'北京大学物理学院':['物理学院楼'],'政府管理大楼':['政府管理学院（廖凯原楼）'],
-  '理科二号楼':['理科二号楼（逸夫苑）'],'理科三号楼':['理科三号楼（曙东楼）'],'经济学院':['经济学院（孝义金晖楼）'],'燕园28楼':['28楼'],'燕园29楼':['29楼'],'燕园30楼':['30楼'],'燕园31楼':['31楼'],'燕园34A、34B楼':['34A、34B楼'],
-  '第二教学楼':['第二教学楼（李兆基楼）'],
-  '北京大学朗润园':['北京大学朗润园居住区'],'北京大学中关园':['北京大学中关园北区','北京大学中关园南区'],'老图书馆':['老馆'],'主楼':['中央主楼'],'六教':['第六教学楼A区'],'艺术博物馆':['清华大学艺术博物馆'],'校医院':['清华大学校医院'],
-  '紫荆1号楼':['紫荆学生公寓1号楼'],'紫荆2号楼':['紫荆学生公寓2号楼'],'紫荆3号楼':['紫荆学生公寓3号楼'],'紫荆6号楼':['紫荆学生公寓6号楼'],'紫荆9号楼':['紫荆学生公寓9号楼'],'求真书院':['清华大学求真书院'],'清华荷清苑':['荷清苑教师住宅区'],
-  '清华双清园':['清华大学双清园'],'新燕园教学楼':['公共教学楼'],'新燕园计算机学院':['计算机学院'],'新燕园集成电路学院':['集成电路学院'],'新燕园材料学院':['材料科学与工程学院'],'新燕园学生公寓':['学生公寓1号楼'],'新燕园馨园食堂':['馨园食堂'],
-  '医学部逸夫教学楼':['逸夫教学楼'],'医学部研究生宿舍':['研究生宿舍'],'医学部学生公寓':['学生公寓2号楼'],'万柳公寓一区':['北京大学万柳公寓一区'],'万柳公寓二区':['北京大学万柳公寓二区'],'万柳公寓三区':['北京大学万柳公寓三区'],'万柳公寓四区':['北京大学万柳公寓四区'],'万柳公寓五区':['北京大学万柳公寓五区'],'万柳公寓六区':['北京大学万柳公寓六区'],
+const osmAliases: Record<string, string[]> = {
+  北大西门: ["北大西门"],
+  北京大学加速器楼: ["北京大学-加速器楼"],
+  北京大学工学大楼: ["新奥工学大楼"],
+  北京大学物理学院: ["物理学院楼"],
+  政府管理大楼: ["政府管理学院（廖凯原楼）"],
+  理科二号楼: ["理科二号楼（逸夫苑）"],
+  理科三号楼: ["理科三号楼（曙东楼）"],
+  经济学院: ["经济学院（孝义金晖楼）"],
+  燕园28楼: ["28楼"],
+  燕园29楼: ["29楼"],
+  燕园30楼: ["30楼"],
+  燕园31楼: ["31楼"],
+  "燕园34A、34B楼": ["34A、34B楼"],
+  第二教学楼: ["第二教学楼（李兆基楼）"],
+  北京大学朗润园: ["北京大学朗润园居住区"],
+  北京大学中关园: ["北京大学中关园北区", "北京大学中关园南区"],
+  老图书馆: ["老馆"],
+  主楼: ["中央主楼"],
+  六教: ["第六教学楼A区"],
+  艺术博物馆: ["清华大学艺术博物馆"],
+  校医院: ["清华大学校医院"],
+  紫荆1号楼: ["紫荆学生公寓1号楼"],
+  紫荆2号楼: ["紫荆学生公寓2号楼"],
+  紫荆3号楼: ["紫荆学生公寓3号楼"],
+  紫荆6号楼: ["紫荆学生公寓6号楼"],
+  紫荆9号楼: ["紫荆学生公寓9号楼"],
+  求真书院: ["清华大学求真书院"],
+  清华荷清苑: ["荷清苑教师住宅区"],
+  清华双清园: ["清华大学双清园"],
+  新燕园教学楼: ["公共教学楼"],
+  新燕园计算机学院: ["计算机学院"],
+  新燕园集成电路学院: ["集成电路学院"],
+  新燕园材料学院: ["材料科学与工程学院"],
+  新燕园学生公寓: ["学生公寓1号楼"],
+  新燕园馨园食堂: ["馨园食堂"],
+  医学部逸夫教学楼: ["逸夫教学楼"],
+  医学部研究生宿舍: ["研究生宿舍"],
+  医学部学生公寓: ["学生公寓2号楼"],
+  万柳公寓一区: ["北京大学万柳公寓一区"],
+  万柳公寓二区: ["北京大学万柳公寓二区"],
+  万柳公寓三区: ["北京大学万柳公寓三区"],
+  万柳公寓四区: ["北京大学万柳公寓四区"],
+  万柳公寓五区: ["北京大学万柳公寓五区"],
+  万柳公寓六区: ["北京大学万柳公寓六区"],
 };
-const auditedOsmIds:Record<string,string>={
-  '北大东门':'node/2748949454','清华西门':'node/380418396','清华南门':'node/529544520','清华东南门':'node/1363454895','北京大学图书馆':'relation/3249649','北京大学化学学院A区':'way/295071478','北京大学工学大楼':'relation/15596323','北京大学物理学院':'relation/11823279','政府管理大楼':'way/163926083','经济学院':'way/783033431','理科一号楼':'relation/13059307','理科二号楼':'relation/14962081','理科三号楼':'relation/11975585','北京大学承泽园':'relation/17308238',
+const auditedOsmIds: Record<string, string> = {
+  北大东门: "node/2748949454",
+  清华西门: "node/380418396",
+  清华南门: "node/529544520",
+  清华东南门: "node/1363454895",
+  北京大学图书馆: "relation/3249649",
+  北京大学化学学院A区: "way/295071478",
+  北京大学工学大楼: "relation/15596323",
+  北京大学物理学院: "relation/11823279",
+  政府管理大楼: "way/163926083",
+  经济学院: "way/783033431",
+  理科一号楼: "relation/13059307",
+  理科二号楼: "relation/14962081",
+  理科三号楼: "relation/11975585",
+  北京大学承泽园: "relation/17308238",
 };
-function geolocateSeed(seed:Omit<SiteState,'id'|'stance'|'supply'>){
-  const region=seed.x>250?osmRegions.wanliu:seed.x>190?osmRegions.medical:seed.x>100?osmRegions.newYanyuan:osmRegions.main,landmarks=region.landmarks as readonly any[],audited=auditedOsmIds[seed.name];
-  let hit=audited?landmarks.find(p=>`${p.osmType}/${p.osmId}`===audited):undefined;const aliases=osmAliases[seed.name]??[seed.name];
-  if(!hit){const candidates=landmarks.filter(p=>aliases.includes(p.name));hit=candidates.sort((a,b)=>Math.hypot(a.x-seed.x,a.z-seed.z)-Math.hypot(b.x-seed.x,b.z-seed.z))[0];}
-  return hit?{...seed,x:hit.x,z:hit.z,osmKey:`${hit.osmType}/${hit.osmId}`}:{...seed};
+function geolocateSeed(seed: Omit<SiteState, "id" | "stance" | "supply">) {
+  const region =
+      seed.x > 250
+        ? osmRegions.wanliu
+        : seed.x > 190
+          ? osmRegions.medical
+          : seed.x > 100
+            ? osmRegions.newYanyuan
+            : osmRegions.main,
+    landmarks = region.landmarks as readonly any[],
+    audited = auditedOsmIds[seed.name];
+  let hit = audited
+    ? landmarks.find((p) => `${p.osmType}/${p.osmId}` === audited)
+    : undefined;
+  const aliases = osmAliases[seed.name] ?? [seed.name];
+  if (!hit) {
+    const candidates = landmarks.filter((p) => aliases.includes(p.name));
+    hit = candidates.sort(
+      (a, b) =>
+        Math.hypot(a.x - seed.x, a.z - seed.z) -
+        Math.hypot(b.x - seed.x, b.z - seed.z),
+    )[0];
+  }
+  return hit
+    ? { ...seed, x: hit.x, z: hit.z, osmKey: `${hit.osmType}/${hit.osmId}` }
+    : { ...seed };
 }
 
 function makeFreshGame(): GameData {
-  const sites: SiteState[] = seeds.map(seed=>({seed,located:geolocateSeed(seed)})).filter(({seed,located})=>seed.x>100||located.osmKey).map(({located},id)=>({...located,id,stance:'defend',supply:100}));
-  const units: UnitState[]=[]; let uid=0;
-  sites.forEach(s=>{const count=s.type==='dorm'?(s.team==='pku'?3:2):(s.team==='pku'?4:3);for(let i=0;i<count;i++){const a=i/count*Math.PI*2;units.push({id:uid++,team:s.team,x:s.x+Math.cos(a)*1.25,z:s.z+Math.sin(a)*1.25,tx:s.x,tz:s.z,hp:100,supply:100,siteId:s.id});}});
-  return {timeOfDay:8.2,resources:{pku:180,thu:180},deaths:{pku:0,thu:0},sites,units};
+  const sites: SiteState[] = seeds
+    .map((seed) => ({ seed, located: geolocateSeed(seed) }))
+    .filter(({ seed, located }) => seed.x > 100 || located.osmKey)
+    .map(({ located }, id) => ({
+      ...located,
+      id,
+      stance: "defend",
+      supply: 100,
+    }));
+  const units: UnitState[] = [];
+  let uid = 0;
+  sites.forEach((s) => {
+    const count =
+      s.type === "dorm" ? (s.team === "pku" ? 3 : 2) : s.team === "pku" ? 4 : 3;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2;
+      units.push({
+        id: uid++,
+        team: s.team,
+        x: s.x + Math.cos(a) * 1.25,
+        z: s.z + Math.sin(a) * 1.25,
+        tx: s.x,
+        tz: s.z,
+        hp: 100,
+        supply: 100,
+        siteId: s.id,
+      });
+    }
+  });
+  return {
+    timeOfDay: 8.2,
+    resources: { pku: 180, thu: 180 },
+    deaths: { pku: 0, thu: 0 },
+    sites,
+    units,
+  };
 }
-function readSaves(): Snapshot[]{try{return JSON.parse(localStorage.getItem(SAVE_KEY)||'[]') as Snapshot[];}catch{return[];}}
+function readSaves(): Snapshot[] {
+  try {
+    return JSON.parse(localStorage.getItem(SAVE_KEY) || "[]") as Snapshot[];
+  } catch {
+    return [];
+  }
+}
 
-export default function Game3D(){
-  const hostRef=useRef<HTMLDivElement>(null);const gameRef=useRef<GameData>(makeFreshGame());const sceneApi=useRef<{sync:()=>void;focus:(region:RegionId)=>void}|null>(null);
-  const [saves,setSaves]=useState<Snapshot[]>([]);const [saveOpen,setSaveOpen]=useState(false);const [saveName,setSaveName]=useState('燕园远征');const [autoDay,setAutoDay]=useState(true);const autoDayRef=useRef(true);const [clock,setClock]=useState('08:12');const [selected,setSelected]=useState<number|null>(null);const [region,setRegion]=useState<RegionId>('main');const regionRef=useRef<RegionId>('main');const [notice,setNotice]=useState('拖动己方据点到目标即可下达命令');const [stats,setStats]=useState({pku:0,thu:0,pkuSites:0,thuSites:0});
-  const selectedSite=selected==null?null:gameRef.current.sites[selected];
-  const refreshSaves=useCallback(()=>setSaves(readSaves().sort((a,b)=>b.savedAt-a.savedAt)),[]);
-  useEffect(()=>refreshSaves(),[refreshSaves]);useEffect(()=>{autoDayRef.current=autoDay;},[autoDay]);useEffect(()=>{regionRef.current=region;},[region]);
+export default function Game3D() {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<GameData>(makeFreshGame());
+  const sceneApi = useRef<{
+    sync: () => void;
+    focus: (region: RegionId) => void;
+  } | null>(null);
+  const [saves, setSaves] = useState<Snapshot[]>([]);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("燕园远征");
+  const [autoDay, setAutoDay] = useState(true);
+  const autoDayRef = useRef(true);
+  const [clock, setClock] = useState("08:12");
+  const [selected, setSelected] = useState<number | null>(null);
+  const [region, setRegion] = useState<RegionId>("main");
+  const regionRef = useRef<RegionId>("main");
+  const [notice, setNotice] = useState("拖动己方据点到目标即可下达命令");
+  const [stats, setStats] = useState({
+    pku: 0,
+    thu: 0,
+    pkuSites: 0,
+    thuSites: 0,
+  });
+  const selectedSite =
+    selected == null ? null : gameRef.current.sites[selected];
+  const refreshSaves = useCallback(
+    () => setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt)),
+    [],
+  );
+  useEffect(() => refreshSaves(), [refreshSaves]);
+  useEffect(() => {
+    autoDayRef.current = autoDay;
+  }, [autoDay]);
+  useEffect(() => {
+    regionRef.current = region;
+  }, [region]);
 
-  useEffect(()=>{
-    const host=hostRef.current;if(!host)return;
-    const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(host.clientWidth,host.clientHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;host.appendChild(renderer.domElement);
-    const scene=new THREE.Scene();scene.background=new THREE.Color(0x9fc5d8);scene.fog=new THREE.FogExp2(0x9fc5d8,.007);
-    const camera=new THREE.PerspectiveCamera(38,host.clientWidth/host.clientHeight,.1,300);camera.position.set(-22,24,36);camera.lookAt(-22,0,14);const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(-22,0,14);controls.enableDamping=true;controls.dampingFactor=.08;controls.enableRotate=false;controls.enableZoom=false;controls.enablePan=true;controls.screenSpacePanning=false;controls.mouseButtons.LEFT=THREE.MOUSE.PAN;controls.mouseButtons.MIDDLE=THREE.MOUSE.PAN;controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;controls.touches.ONE=THREE.TOUCH.PAN;
-    const hemi=new THREE.HemisphereLight(0xcfe8ff,0x324226,1.9);scene.add(hemi);const sun=new THREE.DirectionalLight(0xfff0d0,3.4);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-65;sun.shadow.camera.right=65;sun.shadow.camera.top=55;sun.shadow.camera.bottom=-55;scene.add(sun);const moon=new THREE.DirectionalLight(0x91b7ff,.25);scene.add(moon);
-    const mapGroup=new THREE.Group();scene.add(mapGroup);const regions=osmRegions as unknown as Record<string,any>;const regionForX=(x:number)=>x>250?regions.wanliu:x>190?regions.medical:x>100?regions.newYanyuan:regions.main;
-    const terrainHeight=(r:any,x:number,z:number)=>{const {cols,rows,heights}=r.terrain,u=THREE.MathUtils.clamp((x-(r.offsetX-r.width/2))/r.width,0,1)*(cols-1),v=THREE.MathUtils.clamp((r.depth/2-z)/r.depth,0,1)*(rows-1),i=Math.floor(u),j=Math.floor(v),fu=u-i,fv=v-j,at=(ii:number,jj:number)=>heights[Math.min(rows-1,jj)*cols+Math.min(cols-1,ii)]||0;return THREE.MathUtils.lerp(THREE.MathUtils.lerp(at(i,j),at(i+1,j),fu),THREE.MathUtils.lerp(at(i,j+1),at(i+1,j+1),fu),fv);};
-    const surfaceGeometry=(r:any,points:number[][],lift:number)=>{const clean=points.filter((p,i,a)=>!i||Math.hypot(p[0]-a[i-1][0],p[1]-a[i-1][1])>.001);if(clean.length>2&&Math.hypot(clean[0][0]-clean.at(-1)![0],clean[0][1]-clean.at(-1)![1])<.001)clean.pop();const contour=clean.map(p=>new THREE.Vector2(p[0],p[1])),faces=THREE.ShapeUtils.triangulateShape(contour,[]),g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(clean.flatMap(p=>[p[0],terrainHeight(r,p[0],p[1])+lift,p[1]]),3));g.setIndex(faces.flat());g.computeVertexNormals();return g;};
-    const addRegion=(r:any)=>{const {cols,rows,heights}=r.terrain,pos:number[]=[],idx:number[]=[];for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){const x=r.offsetX-r.width/2+i/(cols-1)*r.width,z=r.depth/2-j/(rows-1)*r.depth;pos.push(x,heights[j*cols+i]||0,z);}for(let j=0;j<rows-1;j++)for(let i=0;i<cols-1;i++){const a=j*cols+i,b=a+1,c=a+cols,d=c+1;idx.push(a,b,c,b,d,c);}const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setIndex(idx);geo.computeVertexNormals();const terrain=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:r.offsetX?0x6d8955:0x718d58,roughness:.98,side:THREE.FrontSide}));terrain.receiveShadow=true;mapGroup.add(terrain);
-      for(const campus of r.campuses??[]){const team:Team|null=campus.name==='北京大学'?'pku':campus.name==='清华大学'?'thu':null;if(!team||campus.points.length<3)continue;const fill=new THREE.Mesh(surfaceGeometry(r,campus.points,.025),new THREE.MeshBasicMaterial({color:TEAM_COLOR[team],transparent:true,opacity:.095,depthWrite:false,side:THREE.DoubleSide}));fill.renderOrder=0;mapGroup.add(fill);const borderPoints=campus.points.map((p:number[])=>new THREE.Vector3(p[0],terrainHeight(r,p[0],p[1])+.16,p[1])),border=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(borderPoints),new THREE.LineBasicMaterial({color:TEAM_COLOR[team],transparent:true,opacity:.68}));border.renderOrder=3;mapGroup.add(border);}
-      const rv:number[]=[],ri:number[]=[],rc:number[]=[];let vi=0;for(const road of r.roads){const kind=road.kind as string,color=new THREE.Color(['footway','path','pedestrian','steps','cycleway'].includes(kind)?0xd8cfb9:['primary','secondary','tertiary'].includes(kind)?0xd1c7ad:0xbdb49e),displayWidth=Math.max(road.width,.16);for(let k=1;k<road.points.length;k++){const [x1,z1]=road.points[k-1],[x2,z2]=road.points[k],dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz);if(len<.01)continue;const px=-dz/len*displayWidth/2,pz=dx/len*displayWidth/2,y1=terrainHeight(r,x1,z1)+.12,y2=terrainHeight(r,x2,z2)+.12;rv.push(x1+px,y1,z1+pz,x1-px,y1,z1-pz,x2+px,y2,z2+pz,x2-px,y2,z2-pz);for(let n=0;n<4;n++)rc.push(color.r,color.g,color.b);ri.push(vi,vi+2,vi+1,vi+2,vi+3,vi+1);vi+=4;}}const rg=new THREE.BufferGeometry();rg.setAttribute('position',new THREE.Float32BufferAttribute(rv,3));rg.setAttribute('color',new THREE.Float32BufferAttribute(rc,3));rg.setIndex(ri);rg.computeVertexNormals();const roads=new THREE.Mesh(rg,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.92,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));roads.receiveShadow=true;roads.renderOrder=2;mapGroup.add(roads);
-      const bp:number[]=[],bi:number[]=[];let bv=0;for(const b of r.buildings){const pts=b.points.filter((p:number[],i:number,a:number[][])=>!i||Math.hypot(p[0]-a[i-1][0],p[1]-a[i-1][1])>.001);if(pts.length>2&&Math.hypot(pts[0][0]-pts.at(-1)[0],pts[0][1]-pts.at(-1)[1])<.001)pts.pop();if(pts.length<3)continue;const x=pts.reduce((a:number,p:number[])=>a+p[0],0)/pts.length,z=pts.reduce((a:number,p:number[])=>a+p[1],0)/pts.length,base=terrainHeight(r,x,z),h=b.levels?Math.min(7,b.levels*.58):.95+(b.osmId%6)*.17,start=bv;for(const p of pts){bp.push(p[0],base,p[1],p[0],base+h,p[1]);bv+=2;}for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,a=start+i*2,c=start+j*2;bi.push(a,c,a+1,a+1,c,c+1);}for(const face of THREE.ShapeUtils.triangulateShape(pts.map((p:number[])=>new THREE.Vector2(p[0],p[1])),[]))bi.push(start+face[0]*2+1,start+face[1]*2+1,start+face[2]*2+1);}const bg=new THREE.BufferGeometry();bg.setAttribute('position',new THREE.Float32BufferAttribute(bp,3));bg.setIndex(bi);bg.computeVertexNormals();const buildings=new THREE.Mesh(bg,new THREE.MeshStandardMaterial({color:r.offsetX?0xaab2af:0xa3adaa,roughness:.82,side:THREE.DoubleSide}));buildings.receiveShadow=true;mapGroup.add(buildings);
-      const waterMat=new THREE.MeshStandardMaterial({color:0x478ca5,transparent:true,opacity:.83,roughness:.24,metalness:.1,side:THREE.DoubleSide});for(const water of r.waters){if(water.points.length<3)continue;const wm=new THREE.Mesh(surfaceGeometry(r,water.points,.15),waterMat);wm.renderOrder=4;mapGroup.add(wm);}}
-    addRegion(regions.main);addRegion(regions.newYanyuan);addRegion(regions.medical);addRegion(regions.wanliu);
-    for(const r of [regions.main,regions.newYanyuan,regions.medical,regions.wanliu]){const apron=new THREE.Mesh(new THREE.BoxGeometry(r.width+34,.12,r.depth+34),new THREE.MeshStandardMaterial({color:r.offsetX?0x617c4f:0x668351,roughness:1}));apron.position.set(r.offsetX,-.12,0);apron.receiveShadow=true;mapGroup.add(apron);}
-    const buildingGroup=new THREE.Group();scene.add(buildingGroup);const unitGroup=new THREE.Group();scene.add(unitGroup);const commandGroup=new THREE.Group();scene.add(commandGroup);const siteObjects=new Map<number,THREE.Group>();const unitObjects=new Map<number,THREE.Group>();const windowMaterials:THREE.MeshStandardMaterial[]=[];
-    const addCommandLine=(a:THREE.Vector3,b:THREE.Vector3,preview=false)=>{const geo=new THREE.BufferGeometry().setFromPoints([a,b]),line=new THREE.Line(geo,new THREE.LineDashedMaterial({color:0xffffff,dashSize:preview?.7:1.1,gapSize:preview?.42:.6,transparent:true,opacity:preview?.65:.95}));line.computeLineDistances();commandGroup.add(line);return line;};
-    const rebuildCommandLines=()=>{commandGroup.clear();gameRef.current.sites.forEach(s=>{if(s.orderTarget==null)return;const t=gameRef.current.sites[s.orderTarget];if(!t)return;addCommandLine(new THREE.Vector3(s.x,1.2,s.z),new THREE.Vector3(t.x,1.2,t.z));});};
-    const labelTexture=(text:string,color:string)=>{const c=document.createElement('canvas');c.width=512;c.height=96;const x=c.getContext('2d')!;x.fillStyle='rgba(21,30,25,.86)';x.roundRect(4,4,504,88,16);x.fill();x.strokeStyle=color;x.lineWidth=5;x.stroke();x.fillStyle='#fff6dc';x.font='700 34px Microsoft YaHei';x.textAlign='center';x.fillText(text,256,61);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;};
-    const rebuildBuildings=()=>{buildingGroup.clear();siteObjects.clear();windowMaterials.splice(0);gameRef.current.sites.forEach(site=>{const g=new THREE.Group(),region=regionForX(site.x),isTarget=site.type==='target',teamColor=TEAM_COLOR[site.team];g.position.set(site.x,terrainHeight(region,site.x,site.z),site.z);
-      const outer=new THREE.Mesh(new THREE.RingGeometry(isTarget?1.02:.68,isTarget?1.34:.92,44),new THREE.MeshBasicMaterial({color:isTarget?0xffc84b:teamColor,transparent:true,opacity:.94,side:THREE.DoubleSide,depthTest:false}));outer.rotation.x=-Math.PI/2;outer.position.y=.18;outer.renderOrder=8;g.add(outer);const core=new THREE.Mesh(new THREE.CylinderGeometry(.18,.25,.9,12),new THREE.MeshStandardMaterial({color:isTarget?0xffb52e:teamColor,emissive:isTarget?0xff9d00:teamColor,emissiveIntensity:isTarget?1.4:.35,roughness:.4}));core.position.y=.65;core.castShadow=true;g.add(core);const icon=new THREE.Mesh(site.type==='gate'?new THREE.TorusGeometry(.36,.09,8,18,Math.PI):new THREE.OctahedronGeometry(isTarget ? .48 : .32),new THREE.MeshStandardMaterial({color:0xffedba,emissive:isTarget?0xffb52e:0x000000,emissiveIntensity:isTarget?1.6:0,roughness:.35}));icon.position.y=site.type==='gate'?1.25:1.22;if(site.type==='gate')icon.rotation.z=Math.PI;g.add(icon);
-      if(isTarget){const beacon=new THREE.Mesh(new THREE.RingGeometry(1.48,1.62,48),new THREE.MeshBasicMaterial({color:0xffd96b,transparent:true,opacity:.9,side:THREE.DoubleSide,depthTest:false}));beacon.rotation.x=-Math.PI/2;beacon.position.y=.22;beacon.userData.targetBeacon=true;g.add(beacon);}
-      const stance=site.stance==='defend'?'盾':site.stance==='guard'?'巡':'待',sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:labelTexture(`${stance} ${site.name}`,site.team==='pku'?'#df3b50':'#a569d0'),transparent:true,depthTest:false}));sprite.scale.set(isTarget?4.6:3.7,isTarget ? .82 : .68,1);sprite.position.y=(isTarget?4.1:2.65)+(site.id%3)*.42;sprite.renderOrder=20;g.add(sprite);const hit=new THREE.Mesh(new THREE.CylinderGeometry(.8,.8,2,12),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));hit.position.y=1;g.add(hit);g.traverse(o=>{o.userData.siteId=site.id;});buildingGroup.add(g);siteObjects.set(site.id,g);});};
-    const textureLoader=new THREE.TextureLoader(),emblemTex={pku:textureLoader.load(`${import.meta.env.BASE_URL}pku-seal.svg`),thu:textureLoader.load(`${import.meta.env.BASE_URL}thu-seal.svg`)};emblemTex.pku.colorSpace=THREE.SRGBColorSpace;emblemTex.thu.colorSpace=THREE.SRGBColorSpace;
-    const rebuildUnits=()=>{unitGroup.clear();unitObjects.clear();gameRef.current.units.forEach(u=>{const g=new THREE.Group(),region=regionForX(u.x),teamColor=u.team==='pku'?0xc91f3a:0x74429d,bodyMat=new THREE.MeshStandardMaterial({color:teamColor,roughness:.26,metalness:.06,emissive:teamColor,emissiveIntensity:.12});const body=new THREE.Mesh(new THREE.SphereGeometry(.55,24,18),bodyMat);body.position.y=.98;body.castShadow=true;body.receiveShadow=true;g.add(body);const emblem=new THREE.Mesh(new THREE.CircleGeometry(.39,32),new THREE.MeshBasicMaterial({map:emblemTex[u.team],transparent:true,depthWrite:false}));emblem.position.set(0,.98,.515);g.add(emblem);const border=new THREE.Mesh(new THREE.TorusGeometry(.42,.035,8,32),new THREE.MeshStandardMaterial({color:0xfff1d0,roughness:.35}));border.position.set(0,.98,.525);g.add(border);const lm=new THREE.MeshStandardMaterial({color:0x242824,roughness:.8}),lg=new THREE.CylinderGeometry(.055,.055,.68,7);[-1,1].forEach(s=>{const arm=new THREE.Mesh(lg,lm);arm.position.set(s*.54,.9,0);arm.rotation.z=s*.95;g.add(arm);const leg=new THREE.Mesh(lg,lm);leg.position.set(s*.25,.35,0);leg.rotation.z=s*.28;g.add(leg);const hand=new THREE.Mesh(new THREE.SphereGeometry(.09,8,6),lm);hand.position.set(s*.82,.71,0);g.add(hand);});const glow=new THREE.Mesh(new THREE.RingGeometry(.68,.86,28),new THREE.MeshBasicMaterial({color:teamColor,transparent:true,opacity:.7,side:THREE.DoubleSide}));glow.rotation.x=-Math.PI/2;glow.position.y=.05;g.add(glow);g.position.set(u.x,terrainHeight(region,u.x,u.z),u.z);unitGroup.add(g);unitObjects.set(u.id,g);});};
-    rebuildBuildings();rebuildUnits();rebuildCommandLines();
-    const treeGroup=new THREE.Group();scene.add(treeGroup);let seed=91723;const rnd=()=>((seed=(seed*1664525+1013904223)>>>0)/4294967296);const tg=new THREE.CylinderGeometry(.07,.11,.86,7),tm=new THREE.MeshStandardMaterial({color:0x61412f,roughness:1}),cg=new THREE.SphereGeometry(.52,10,8),cms=[0x315d36,0x467648,0x5b8a4e].map(c=>new THREE.MeshStandardMaterial({color:c,roughness:.92}));for(const [r,count] of [[regions.main,240],[regions.newYanyuan,90],[regions.medical,65],[regions.wanliu,55]] as [any,number][]){for(let i=0;i<count;i++){const x=r.offsetX-r.width/2+rnd()*r.width,z=-r.depth/2+rnd()*r.depth;if(gameRef.current.sites.some(s=>Math.hypot(s.x-x,s.z-z)<3.2)||r.roads.some((road:any)=>road.points.some((p:number[])=>Math.hypot(p[0]-x,p[1]-z)<.5)))continue;const g=new THREE.Group(),tr=new THREE.Mesh(tg,tm);tr.position.y=.43;tr.castShadow=true;g.add(tr);cms.forEach((m,j)=>{const cr=new THREE.Mesh(cg,m);cr.scale.set(1.1-j*.18,.65,1.1-j*.18);cr.position.y=.92+j*.32;cr.castShadow=true;g.add(cr);});g.position.set(x,terrainHeight(r,x,z),z);treeGroup.add(g);}}
-    const lampPositions:{x:number;z:number;r:any}[]=[],lampSeen=new Set<string>();for(const r of [regions.main,regions.newYanyuan,regions.medical,regions.wanliu]){const cap=r===regions.main?650:90,pushLamp=(x:number,z:number)=>{const key=`${Math.round(x*2)}/${Math.round(z*2)}`;if(lampSeen.has(key)||lampPositions.filter(p=>p.r===r).length>=cap)return;lampSeen.add(key);lampPositions.push({x,z,r});};for(const [x,z] of r.lamps??[])pushLamp(x,z);for(const road of r.roads){if(['footway','path','steps','corridor','track'].includes(road.kind))continue;for(let k=1;k<road.points.length;k++){const [x1,z1]=road.points[k-1],[x2,z2]=road.points[k],dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz);if(len<1.8)continue;const count=Math.floor(len/3.1),nx=-dz/len,nz=dx/len;for(let n=1;n<=count;n++){const t=n/(count+1),side=(n+k)%2?1:-1;pushLamp(x1+dx*t+nx*(road.width/2+.16)*side,z1+dz*t+nz*(road.width/2+.16)*side);}}}}
-    const poleGeometry=new THREE.CylinderGeometry(.025,.038,.82,6),poleMaterial=new THREE.MeshStandardMaterial({color:0x303735,roughness:.76}),bulbGeometry=new THREE.SphereGeometry(.065,8,6),lampBulbMaterial=new THREE.MeshStandardMaterial({color:0xffe3a6,emissive:0xffb23f,emissiveIntensity:.1,roughness:.25}),poles=new THREE.InstancedMesh(poleGeometry,poleMaterial,lampPositions.length),bulbs=new THREE.InstancedMesh(bulbGeometry,lampBulbMaterial,lampPositions.length),lampDummy=new THREE.Object3D();lampPositions.forEach((p,i)=>{const base=terrainHeight(p.r,p.x,p.z);lampDummy.position.set(p.x,base+.41,p.z);lampDummy.updateMatrix();poles.setMatrixAt(i,lampDummy.matrix);lampDummy.position.y=base+.86;lampDummy.updateMatrix();bulbs.setMatrixAt(i,lampDummy.matrix);});poles.instanceMatrix.needsUpdate=true;bulbs.instanceMatrix.needsUpdate=true;scene.add(poles,bulbs);const lights:THREE.PointLight[]=[];lampPositions.filter((_,i)=>i%41===0).slice(0,22).forEach(p=>{const l=new THREE.PointLight(0xffc66f,0,5,2);l.position.set(p.x,terrainHeight(p.r,p.x,p.z)+.9,p.z);scene.add(l);lights.push(l);});
-    const ray=new THREE.Raycaster(),mouse=new THREE.Vector2(),groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);let down:{x:number;y:number;site?:number}|null=null,previewLine:THREE.Line|null=null;const setRay=(ev:PointerEvent)=>{const r=renderer.domElement.getBoundingClientRect();mouse.x=(ev.clientX-r.left)/r.width*2-1;mouse.y=-(ev.clientY-r.top)/r.height*2+1;ray.setFromCamera(mouse,camera);};const hitSite=(ev:PointerEvent)=>{setRay(ev);const hit=ray.intersectObjects(buildingGroup.children,true)[0];return hit?.object.userData.siteId as number|undefined;};const groundAt=(ev:PointerEvent)=>{setRay(ev);const p=new THREE.Vector3();return ray.ray.intersectPlane(groundPlane,p)?p:null;};renderer.domElement.addEventListener('pointerdown',e=>{const site=hitSite(e);down={x:e.clientX,y:e.clientY,site};if(site!=null)controls.enabled=false;});renderer.domElement.addEventListener('pointermove',e=>{if(down?.site==null||Math.hypot(e.clientX-down.x,e.clientY-down.y)<8)return;const p=groundAt(e),s=gameRef.current.sites[down.site];if(!p||!s)return;if(previewLine)commandGroup.remove(previewLine);previewLine=addCommandLine(new THREE.Vector3(s.x,1.2,s.z),new THREE.Vector3(p.x,1.2,p.z),true);});renderer.domElement.addEventListener('pointerup',e=>{if(!down)return;controls.enabled=true;if(previewLine){commandGroup.remove(previewLine);previewLine=null;}const end=hitSite(e),moved=Math.hypot(e.clientX-down.x,e.clientY-down.y)>8;if(!moved&&down.site!=null)setSelected(down.site);if(moved&&down.site!=null&&end!=null&&end!==down.site){const source=gameRef.current.sites[down.site],target=gameRef.current.sites[end];if(source.team==='pku'){source.orderTarget=target.id;const troops=gameRef.current.units.filter(u=>u.team==='pku'&&u.siteId===source.id);troops.forEach(u=>{u.targetSiteId=target.id;u.tx=target.x+(u.id%5-2)*.35;u.tz=target.z+(u.id%4-1.5)*.35;});rebuildCommandLines();setNotice(troops.length?`${source.name} → ${target.name}：${troops.length}支小队出发`:`${source.name}暂无可调动兵力`);}else setNotice('只能从北大控制的据点发出命令');}down=null;});
-    let raf=0,last=performance.now(),statAt=0;const animate=(now:number)=>{raf=requestAnimationFrame(animate);const dt=Math.min(.05,(now-last)/1000);last=now;const g=gameRef.current;if(autoDayRef.current)g.timeOfDay=(g.timeOfDay+dt*.08)%24;const angle=(g.timeOfDay-6)/24*Math.PI*2,day=THREE.MathUtils.smoothstep(Math.sin(angle),-.12,.35),night=1-day;sun.position.set(Math.cos(angle)*55,Math.max(-4,Math.sin(angle)*55),25);sun.intensity=day*3.4;moon.position.set(-sun.position.x,Math.max(10,-sun.position.y),-25);moon.intensity=night*.6;hemi.intensity=.18+day*1.72;hemi.color.set(day>.35?0xcfe8ff:0x29436e);hemi.groundColor.set(day>.35?0x324226:0x101721);const sky=new THREE.Color(0x07101f).lerp(new THREE.Color(0x9fc5d8),day);scene.background=sky;(scene.fog as THREE.FogExp2).color.copy(sky);windowMaterials.forEach(m=>m.emissiveIntensity=night*3.2);lampBulbMaterial.emissiveIntensity=.08+night*4.8;lights.forEach(l=>l.intensity=night*5.5);renderer.toneMappingExposure=.72+day*.38;
-      g.units.forEach(u=>{const mesh=unitObjects.get(u.id);if(!mesh)return;const dx=u.tx-u.x,dz=u.tz-u.z,dist=Math.hypot(dx,dz);if(dist>.18){const s=1.25*dt;u.x+=dx/dist*s;u.z+=dz/dist*s;mesh.position.set(u.x,terrainHeight(regionForX(u.x),u.x,u.z),u.z);mesh.rotation.y=Math.atan2(dx,dz);}});if(now-statAt>500){statAt=now;setStats({pku:g.units.filter(u=>u.team==='pku').length,thu:g.units.filter(u=>u.team==='thu').length,pkuSites:g.sites.filter(s=>s.team==='pku').length,thuSites:g.sites.filter(s=>s.team==='thu').length});const h=Math.floor(g.timeOfDay),m=Math.floor(g.timeOfDay%1*60);setClock(`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`);}controls.update();const active=regions[regionRef.current],marginX=Math.min(18,active.width*.32),marginZ=Math.min(14,active.depth*.32),cx=THREE.MathUtils.clamp(controls.target.x,active.offsetX-active.width/2+marginX,active.offsetX+active.width/2-marginX),cz=THREE.MathUtils.clamp(controls.target.z,-active.depth/2+marginZ,active.depth/2-marginZ),shiftX=cx-controls.target.x,shiftZ=cz-controls.target.z;if(shiftX||shiftZ){controls.target.x=cx;controls.target.z=cz;camera.position.x+=shiftX;camera.position.z+=shiftZ;}renderer.render(scene,camera);};raf=requestAnimationFrame(animate);
-    const resize=()=>{renderer.setSize(host.clientWidth,host.clientHeight);camera.aspect=host.clientWidth/host.clientHeight;camera.updateProjectionMatrix();};addEventListener('resize',resize);sceneApi.current={sync:()=>{rebuildBuildings();rebuildUnits();rebuildCommandLines();},focus:(id)=>{regionRef.current=id;const [x,z]=id==='main'?[-22,14]:id==='newYanyuan'?[145,0]:id==='medical'?[215,0]:[275,0];controls.target.set(x,0,z);camera.position.set(x,24,z+22);controls.update();}};return()=>{cancelAnimationFrame(raf);removeEventListener('resize',resize);controls.dispose();renderer.dispose();if(renderer.domElement.parentNode===host)host.removeChild(renderer.domElement);};
-  },[]);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: "high-performance",
+    });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    host.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9fc5d8);
+    scene.fog = new THREE.FogExp2(0x9fc5d8, 0.007);
+    const camera = new THREE.PerspectiveCamera(
+      38,
+      host.clientWidth / host.clientHeight,
+      0.1,
+      300,
+    );
+    camera.position.set(-22, 24, 36);
+    camera.lookAt(-22, 0, 14);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(-22, 0, 14);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enableRotate = false;
+    controls.enableZoom = false;
+    controls.enablePan = true;
+    controls.screenSpacePanning = false;
+    controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    controls.touches.ONE = THREE.TOUCH.PAN;
+    const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x324226, 1.9);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff0d0, 3.4);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -65;
+    sun.shadow.camera.right = 65;
+    sun.shadow.camera.top = 55;
+    sun.shadow.camera.bottom = -55;
+    scene.add(sun);
+    const moon = new THREE.DirectionalLight(0x91b7ff, 0.25);
+    scene.add(moon);
+    const mapGroup = new THREE.Group();
+    scene.add(mapGroup);
+    const regions = osmRegions as unknown as Record<string, any>;
+    const windowMaterials: THREE.MeshStandardMaterial[] = [];
+    const regionForX = (x: number) =>
+      x > 250
+        ? regions.wanliu
+        : x > 190
+          ? regions.medical
+          : x > 100
+            ? regions.newYanyuan
+            : regions.main;
+    const terrainHeight = (r: any, x: number, z: number) => {
+      const { cols, rows, heights } = r.terrain,
+        u =
+          THREE.MathUtils.clamp(
+            (x - (r.offsetX - r.width / 2)) / r.width,
+            0,
+            1,
+          ) *
+          (cols - 1),
+        v =
+          THREE.MathUtils.clamp((r.depth / 2 - z) / r.depth, 0, 1) * (rows - 1),
+        i = Math.floor(u),
+        j = Math.floor(v),
+        fu = u - i,
+        fv = v - j,
+        at = (ii: number, jj: number) =>
+          heights[Math.min(rows - 1, jj) * cols + Math.min(cols - 1, ii)] || 0;
+      return THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
+        THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
+        fv,
+      );
+    };
+    const surfaceGeometry = (r: any, points: number[][], lift: number) => {
+      const clean = points.filter(
+        (p, i, a) =>
+          !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
+      );
+      if (
+        clean.length > 2 &&
+        Math.hypot(
+          clean[0][0] - clean.at(-1)![0],
+          clean[0][1] - clean.at(-1)![1],
+        ) < 0.001
+      )
+        clean.pop();
+      const contour = clean.map((p) => new THREE.Vector2(p[0], p[1])),
+        faces = THREE.ShapeUtils.triangulateShape(contour, []),
+        g = new THREE.BufferGeometry();
+      g.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(
+          clean.flatMap((p) => [
+            p[0],
+            terrainHeight(r, p[0], p[1]) + lift,
+            p[1],
+          ]),
+          3,
+        ),
+      );
+      g.setIndex(faces.flat());
+      g.computeVertexNormals();
+      return g;
+    };
+    const addRegion = (r: any) => {
+      const { cols, rows, heights } = r.terrain,
+        pos: number[] = [],
+        idx: number[] = [];
+      for (let j = 0; j < rows; j++)
+        for (let i = 0; i < cols; i++) {
+          const x = r.offsetX - r.width / 2 + (i / (cols - 1)) * r.width,
+            z = r.depth / 2 - (j / (rows - 1)) * r.depth;
+          pos.push(x, heights[j * cols + i] || 0, z);
+        }
+      for (let j = 0; j < rows - 1; j++)
+        for (let i = 0; i < cols - 1; i++) {
+          const a = j * cols + i,
+            b = a + 1,
+            c = a + cols,
+            d = c + 1;
+          idx.push(a, b, c, b, d, c);
+        }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const terrain = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({
+          color: r.offsetX ? 0x6d8955 : 0x718d58,
+          roughness: 0.98,
+          side: THREE.FrontSide,
+        }),
+      );
+      terrain.receiveShadow = true;
+      mapGroup.add(terrain);
+      for (const campus of r.campuses ?? []) {
+        const team: Team | null =
+          campus.name === "北京大学"
+            ? "pku"
+            : campus.name === "清华大学"
+              ? "thu"
+              : null;
+        if (!team || campus.points.length < 3) continue;
+        const fill = new THREE.Mesh(
+          surfaceGeometry(r, campus.points, 0.025),
+          new THREE.MeshBasicMaterial({
+            color: TEAM_COLOR[team],
+            transparent: true,
+            opacity: 0.095,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          }),
+        );
+        fill.renderOrder = 0;
+        mapGroup.add(fill);
+        const borderPoints = campus.points.map(
+            (p: number[]) =>
+              new THREE.Vector3(
+                p[0],
+                terrainHeight(r, p[0], p[1]) + 0.16,
+                p[1],
+              ),
+          ),
+          border = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints(borderPoints),
+            new THREE.LineBasicMaterial({
+              color: TEAM_COLOR[team],
+              transparent: true,
+              opacity: 0.68,
+            }),
+          );
+        border.renderOrder = 3;
+        mapGroup.add(border);
+      }
+      const rv: number[] = [],
+        ri: number[] = [],
+        rc: number[] = [];
+      let vi = 0;
+      for (const road of r.roads) {
+        const kind = road.kind as string,
+          color = new THREE.Color(
+            ["footway", "path", "pedestrian", "steps", "cycleway"].includes(
+              kind,
+            )
+              ? 0xd8cfb9
+              : ["primary", "secondary", "tertiary"].includes(kind)
+                ? 0xd1c7ad
+                : 0xbdb49e,
+          ),
+          displayWidth = Math.max(road.width, 0.16);
+        for (let k = 1; k < road.points.length; k++) {
+          const [x1, z1] = road.points[k - 1],
+            [x2, z2] = road.points[k],
+            dx = x2 - x1,
+            dz = z2 - z1,
+            len = Math.hypot(dx, dz);
+          if (len < 0.01) continue;
+          const px = ((-dz / len) * displayWidth) / 2,
+            pz = ((dx / len) * displayWidth) / 2,
+            y1 = terrainHeight(r, x1, z1) + 0.12,
+            y2 = terrainHeight(r, x2, z2) + 0.12;
+          rv.push(
+            x1 + px,
+            y1,
+            z1 + pz,
+            x1 - px,
+            y1,
+            z1 - pz,
+            x2 + px,
+            y2,
+            z2 + pz,
+            x2 - px,
+            y2,
+            z2 - pz,
+          );
+          for (let n = 0; n < 4; n++) rc.push(color.r, color.g, color.b);
+          ri.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
+          vi += 4;
+        }
+      }
+      const rg = new THREE.BufferGeometry();
+      rg.setAttribute("position", new THREE.Float32BufferAttribute(rv, 3));
+      rg.setAttribute("color", new THREE.Float32BufferAttribute(rc, 3));
+      rg.setIndex(ri);
+      rg.computeVertexNormals();
+      const roads = new THREE.Mesh(
+        rg,
+        new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.92,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        }),
+      );
+      roads.receiveShadow = true;
+      roads.renderOrder = 2;
+      mapGroup.add(roads);
+      const bp: number[] = [],
+        bi: number[] = [],
+        bc: number[] = [],
+        buildingPalette = [
+          0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
+        ];
+      let bv = 0;
+      for (const b of r.buildings) {
+        const pts = b.points.filter(
+          (p: number[], i: number, a: number[][]) =>
+            !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
+        );
+        if (
+          pts.length > 2 &&
+          Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) <
+            0.001
+        )
+          pts.pop();
+        if (pts.length < 3) continue;
+        const x =
+            pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
+          z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
+          base = terrainHeight(r, x, z),
+          h = b.levels
+            ? Math.min(7, b.levels * 0.58)
+            : 0.95 + (b.osmId % 6) * 0.17,
+          start = bv,
+          tone = new THREE.Color(
+            buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
+          ),
+          wallTone = tone.clone().multiplyScalar(0.78),
+          roofTone = tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26);
+        for (const p of pts) {
+          bp.push(p[0], base, p[1], p[0], base + h, p[1]);
+          bc.push(
+            wallTone.r,
+            wallTone.g,
+            wallTone.b,
+            roofTone.r,
+            roofTone.g,
+            roofTone.b,
+          );
+          bv += 2;
+        }
+        for (let i = 0; i < pts.length; i++) {
+          const j = (i + 1) % pts.length,
+            a = start + i * 2,
+            c = start + j * 2;
+          bi.push(a, c, a + 1, a + 1, c, c + 1);
+        }
+        for (const face of THREE.ShapeUtils.triangulateShape(
+          pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
+          [],
+        ))
+          bi.push(
+            start + face[0] * 2 + 1,
+            start + face[1] * 2 + 1,
+            start + face[2] * 2 + 1,
+          );
+      }
+      const bg = new THREE.BufferGeometry();
+      bg.setAttribute("position", new THREE.Float32BufferAttribute(bp, 3));
+      bg.setAttribute("color", new THREE.Float32BufferAttribute(bc, 3));
+      bg.setIndex(bi);
+      bg.computeVertexNormals();
+      const buildings = new THREE.Mesh(
+        bg,
+        new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.82,
+          side: THREE.DoubleSide,
+          flatShading: true,
+        }),
+      );
+      buildings.receiveShadow = true;
+      buildings.castShadow = true;
+      mapGroup.add(buildings);
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(bg, 32),
+        new THREE.LineBasicMaterial({
+          color: 0x65706e,
+          transparent: true,
+          opacity: 0.48,
+        }),
+      );
+      outline.renderOrder = 5;
+      mapGroup.add(outline);
+      const windowMatrices: THREE.Matrix4[] = [],
+        doorMatrices: THREE.Matrix4[] = [],
+        roofMatrices: THREE.Matrix4[] = [],
+        detailDummy = new THREE.Object3D(),
+        windowLimit = r === regions.main ? 13500 : 2600;
+      for (const b of r.buildings) {
+        const pts = b.points.filter(
+          (p: number[], i: number, a: number[][]) =>
+            !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
+        );
+        if (
+          pts.length > 2 &&
+          Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) <
+            0.001
+        )
+          pts.pop();
+        if (pts.length < 3) continue;
+        const signedArea = pts.reduce((sum: number, p: number[], i: number) => {
+            const next = pts[(i + 1) % pts.length];
+            return sum + p[0] * next[1] - next[0] * p[1];
+          }, 0),
+          outwardSign = signedArea > 0 ? -1 : 1;
+        const x =
+            pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
+          z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
+          base = terrainHeight(r, x, z),
+          h = b.levels
+            ? Math.min(7, b.levels * 0.58)
+            : 0.95 + (b.osmId % 6) * 0.17,
+          rows = Math.min(4, Math.max(1, Math.floor(h / 0.48)));
+        let longest: { a: number[]; c: number[]; len: number } | null = null;
+        for (
+          let i = 0;
+          i < pts.length && windowMatrices.length < windowLimit;
+          i++
+        ) {
+          const a = pts[i],
+            c = pts[(i + 1) % pts.length],
+            dx = c[0] - a[0],
+            dz = c[1] - a[1],
+            len = Math.hypot(dx, dz);
+          if (!longest || len > longest.len) longest = { a, c, len };
+          if (len < 0.42) continue;
+          const cols = Math.min(5, Math.max(1, Math.floor(len / 0.42))),
+            angle = Math.atan2(-dz, dx),
+            nx = (-dz / len) * outwardSign,
+            nz = (dx / len) * outwardSign;
+          for (
+            let row = 0;
+            row < rows && windowMatrices.length < windowLimit;
+            row++
+          )
+            for (
+              let col = 0;
+              col < cols && windowMatrices.length < windowLimit;
+              col++
+            ) {
+              const t = (col + 1) / (cols + 1);
+              detailDummy.position.set(
+                a[0] + dx * t + nx * 0.025,
+                base + (h * (row + 1)) / (rows + 1),
+                a[1] + dz * t + nz * 0.025,
+              );
+              detailDummy.rotation.set(0, angle, 0);
+              detailDummy.scale.set(
+                Math.min(0.18, (len / (cols + 1)) * 0.5),
+                0.12,
+                1,
+              );
+              detailDummy.updateMatrix();
+              windowMatrices.push(detailDummy.matrix.clone());
+            }
+        }
+        if (longest && longest.len > 0.45) {
+          const dx = longest.c[0] - longest.a[0],
+            dz = longest.c[1] - longest.a[1],
+            len = longest.len,
+            nx = (-dz / len) * outwardSign,
+            nz = (dx / len) * outwardSign;
+          detailDummy.position.set(
+            (longest.a[0] + longest.c[0]) / 2 + nx * 0.03,
+            base + 0.17,
+            (longest.a[1] + longest.c[1]) / 2 + nz * 0.03,
+          );
+          detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
+          detailDummy.scale.set(0.23, 0.34, 1);
+          detailDummy.updateMatrix();
+          doorMatrices.push(detailDummy.matrix.clone());
+        }
+        if (
+          h > 1.2 &&
+          Math.abs(b.osmId) % 4 === 0 &&
+          roofMatrices.length < 1400
+        ) {
+          const xs = pts.map((p: number[]) => p[0]),
+            zs = pts.map((p: number[]) => p[1]),
+            width = Math.max(...xs) - Math.min(...xs),
+            depth = Math.max(...zs) - Math.min(...zs);
+          detailDummy.position.set(x, base + h + 0.09, z);
+          detailDummy.rotation.set(0, ((b.osmId % 12) * Math.PI) / 12, 0);
+          detailDummy.scale.set(
+            Math.min(0.42, width * 0.28),
+            0.18,
+            Math.min(0.38, depth * 0.26),
+          );
+          detailDummy.updateMatrix();
+          roofMatrices.push(detailDummy.matrix.clone());
+        }
+      }
+      const windowMaterial = new THREE.MeshStandardMaterial({
+        color: 0x31566a,
+        emissive: 0xffc45e,
+        emissiveIntensity: 0,
+        roughness: 0.28,
+        metalness: 0.08,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      windowMaterials.push(windowMaterial);
+      const windows = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        windowMaterial,
+        windowMatrices.length,
+      );
+      windowMatrices.forEach((m, i) => windows.setMatrixAt(i, m));
+      windows.instanceMatrix.needsUpdate = true;
+      windows.renderOrder = 6;
+      mapGroup.add(windows);
+      const doors = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0x493a31,
+          roughness: 0.8,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        }),
+        doorMatrices.length,
+      );
+      doorMatrices.forEach((m, i) => doors.setMatrixAt(i, m));
+      doors.instanceMatrix.needsUpdate = true;
+      doors.renderOrder = 6;
+      mapGroup.add(doors);
+      const roofFixtures = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0x6e7774,
+          roughness: 0.7,
+          metalness: 0.12,
+        }),
+        roofMatrices.length,
+      );
+      roofMatrices.forEach((m, i) => roofFixtures.setMatrixAt(i, m));
+      roofFixtures.instanceMatrix.needsUpdate = true;
+      roofFixtures.castShadow = true;
+      roofFixtures.receiveShadow = true;
+      mapGroup.add(roofFixtures);
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x478ca5,
+        transparent: true,
+        opacity: 0.83,
+        roughness: 0.24,
+        metalness: 0.1,
+        side: THREE.DoubleSide,
+      });
+      for (const water of r.waters) {
+        if (water.points.length < 3) continue;
+        const wm = new THREE.Mesh(
+          surfaceGeometry(r, water.points, 0.15),
+          waterMat,
+        );
+        wm.renderOrder = 4;
+        mapGroup.add(wm);
+      }
+    };
+    addRegion(regions.main);
+    addRegion(regions.newYanyuan);
+    addRegion(regions.medical);
+    addRegion(regions.wanliu);
+    for (const r of [
+      regions.main,
+      regions.newYanyuan,
+      regions.medical,
+      regions.wanliu,
+    ]) {
+      const apron = new THREE.Mesh(
+        new THREE.BoxGeometry(r.width + 34, 0.12, r.depth + 34),
+        new THREE.MeshStandardMaterial({
+          color: r.offsetX ? 0x617c4f : 0x668351,
+          roughness: 1,
+        }),
+      );
+      apron.position.set(r.offsetX, -0.12, 0);
+      apron.receiveShadow = true;
+      mapGroup.add(apron);
+    }
+    const buildingGroup = new THREE.Group();
+    scene.add(buildingGroup);
+    const unitGroup = new THREE.Group();
+    scene.add(unitGroup);
+    const commandGroup = new THREE.Group();
+    scene.add(commandGroup);
+    const combatGroup = new THREE.Group();
+    scene.add(combatGroup);
+    const siteObjects = new Map<number, THREE.Group>();
+    const unitObjects = new Map<number, THREE.Group>();
+    const combatEffects: { sprite: THREE.Sprite; born: number }[] = [];
+    const fightCanvas = document.createElement("canvas");
+    fightCanvas.width = 192;
+    fightCanvas.height = 192;
+    const fightCtx = fightCanvas.getContext("2d")!;
+    fightCtx.font = "150px Segoe UI Symbol";
+    fightCtx.textAlign = "center";
+    fightCtx.textBaseline = "middle";
+    fightCtx.fillStyle = "#fff2b8";
+    fightCtx.strokeStyle = "#b51f39";
+    fightCtx.lineWidth = 9;
+    fightCtx.strokeText("⚔", 96, 104);
+    fightCtx.fillText("⚔", 96, 104);
+    const fightTexture = new THREE.CanvasTexture(fightCanvas);
+    fightTexture.colorSpace = THREE.SRGBColorSpace;
+    const spawnCombatEffect = (x: number, z: number) => {
+      const r = regionForX(x),
+        sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: fightTexture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            opacity: 1,
+          }),
+        );
+      sprite.position.set(x, terrainHeight(r, x, z) + 2, z);
+      sprite.scale.set(1.05, 1.05, 1);
+      sprite.renderOrder = 60;
+      combatGroup.add(sprite);
+      combatEffects.push({ sprite, born: performance.now() });
+    };
+    const disposeCommandObject = (object: THREE.Object3D) => {
+      object.traverse((child) => {
+        const renderable = child as THREE.Mesh & {
+          material?: THREE.Material | THREE.Material[];
+          geometry?: THREE.BufferGeometry;
+        };
+        renderable.geometry?.dispose();
+        const materials = Array.isArray(renderable.material)
+          ? renderable.material
+          : renderable.material
+            ? [renderable.material]
+            : [];
+        materials.forEach((material) => {
+          const map = (material as THREE.SpriteMaterial).map;
+          if (map && map !== fightTexture) map.dispose();
+          material.dispose();
+        });
+      });
+    };
+    const clearCommandVisuals = () => {
+      commandGroup.children.slice().forEach((child) => {
+        commandGroup.remove(child);
+        disposeCommandObject(child);
+      });
+    };
+    const commandAnimations: {
+        curve: THREE.Curve<THREE.Vector3>;
+        movers: THREE.Mesh[];
+        phase: number;
+      }[] = [],
+      commandUp = new THREE.Vector3(0, 1, 0),
+      commandTangent = new THREE.Vector3();
+    const commandLabelTexture = (text: string, color: string) => {
+      const c = document.createElement("canvas");
+      c.width = 384;
+      c.height = 80;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "rgba(12,20,18,.92)";
+      x.roundRect(4, 4, 376, 72, 18);
+      x.fill();
+      x.strokeStyle = color;
+      x.lineWidth = 5;
+      x.stroke();
+      x.fillStyle = "#fff8de";
+      x.font = "700 31px Microsoft YaHei";
+      x.textAlign = "center";
+      x.fillText(text, 192, 53);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const addCommandLine = (
+      a: THREE.Vector3,
+      b: THREE.Vector3,
+      preview = false,
+      attack = true,
+      troops = 0,
+    ) => {
+      if (preview) {
+        const geo = new THREE.BufferGeometry().setFromPoints([a, b]),
+          line = new THREE.Line(
+            geo,
+            new THREE.LineDashedMaterial({
+              color: 0xffffff,
+              dashSize: 0.65,
+              gapSize: 0.32,
+              transparent: true,
+              opacity: 0.82,
+              depthTest: false,
+            }),
+          );
+        line.computeLineDistances();
+        line.renderOrder = 40;
+        commandGroup.add(line);
+        return line;
+      }
+      const color = attack ? 0xff684d : 0x79dcff,
+        dist = a.distanceTo(b),
+        mid = a.clone().lerp(b, 0.5);
+      mid.y = 3.1 + Math.min(2.4, dist * 0.055);
+      const curve = new THREE.QuadraticBezierCurve3(
+          a.clone().setY(1.55),
+          mid,
+          b.clone().setY(1.55),
+        ),
+        group = new THREE.Group(),
+        tube = new THREE.Mesh(
+          new THREE.TubeGeometry(
+            curve,
+            Math.max(18, Math.ceil(dist * 1.4)),
+            0.12,
+            6,
+            false,
+          ),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.72,
+            depthTest: false,
+          }),
+        );
+      tube.renderOrder = 32;
+      group.add(tube);
+      const tangent = curve.getTangent(0.94).normalize(),
+        head = new THREE.Mesh(
+          new THREE.ConeGeometry(0.4, 1.05, 10),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.98,
+            depthTest: false,
+          }),
+        );
+      head.position.copy(curve.getPoint(0.94));
+      head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
+      head.renderOrder = 35;
+      group.add(head);
+      const movers: THREE.Mesh[] = [];
+      for (let i = 0; i < 5; i++) {
+        const mover = new THREE.Mesh(
+          new THREE.ConeGeometry(0.18, 0.46, 7),
+          new THREE.MeshBasicMaterial({
+            color: 0xfff5cf,
+            transparent: true,
+            opacity: 0.96,
+            depthTest: false,
+          }),
+        );
+        mover.renderOrder = 36;
+        group.add(mover);
+        movers.push(mover);
+      }
+      const label = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: commandLabelTexture(
+            `${attack ? "⚔ 进攻" : "✚ 增援"} · ${troops}队`,
+            attack ? "#ff684d" : "#79dcff",
+          ),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      label.scale.set(2.9, 0.6, 1);
+      label.position.copy(curve.getPoint(0.5));
+      label.position.y += 0.55;
+      label.renderOrder = 38;
+      group.add(label);
+      commandGroup.add(group);
+      commandAnimations.push({ curve, movers, phase: (a.x + a.z) * 0.071 });
+      return group;
+    };
+    const rebuildCommandLines = () => {
+      clearCommandVisuals();
+      commandAnimations.splice(0);
+      gameRef.current.sites.forEach((s) => {
+        if (s.orderTarget == null) return;
+        const t = gameRef.current.sites[s.orderTarget];
+        if (!t) return;
+        const troops = gameRef.current.units.filter(
+          (u) => u.siteId === s.id && u.targetSiteId === t.id,
+        ).length;
+        const route = addCommandLine(
+          new THREE.Vector3(s.x, 1.55, s.z),
+          new THREE.Vector3(t.x, 1.55, t.z),
+          false,
+          s.team !== t.team,
+          troops,
+        );
+        route.traverse((object) => {
+          object.userData.commandSourceId = s.id;
+        });
+      });
+    };
+    const labelTexture = (text: string, color: string) => {
+      const c = document.createElement("canvas");
+      c.width = 512;
+      c.height = 96;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "rgba(21,30,25,.86)";
+      x.roundRect(4, 4, 504, 88, 16);
+      x.fill();
+      x.strokeStyle = color;
+      x.lineWidth = 5;
+      x.stroke();
+      x.fillStyle = "#fff6dc";
+      x.font = "700 34px Microsoft YaHei";
+      x.textAlign = "center";
+      x.fillText(text, 256, 61);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const rebuildBuildings = () => {
+      buildingGroup.children.slice().forEach((child) => {
+        buildingGroup.remove(child);
+        disposeCommandObject(child);
+      });
+      siteObjects.clear();
+      gameRef.current.sites.forEach((site) => {
+        const g = new THREE.Group(),
+          region = regionForX(site.x),
+          isTarget = site.type === "target",
+          teamColor = TEAM_COLOR[site.team];
+        g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
+        const outer = new THREE.Mesh(
+          new THREE.RingGeometry(
+            isTarget ? 1.02 : 0.68,
+            isTarget ? 1.34 : 0.92,
+            44,
+          ),
+          new THREE.MeshBasicMaterial({
+            color: isTarget ? 0xffc84b : teamColor,
+            transparent: true,
+            opacity: 0.94,
+            side: THREE.DoubleSide,
+            depthTest: false,
+          }),
+        );
+        outer.rotation.x = -Math.PI / 2;
+        outer.position.y = 0.18;
+        outer.renderOrder = 8;
+        g.add(outer);
+        const core = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.25, 0.9, 12),
+          new THREE.MeshStandardMaterial({
+            color: isTarget ? 0xffb52e : teamColor,
+            emissive: isTarget ? 0xff9d00 : teamColor,
+            emissiveIntensity: isTarget ? 1.4 : 0.35,
+            roughness: 0.4,
+          }),
+        );
+        core.position.y = 0.65;
+        core.castShadow = true;
+        g.add(core);
+        const icon = new THREE.Mesh(
+          site.type === "gate"
+            ? new THREE.TorusGeometry(0.36, 0.09, 8, 18, Math.PI)
+            : new THREE.OctahedronGeometry(isTarget ? 0.48 : 0.32),
+          new THREE.MeshStandardMaterial({
+            color: 0xffedba,
+            emissive: isTarget ? 0xffb52e : 0x000000,
+            emissiveIntensity: isTarget ? 1.6 : 0,
+            roughness: 0.35,
+          }),
+        );
+        icon.position.y = site.type === "gate" ? 1.25 : 1.22;
+        if (site.type === "gate") icon.rotation.z = Math.PI;
+        g.add(icon);
+        if (isTarget) {
+          const beacon = new THREE.Mesh(
+            new THREE.RingGeometry(1.48, 1.62, 48),
+            new THREE.MeshBasicMaterial({
+              color: 0xffd96b,
+              transparent: true,
+              opacity: 0.9,
+              side: THREE.DoubleSide,
+              depthTest: false,
+            }),
+          );
+          beacon.rotation.x = -Math.PI / 2;
+          beacon.position.y = 0.22;
+          beacon.userData.targetBeacon = true;
+          g.add(beacon);
+        }
+        const stance =
+            site.stance === "defend"
+              ? "盾"
+              : site.stance === "guard"
+                ? "巡"
+                : "待",
+          sprite = new THREE.Sprite(
+            new THREE.SpriteMaterial({
+              map: labelTexture(
+                `${stance} ${site.name}`,
+                site.team === "pku" ? "#df3b50" : "#a569d0",
+              ),
+              transparent: true,
+              depthTest: false,
+            }),
+          );
+        sprite.scale.set(isTarget ? 4.6 : 3.7, isTarget ? 0.82 : 0.68, 1);
+        sprite.position.y = (isTarget ? 4.1 : 2.65) + (site.id % 3) * 0.42;
+        sprite.renderOrder = 20;
+        g.add(sprite);
+        const hit = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.8, 0.8, 2, 12),
+          new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+          }),
+        );
+        hit.position.y = 1;
+        g.add(hit);
+        g.traverse((o) => {
+          o.userData.siteId = site.id;
+        });
+        buildingGroup.add(g);
+        siteObjects.set(site.id, g);
+      });
+    };
+    const textureLoader = new THREE.TextureLoader(),
+      emblemTex = {
+        pku: textureLoader.load(`${import.meta.env.BASE_URL}pku-seal.svg`),
+        thu: textureLoader.load(`${import.meta.env.BASE_URL}thu-seal.svg`),
+      };
+    emblemTex.pku.colorSpace = THREE.SRGBColorSpace;
+    emblemTex.thu.colorSpace = THREE.SRGBColorSpace;
+    emblemTex.pku.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    emblemTex.thu.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const discCanvas = document.createElement("canvas");
+    discCanvas.width = 256;
+    discCanvas.height = 256;
+    const discCtx = discCanvas.getContext("2d")!;
+    discCtx.beginPath();
+    discCtx.arc(128, 128, 112, 0, Math.PI * 2);
+    discCtx.fillStyle = "#fffaf0";
+    discCtx.fill();
+    discCtx.lineWidth = 14;
+    discCtx.strokeStyle = "#e0bd62";
+    discCtx.stroke();
+    const emblemDisc = new THREE.CanvasTexture(discCanvas);
+    emblemDisc.colorSpace = THREE.SRGBColorSpace;
+    const hpGeometry = new THREE.PlaneGeometry(1, 0.1),
+      hpBackMaterial = new THREE.MeshBasicMaterial({
+        color: 0x17201c,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      }),
+      hpFillMaterials = {
+        pku: new THREE.MeshBasicMaterial({ color: 0xff5368, depthTest: false }),
+        thu: new THREE.MeshBasicMaterial({ color: 0xb67aff, depthTest: false }),
+      },
+      unitBodyGeometry = new THREE.SphereGeometry(0.58, 24, 18),
+      unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
+      unitHandGeometry = new THREE.SphereGeometry(0.09, 8, 6),
+      unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 28),
+      unitBodyMaterials = {
+        pku: new THREE.MeshStandardMaterial({
+          color: 0xc91f3a,
+          roughness: 0.24,
+          metalness: 0.08,
+          emissive: 0xc91f3a,
+          emissiveIntensity: 0.16,
+        }),
+        thu: new THREE.MeshStandardMaterial({
+          color: 0x74429d,
+          roughness: 0.24,
+          metalness: 0.08,
+          emissive: 0x74429d,
+          emissiveIntensity: 0.16,
+        }),
+      },
+      unitLimbMaterial = new THREE.MeshStandardMaterial({
+        color: 0x242824,
+        roughness: 0.8,
+      }),
+      unitBackingMaterial = new THREE.SpriteMaterial({
+        map: emblemDisc,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      }),
+      unitEmblemMaterials = {
+        pku: new THREE.SpriteMaterial({
+          map: emblemTex.pku,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+        thu: new THREE.SpriteMaterial({
+          map: emblemTex.thu,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      },
+      unitGlowMaterials = {
+        pku: new THREE.MeshBasicMaterial({
+          color: 0xc91f3a,
+          transparent: true,
+          opacity: 0.72,
+          side: THREE.DoubleSide,
+        }),
+        thu: new THREE.MeshBasicMaterial({
+          color: 0x74429d,
+          transparent: true,
+          opacity: 0.72,
+          side: THREE.DoubleSide,
+        }),
+      },
+      sharedUnitGeometries = new Set<THREE.BufferGeometry>([
+        hpGeometry,
+        unitBodyGeometry,
+        unitLimbGeometry,
+        unitHandGeometry,
+        unitGlowGeometry,
+      ]),
+      sharedUnitMaterials = new Set<THREE.Material>([
+        hpBackMaterial,
+        hpFillMaterials.pku,
+        hpFillMaterials.thu,
+        unitBodyMaterials.pku,
+        unitBodyMaterials.thu,
+        unitLimbMaterial,
+        unitBackingMaterial,
+        unitEmblemMaterials.pku,
+        unitEmblemMaterials.thu,
+        unitGlowMaterials.pku,
+        unitGlowMaterials.thu,
+      ]);
+    const disposeUnitObject = (object: THREE.Object3D) => {
+      const geometries = new Set<THREE.BufferGeometry>(),
+        materials = new Set<THREE.Material>();
+      object.traverse((child) => {
+        const renderable = child as THREE.Mesh & {
+          material?: THREE.Material | THREE.Material[];
+          geometry?: THREE.BufferGeometry;
+        };
+        if (
+          renderable.geometry &&
+          !sharedUnitGeometries.has(renderable.geometry)
+        )
+          geometries.add(renderable.geometry);
+        const childMaterials = Array.isArray(renderable.material)
+          ? renderable.material
+          : renderable.material
+            ? [renderable.material]
+            : [];
+        childMaterials.forEach((material) => {
+          if (!sharedUnitMaterials.has(material)) materials.add(material);
+        });
+      });
+      geometries.forEach((geometry) => geometry.dispose());
+      materials.forEach((material) => material.dispose());
+    };
+    const rebuildUnits = () => {
+      unitGroup.children.slice().forEach((child) => {
+        unitGroup.remove(child);
+        disposeUnitObject(child);
+      });
+      unitObjects.clear();
+      gameRef.current.units.forEach((u) => {
+        const g = new THREE.Group(),
+          region = regionForX(u.x);
+        const body = new THREE.Mesh(
+          unitBodyGeometry,
+          unitBodyMaterials[u.team],
+        );
+        body.position.y = 0.98;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        g.add(body);
+        const backing = new THREE.Sprite(unitBackingMaterial);
+        backing.scale.set(0.94, 0.94, 1);
+        backing.position.y = 1;
+        backing.renderOrder = 30;
+        g.add(backing);
+        const emblem = new THREE.Sprite(unitEmblemMaterials[u.team]);
+        emblem.scale.set(0.82, 0.82, 1);
+        emblem.position.y = 1;
+        emblem.renderOrder = 31;
+        g.add(emblem);
+        const arms: THREE.Mesh[] = [],
+          legs: THREE.Mesh[] = [];
+        [-1, 1].forEach((s) => {
+          const arm = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
+          arm.position.set(s * 0.54, 0.9, 0);
+          arm.rotation.z = s * 0.95;
+          g.add(arm);
+          arms.push(arm);
+          const leg = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
+          leg.position.set(s * 0.25, 0.35, 0);
+          leg.rotation.z = s * 0.28;
+          g.add(leg);
+          legs.push(leg);
+          const hand = new THREE.Mesh(unitHandGeometry, unitLimbMaterial);
+          hand.position.set(s * 0.82, 0.71, 0);
+          g.add(hand);
+        });
+        const glow = new THREE.Mesh(
+          unitGlowGeometry,
+          unitGlowMaterials[u.team],
+        );
+        glow.rotation.x = -Math.PI / 2;
+        glow.position.y = 0.05;
+        g.add(glow);
+        const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
+          hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
+        hpBack.scale.set(0.78, 1, 1);
+        hpBack.position.set(0, 1.72, 0.05);
+        hpBack.renderOrder = 42;
+        hpBack.visible = false;
+        hpFill.scale.set(0.74, 0.62, 1);
+        hpFill.position.set(0, 1.72, 0.06);
+        hpFill.renderOrder = 43;
+        hpFill.visible = false;
+        g.add(hpBack, hpFill);
+        g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
+        g.userData = {
+          unitId: u.id,
+          arms,
+          legs,
+          body,
+          glow,
+          hpBack,
+          hpFill,
+          fightingUntil: 0,
+        };
+        unitGroup.add(g);
+        unitObjects.set(u.id, g);
+      });
+    };
+    rebuildBuildings();
+    rebuildUnits();
+    rebuildCommandLines();
+    const treeGroup = new THREE.Group();
+    scene.add(treeGroup);
+    let seed = 91723;
+    const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+    const tg = new THREE.CylinderGeometry(0.07, 0.11, 0.86, 7),
+      tm = new THREE.MeshStandardMaterial({ color: 0x61412f, roughness: 1 }),
+      cg = new THREE.SphereGeometry(0.52, 10, 8),
+      cms = [0x315d36, 0x467648, 0x5b8a4e].map(
+        (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92 }),
+      );
+    for (const [r, count] of [
+      [regions.main, 240],
+      [regions.newYanyuan, 90],
+      [regions.medical, 65],
+      [regions.wanliu, 55],
+    ] as [any, number][]) {
+      for (let i = 0; i < count; i++) {
+        const x = r.offsetX - r.width / 2 + rnd() * r.width,
+          z = -r.depth / 2 + rnd() * r.depth;
+        if (
+          gameRef.current.sites.some(
+            (s) => Math.hypot(s.x - x, s.z - z) < 3.2,
+          ) ||
+          r.roads.some((road: any) =>
+            road.points.some(
+              (p: number[]) => Math.hypot(p[0] - x, p[1] - z) < 0.5,
+            ),
+          )
+        )
+          continue;
+        const g = new THREE.Group(),
+          tr = new THREE.Mesh(tg, tm);
+        tr.position.y = 0.43;
+        tr.castShadow = true;
+        g.add(tr);
+        cms.forEach((m, j) => {
+          const cr = new THREE.Mesh(cg, m);
+          cr.scale.set(1.1 - j * 0.18, 0.65, 1.1 - j * 0.18);
+          cr.position.y = 0.92 + j * 0.32;
+          cr.castShadow = true;
+          g.add(cr);
+        });
+        g.position.set(x, terrainHeight(r, x, z), z);
+        treeGroup.add(g);
+      }
+    }
+    const lampPositions: { x: number; z: number; r: any }[] = [],
+      lampSeen = new Set<string>();
+    for (const r of [
+      regions.main,
+      regions.newYanyuan,
+      regions.medical,
+      regions.wanliu,
+    ]) {
+      const cap = r === regions.main ? 650 : 90,
+        pushLamp = (x: number, z: number) => {
+          const key = `${Math.round(x * 2)}/${Math.round(z * 2)}`;
+          if (
+            lampSeen.has(key) ||
+            lampPositions.filter((p) => p.r === r).length >= cap
+          )
+            return;
+          lampSeen.add(key);
+          lampPositions.push({ x, z, r });
+        };
+      for (const [x, z] of r.lamps ?? []) pushLamp(x, z);
+      for (const road of r.roads) {
+        if (
+          ["footway", "path", "steps", "corridor", "track"].includes(road.kind)
+        )
+          continue;
+        for (let k = 1; k < road.points.length; k++) {
+          const [x1, z1] = road.points[k - 1],
+            [x2, z2] = road.points[k],
+            dx = x2 - x1,
+            dz = z2 - z1,
+            len = Math.hypot(dx, dz);
+          if (len < 1.8) continue;
+          const count = Math.floor(len / 3.1),
+            nx = -dz / len,
+            nz = dx / len;
+          for (let n = 1; n <= count; n++) {
+            const t = n / (count + 1),
+              side = (n + k) % 2 ? 1 : -1;
+            pushLamp(
+              x1 + dx * t + nx * (road.width / 2 + 0.16) * side,
+              z1 + dz * t + nz * (road.width / 2 + 0.16) * side,
+            );
+          }
+        }
+      }
+    }
+    const poleGeometry = new THREE.CylinderGeometry(0.025, 0.038, 0.82, 6),
+      poleMaterial = new THREE.MeshStandardMaterial({
+        color: 0x303735,
+        roughness: 0.76,
+      }),
+      bulbGeometry = new THREE.SphereGeometry(0.065, 8, 6),
+      lampBulbMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffe3a6,
+        emissive: 0xffb23f,
+        emissiveIntensity: 0.1,
+        roughness: 0.25,
+      }),
+      poles = new THREE.InstancedMesh(
+        poleGeometry,
+        poleMaterial,
+        lampPositions.length,
+      ),
+      bulbs = new THREE.InstancedMesh(
+        bulbGeometry,
+        lampBulbMaterial,
+        lampPositions.length,
+      ),
+      lampDummy = new THREE.Object3D();
+    lampPositions.forEach((p, i) => {
+      const base = terrainHeight(p.r, p.x, p.z);
+      lampDummy.position.set(p.x, base + 0.41, p.z);
+      lampDummy.updateMatrix();
+      poles.setMatrixAt(i, lampDummy.matrix);
+      lampDummy.position.y = base + 0.86;
+      lampDummy.updateMatrix();
+      bulbs.setMatrixAt(i, lampDummy.matrix);
+    });
+    poles.instanceMatrix.needsUpdate = true;
+    bulbs.instanceMatrix.needsUpdate = true;
+    scene.add(poles, bulbs);
+    const lights: THREE.PointLight[] = [];
+    lampPositions
+      .filter((_, i) => i % 41 === 0)
+      .slice(0, 22)
+      .forEach((p) => {
+        const l = new THREE.PointLight(0xffc66f, 0, 5, 2);
+        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.9, p.z);
+        scene.add(l);
+        lights.push(l);
+      });
+    const ray = new THREE.Raycaster(),
+      mouse = new THREE.Vector2(),
+      groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    let down: { x: number; y: number; site?: number } | null = null,
+      previewLine: THREE.Object3D | null = null;
+    const setRay = (ev: MouseEvent) => {
+      const r = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+      mouse.y = (-(ev.clientY - r.top) / r.height) * 2 + 1;
+      ray.setFromCamera(mouse, camera);
+    };
+    const hitSite = (ev: PointerEvent) => {
+      setRay(ev);
+      const hit = ray.intersectObjects(buildingGroup.children, true)[0];
+      return hit?.object.userData.siteId as number | undefined;
+    };
+    const groundAt = (ev: PointerEvent) => {
+      setRay(ev);
+      const p = new THREE.Vector3();
+      return ray.ray.intersectPlane(groundPlane, p) ? p : null;
+    };
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      const site = hitSite(e);
+      down = { x: e.clientX, y: e.clientY, site };
+      if (site != null) {
+        controls.enabled = false;
+        renderer.domElement.setPointerCapture(e.pointerId);
+      }
+    });
+    renderer.domElement.addEventListener("pointermove", (e) => {
+      if (
+        down?.site == null ||
+        Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8
+      )
+        return;
+      const p = groundAt(e),
+        s = gameRef.current.sites[down.site];
+      if (!p || !s) return;
+      if (previewLine) {
+        commandGroup.remove(previewLine);
+        disposeCommandObject(previewLine);
+      }
+      previewLine = addCommandLine(
+        new THREE.Vector3(s.x, 1.2, s.z),
+        new THREE.Vector3(p.x, 1.2, p.z),
+        true,
+      );
+    });
+    renderer.domElement.addEventListener("pointerup", (e) => {
+      if (!down) return;
+      controls.enabled = true;
+      if (renderer.domElement.hasPointerCapture(e.pointerId))
+        renderer.domElement.releasePointerCapture(e.pointerId);
+      if (previewLine) {
+        commandGroup.remove(previewLine);
+        disposeCommandObject(previewLine);
+        previewLine = null;
+      }
+      const end = hitSite(e),
+        moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8;
+      if (!moved && down.site != null) setSelected(down.site);
+      if (moved && down.site != null && end != null && end !== down.site) {
+        const source = gameRef.current.sites[down.site],
+          target = gameRef.current.sites[end];
+        if (source.team === "pku") {
+          source.orderTarget = target.id;
+          const troops = gameRef.current.units.filter(
+            (u) => u.team === "pku" && u.siteId === source.id,
+          );
+          troops.forEach((u) => {
+            u.targetSiteId = target.id;
+            u.tx = target.x + ((u.id % 5) - 2) * 0.35;
+            u.tz = target.z + ((u.id % 4) - 1.5) * 0.35;
+          });
+          rebuildCommandLines();
+          setNotice(
+            troops.length
+              ? `${source.name} → ${target.name}：${troops.length}支小队出发`
+              : `${source.name}暂无可调动兵力`,
+          );
+        } else setNotice("只能从北大控制的据点发出命令");
+      }
+      down = null;
+    });
+    renderer.domElement.addEventListener("pointercancel", (e) => {
+      controls.enabled = true;
+      if (renderer.domElement.hasPointerCapture(e.pointerId))
+        renderer.domElement.releasePointerCapture(e.pointerId);
+      if (previewLine) {
+        commandGroup.remove(previewLine);
+        disposeCommandObject(previewLine);
+        previewLine = null;
+      }
+      down = null;
+    });
+    renderer.domElement.addEventListener("dblclick", (e) => {
+      setRay(e);
+      const hit = ray
+          .intersectObjects(commandGroup.children, true)
+          .find((item) => item.object.userData.commandSourceId != null),
+        sourceId = hit?.object.userData.commandSourceId as number | undefined;
+      if (sourceId == null) return;
+      const source = gameRef.current.sites[sourceId];
+      if (!source) return;
+      source.orderTarget = undefined;
+      gameRef.current.units
+        .filter((unit) => unit.siteId === sourceId)
+        .forEach((unit) => {
+          unit.targetSiteId = undefined;
+          unit.tx = unit.x;
+          unit.tz = unit.z;
+        });
+      rebuildCommandLines();
+      setNotice(`已取消 ${source.name} 的行军命令`);
+    });
+    let combatPulse = 0;
+    const combatTimer = window.setInterval(() => {
+      const g = gameRef.current,
+        now = performance.now(),
+        used = new Set<number>(),
+        dead = new Set<number>();
+      let ordersChanged = false;
+      combatPulse++;
+      const cellSize = 1.5,
+        grid = new Map<string, UnitState[]>(),
+        cellKey = (x: number, z: number) =>
+          `${Math.floor(x / cellSize)}/${Math.floor(z / cellSize)}`;
+      g.units.forEach((unit) => {
+        const key = cellKey(unit.x, unit.z),
+          bucket = grid.get(key);
+        if (bucket) bucket.push(unit);
+        else grid.set(key, [unit]);
+      });
+      for (const unit of g.units) {
+        if (used.has(unit.id) || unit.hp <= 0) continue;
+        let enemy: UnitState | undefined,
+          best = 1.35;
+        const gx = Math.floor(unit.x / cellSize),
+          gz = Math.floor(unit.z / cellSize),
+          nearby: UnitState[] = [];
+        for (let ox = -1; ox <= 1; ox++)
+          for (let oz = -1; oz <= 1; oz++)
+            nearby.push(...(grid.get(`${gx + ox}/${gz + oz}`) ?? []));
+        for (const candidate of nearby) {
+          if (
+            candidate.team === unit.team ||
+            candidate.hp <= 0 ||
+            used.has(candidate.id)
+          )
+            continue;
+          const distance = Math.hypot(
+            candidate.x - unit.x,
+            candidate.z - unit.z,
+          );
+          if (distance < best) {
+            best = distance;
+            enemy = candidate;
+          }
+        }
+        if (!enemy) continue;
+        used.add(unit.id);
+        used.add(enemy.id);
+        unit.tx = unit.x;
+        unit.tz = unit.z;
+        enemy.tx = enemy.x;
+        enemy.tz = enemy.z;
+        const unitMesh = unitObjects.get(unit.id),
+          enemyMesh = unitObjects.get(enemy.id);
+        if (unitMesh) unitMesh.userData.fightingUntil = now + 260;
+        if (enemyMesh) enemyMesh.userData.fightingUntil = now + 260;
+        unit.hp -= 1.25 + enemy.supply * 0.007;
+        enemy.hp -= 1.25 + unit.supply * 0.007;
+        unit.supply = Math.max(0, unit.supply - 0.07);
+        enemy.supply = Math.max(0, enemy.supply - 0.07);
+        if (unit.hp <= 0) dead.add(unit.id);
+        if (enemy.hp <= 0) dead.add(enemy.id);
+        if (combatPulse % 3 === 0 && combatEffects.length < 18)
+          spawnCombatEffect((unit.x + enemy.x) / 2, (unit.z + enemy.z) / 2);
+      }
+      for (const unit of g.units) {
+        if (used.has(unit.id)) continue;
+        if (unit.targetSiteId != null) {
+          const target = g.sites[unit.targetSiteId];
+          if (!target) continue;
+          const distance = Math.hypot(unit.x - target.x, unit.z - target.z);
+          if (target.team === unit.team && distance < 1.18) {
+            unit.siteId = target.id;
+            unit.targetSiteId = undefined;
+            const angle = ((unit.id % 7) / 7) * Math.PI * 2;
+            unit.tx = target.x + Math.cos(angle) * 0.92;
+            unit.tz = target.z + Math.sin(angle) * 0.92;
+            ordersChanged = true;
+          } else {
+            unit.tx = target.x + ((unit.id % 5) - 2) * 0.35;
+            unit.tz = target.z + ((unit.id % 4) - 1.5) * 0.35;
+          }
+          continue;
+        }
+        const home = g.sites[unit.siteId];
+        if (!home) continue;
+        const angle = ((unit.id % 7) / 7) * Math.PI * 2;
+        unit.tx = home.x + Math.cos(angle) * 0.92;
+        unit.tz = home.z + Math.sin(angle) * 0.92;
+      }
+      if (ordersChanged) {
+        g.sites.forEach((source) => {
+          if (source.orderTarget == null) return;
+          const stillMoving = g.units.some(
+            (unit) =>
+              unit.siteId === source.id &&
+              unit.targetSiteId === source.orderTarget,
+          );
+          if (!stillMoving) source.orderTarget = undefined;
+        });
+        rebuildCommandLines();
+      }
+      if (dead.size) {
+        for (const unit of g.units) {
+          if (!dead.has(unit.id)) continue;
+          g.deaths[unit.team]++;
+          const mesh = unitObjects.get(unit.id);
+          if (mesh) {
+            unitGroup.remove(mesh);
+            disposeUnitObject(mesh);
+          }
+          unitObjects.delete(unit.id);
+        }
+        g.units = g.units.filter((unit) => !dead.has(unit.id));
+        rebuildCommandLines();
+      }
+      for (const site of g.sites) {
+        const attackers = g.units.filter(
+          (unit) =>
+            unit.targetSiteId === site.id &&
+            unit.team !== site.team &&
+            Math.hypot(unit.x - site.x, unit.z - site.z) < 1.55,
+        );
+        if (!attackers.length) continue;
+        const defenders = g.units.filter(
+          (unit) =>
+            unit.team === site.team &&
+            Math.hypot(unit.x - site.x, unit.z - site.z) < 1.85,
+        );
+        if (defenders.length) continue;
+        const newTeam = attackers[0].team;
+        site.team = newTeam;
+        site.supply = 45;
+        attackers.forEach((unit, index) => {
+          unit.siteId = site.id;
+          unit.targetSiteId = undefined;
+          const angle = (index / attackers.length) * Math.PI * 2;
+          unit.tx = site.x + Math.cos(angle) * 0.9;
+          unit.tz = site.z + Math.sin(angle) * 0.9;
+        });
+        site.orderTarget = undefined;
+        g.sites.forEach((source) => {
+          if (source.orderTarget === site.id) source.orderTarget = undefined;
+        });
+        rebuildBuildings();
+        rebuildCommandLines();
+        setNotice(
+          site.type === "target" && newTeam === "pku"
+            ? `胜利：北京大学已攻克${site.name}`
+            : `${site.name}已被${newTeam === "pku" ? "北大" : "清华"}控制`,
+        );
+      }
+    }, 120);
+    let raf = 0,
+      last = performance.now(),
+      statAt = 0;
+    const animate = (now: number) => {
+      raf = requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const g = gameRef.current;
+      if (autoDayRef.current) g.timeOfDay = (g.timeOfDay + dt * 0.08) % 24;
+      const angle = ((g.timeOfDay - 6) / 24) * Math.PI * 2,
+        day = THREE.MathUtils.smoothstep(Math.sin(angle), -0.12, 0.35),
+        night = 1 - day;
+      sun.position.set(
+        Math.cos(angle) * 55,
+        Math.max(-4, Math.sin(angle) * 55),
+        25,
+      );
+      sun.intensity = day * 3.4;
+      moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
+      moon.intensity = night * 0.6;
+      hemi.intensity = 0.18 + day * 1.72;
+      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x29436e);
+      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x101721);
+      const sky = new THREE.Color(0x07101f).lerp(
+        new THREE.Color(0x9fc5d8),
+        day,
+      );
+      scene.background = sky;
+      (scene.fog as THREE.FogExp2).color.copy(sky);
+      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 3.2));
+      lampBulbMaterial.emissiveIntensity = 0.08 + night * 4.8;
+      lights.forEach((l) => (l.intensity = night * 5.5));
+      renderer.toneMappingExposure = 0.72 + day * 0.38;
+      commandAnimations.forEach((animation) => {
+        animation.movers.forEach((mover, index) => {
+          const t = (now * 0.00016 + animation.phase + index / 5) % 1;
+          animation.curve.getPoint(t, mover.position);
+          animation.curve.getTangent(t, commandTangent).normalize();
+          mover.quaternion.setFromUnitVectors(commandUp, commandTangent);
+        });
+      });
+      for (let i = combatEffects.length - 1; i >= 0; i--) {
+        const effect = combatEffects[i],
+          progress = (now - effect.born) / 720;
+        if (progress >= 1) {
+          combatGroup.remove(effect.sprite);
+          effect.sprite.material.dispose();
+          combatEffects.splice(i, 1);
+          continue;
+        }
+        effect.sprite.position.y += dt * 0.45;
+        effect.sprite.scale.setScalar(1 + progress * 1.3);
+        (effect.sprite.material as THREE.SpriteMaterial).opacity = 1 - progress;
+      }
+      g.units.forEach((u) => {
+        const mesh = unitObjects.get(u.id);
+        if (!mesh) return;
+        const dx = u.tx - u.x,
+          dz = u.tz - u.z,
+          dist = Math.hypot(dx, dz),
+          fighting = mesh.userData.fightingUntil > now,
+          phase = now * 0.014 + u.id;
+        (mesh.userData.arms as THREE.Mesh[]).forEach(
+          (arm, index) =>
+            (arm.rotation.x =
+              (fighting ? 0.95 : dist > 0.18 ? 0.42 : 0) *
+              Math.sin(phase + index * Math.PI)),
+        );
+        (mesh.userData.legs as THREE.Mesh[]).forEach(
+          (leg, index) =>
+            (leg.rotation.x =
+              (fighting ? 0.38 : dist > 0.18 ? 0.5 : 0) *
+              Math.sin(phase + index * Math.PI)),
+        );
+        mesh.userData.body.position.y =
+          0.98 + (fighting ? Math.abs(Math.sin(phase * 1.7)) * 0.18 : 0);
+        mesh.userData.glow.scale.setScalar(
+          fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1,
+        );
+        const hpRatio = THREE.MathUtils.clamp(u.hp / 100, 0, 1),
+          hpBack = mesh.userData.hpBack as THREE.Mesh,
+          hpFill = mesh.userData.hpFill as THREE.Mesh;
+        hpBack.visible = fighting;
+        hpFill.visible = fighting;
+        hpFill.scale.x = 0.74 * hpRatio;
+        hpFill.position.x = -0.37 * (1 - hpRatio);
+        if (dist > 0.18) {
+          const s = 0.72 * dt;
+          u.x += (dx / dist) * s;
+          u.z += (dz / dist) * s;
+          mesh.position.set(u.x, terrainHeight(regionForX(u.x), u.x, u.z), u.z);
+          mesh.rotation.y = 0;
+        }
+      });
+      if (now - statAt > 500) {
+        statAt = now;
+        setStats({
+          pku: g.units.filter((u) => u.team === "pku").length,
+          thu: g.units.filter((u) => u.team === "thu").length,
+          pkuSites: g.sites.filter((s) => s.team === "pku").length,
+          thuSites: g.sites.filter((s) => s.team === "thu").length,
+        });
+        const h = Math.floor(g.timeOfDay),
+          m = Math.floor((g.timeOfDay % 1) * 60);
+        setClock(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+      }
+      controls.update();
+      const active = regions[regionRef.current],
+        marginX = Math.min(18, active.width * 0.32),
+        marginZ = Math.min(14, active.depth * 0.32),
+        cx = THREE.MathUtils.clamp(
+          controls.target.x,
+          active.offsetX - active.width / 2 + marginX,
+          active.offsetX + active.width / 2 - marginX,
+        ),
+        cz = THREE.MathUtils.clamp(
+          controls.target.z,
+          -active.depth / 2 + marginZ,
+          active.depth / 2 - marginZ,
+        ),
+        shiftX = cx - controls.target.x,
+        shiftZ = cz - controls.target.z;
+      if (shiftX || shiftZ) {
+        controls.target.x = cx;
+        controls.target.z = cz;
+        camera.position.x += shiftX;
+        camera.position.z += shiftZ;
+      }
+      renderer.render(scene, camera);
+    };
+    raf = requestAnimationFrame(animate);
+    const resize = () => {
+      renderer.setSize(host.clientWidth, host.clientHeight);
+      camera.aspect = host.clientWidth / host.clientHeight;
+      camera.updateProjectionMatrix();
+    };
+    addEventListener("resize", resize);
+    sceneApi.current = {
+      sync: () => {
+        rebuildBuildings();
+        rebuildUnits();
+        rebuildCommandLines();
+      },
+      focus: (id) => {
+        regionRef.current = id;
+        const [x, z] =
+          id === "main"
+            ? [-22, 14]
+            : id === "newYanyuan"
+              ? [145, 0]
+              : id === "medical"
+                ? [215, 0]
+                : [275, 0];
+        controls.target.set(x, 0, z);
+        camera.position.set(x, 24, z + 22);
+        controls.update();
+      },
+    };
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(combatTimer);
+      removeEventListener("resize", resize);
+      controls.dispose();
+      renderer.dispose();
+      if (renderer.domElement.parentNode === host)
+        host.removeChild(renderer.domElement);
+    };
+  }, []);
 
-  const saveGame=()=>{const name=saveName.trim()||`存档 ${new Date().toLocaleString('zh-CN')}`,snapshot:Snapshot={version:2,name,savedAt:Date.now(),...structuredClone(gameRef.current)},next=[snapshot,...readSaves().filter(s=>s.name!==name)].slice(0,12);localStorage.setItem(SAVE_KEY,JSON.stringify(next));refreshSaves();};
-  const loadGame=(save:Snapshot)=>{if(save.version===2){const {timeOfDay,resources,deaths,sites,units}=structuredClone(save);gameRef.current={timeOfDay,resources,deaths,sites,units};}else{const fresh=makeFreshGame(),oldSiteById=new Map(save.sites.map(s=>[s.id,s])),freshByName=new Map(fresh.sites.map(s=>[s.name,s]));fresh.sites.forEach(site=>{const old=save.sites.find(s=>s.name===site.name);if(!old)return;site.team=old.team;site.stance=old.stance;site.supply=old.supply;const oldTarget=old.orderTarget==null?null:oldSiteById.get(old.orderTarget);site.orderTarget=oldTarget?freshByName.get(oldTarget.name)?.id:undefined;});fresh.units=save.units.flatMap((unit,index)=>{const oldHome=oldSiteById.get(unit.siteId),home=oldHome?freshByName.get(oldHome.name):undefined;if(!home)return [];const angle=index%7/7*Math.PI*2;return [{...unit,siteId:home.id,targetSiteId:undefined,x:home.x+Math.cos(angle)*1.1,z:home.z+Math.sin(angle)*1.1,tx:home.x,tz:home.z}];});fresh.timeOfDay=save.timeOfDay;fresh.resources=save.resources;fresh.deaths=save.deaths;gameRef.current=fresh;}sceneApi.current?.sync();setSelected(null);setSaveOpen(false);};
-  const deleteSave=(savedAt:number)=>{const next=readSaves().filter(s=>s.savedAt!==savedAt);localStorage.setItem(SAVE_KEY,JSON.stringify(next));setSaves(next);};
-  const newGame=()=>{gameRef.current=makeFreshGame();sceneApi.current?.sync();setSelected(null);};
-  const stanceText=useMemo(()=>({defend:'🛡 防守',guard:'📡 守卫',standby:'⏸ 待命'}),[]);const setStance=(s:Stance)=>{if(!selectedSite||selectedSite.team!=='pku')return;selectedSite.stance=s;setSelected(selectedSite.id);};
-  return <main className="game-shell"><div ref={hostRef} className="webgl-stage"/><header className="hud-top"><div><h1>燕园远征：求真书院</h1><p>OSM导航级路网 · WebGL地形版</p></div><div className="time-pill"><span>{clock}</span><button onClick={()=>setAutoDay(v=>!v)}>{autoDay?'自动昼夜':'时间暂停'}</button></div><button className="save-main" onClick={()=>{refreshSaves();setSaveOpen(true);}}>存档管理</button></header><nav className="region-switch"><button className={region==='main'?'active':''} onClick={()=>{setRegion('main');sceneApi.current?.focus('main');setNotice('已进入燕园—清华园主战场');}}>燕园—清华园</button><button className={region==='newYanyuan'?'active':''} onClick={()=>{setRegion('newYanyuan');sceneApi.current?.focus('newYanyuan');setNotice('已进入北大新燕园校区');}}>北大新燕园</button></nav><div className="command-notice">{notice}</div><aside className="war-overview"><h2>总体战况</h2><div className="stat-grid"><span>总兵力</span><b className="red">{stats.pku}</b><b className="purple">{stats.thu}</b><span>控制据点</span><b className="red">{stats.pkuSites}</b><b className="purple">{stats.thuSites}</b><span>战略资源</span><b className="red">{Math.floor(gameRef.current.resources.pku)}</b><b className="purple">{Math.floor(gameRef.current.resources.thu)}</b><span>累计阵亡</span><b className="red">{gameRef.current.deaths.pku}</b><b className="purple">{gameRef.current.deaths.thu}</b></div><button onClick={newGame}>重新开始</button></aside>
-    <nav className="region-extra"><button className={region==='medical'?'active':''} onClick={()=>{setRegion('medical');sceneApi.current?.focus('medical');setNotice('已进入北大医学部—学院路片区');}}>北大医学部</button><button className={region==='wanliu'?'active':''} onClick={()=>{setRegion('wanliu');sceneApi.current?.focus('wanliu');setNotice('已进入北大万柳学区');}}>北大万柳</button></nav>
-    {selectedSite&&<section className="site-menu"><strong>{selectedSite.name}</strong><p className={selectedSite.team==='pku'?'red':'purple'}>{selectedSite.team==='pku'?'北大控制':'清华控制'} · 补给 {Math.round(selectedSite.supply)}</p><div>{(Object.keys(stanceText) as Stance[]).map(s=><button key={s} className={selectedSite.stance===s?'active':''} disabled={selectedSite.team!=='pku'} onClick={()=>setStance(s)}>{stanceText[s]}</button>)}</div><small>从此据点拖向友方可增援，拖向敌方可进攻</small></section>}
-    <div className="day-slider"><span>昼夜</span><input aria-label="时间" type="range" min="0" max="24" step=".1" value={gameRef.current.timeOfDay} onChange={e=>{gameRef.current.timeOfDay=Number(e.target.value);setAutoDay(false);setClock(`${String(Math.floor(Number(e.target.value))).padStart(2,'0')}:00`);}}/></div>
-    <div className="map-attribution">道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo</div>
-    {saveOpen&&<div className="modal-backdrop" onMouseDown={()=>setSaveOpen(false)}><section className="save-modal" onMouseDown={e=>e.stopPropagation()}><div className="save-head"><div><small>本机存档</small><h2>战局档案馆</h2></div><button onClick={()=>setSaveOpen(false)}>×</button></div><div className="new-save"><input value={saveName} maxLength={24} onChange={e=>setSaveName(e.target.value)} placeholder="输入存档名称"/><button onClick={saveGame}>保存当前战局</button></div><div className="save-list">{!saves.length&&<p className="empty">暂无存档</p>}{saves.map(s=><article key={s.savedAt}><div><strong>{s.name}</strong><span>{new Date(s.savedAt).toLocaleString('zh-CN')} · {s.units.length}人 · {s.timeOfDay.toFixed(1)}时</span></div><button className="enter" onClick={()=>loadGame(s)}>进入</button><button className="delete" onClick={()=>deleteSave(s.savedAt)}>删除</button></article>)}</div><p className="save-note">存档保存在当前浏览器的本地存储中；清除浏览器数据会一并删除。</p></section></div>}
-  </main>;
+  const saveGame = () => {
+    const name =
+        saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
+      snapshot: Snapshot = {
+        version: 2,
+        name,
+        savedAt: Date.now(),
+        ...structuredClone(gameRef.current),
+      },
+      next = [snapshot, ...readSaves().filter((s) => s.name !== name)].slice(
+        0,
+        12,
+      );
+    localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+    refreshSaves();
+  };
+  const loadGame = (save: Snapshot) => {
+    if (save.version === 2) {
+      const { timeOfDay, resources, deaths, sites, units } =
+        structuredClone(save);
+      gameRef.current = { timeOfDay, resources, deaths, sites, units };
+    } else {
+      const fresh = makeFreshGame(),
+        oldSiteById = new Map(save.sites.map((s) => [s.id, s])),
+        freshByName = new Map(fresh.sites.map((s) => [s.name, s]));
+      fresh.sites.forEach((site) => {
+        const old = save.sites.find((s) => s.name === site.name);
+        if (!old) return;
+        site.team = old.team;
+        site.stance = old.stance;
+        site.supply = old.supply;
+        const oldTarget =
+          old.orderTarget == null ? null : oldSiteById.get(old.orderTarget);
+        site.orderTarget = oldTarget
+          ? freshByName.get(oldTarget.name)?.id
+          : undefined;
+      });
+      fresh.units = save.units.flatMap((unit, index) => {
+        const oldHome = oldSiteById.get(unit.siteId),
+          home = oldHome ? freshByName.get(oldHome.name) : undefined;
+        if (!home) return [];
+        const angle = ((index % 7) / 7) * Math.PI * 2;
+        return [
+          {
+            ...unit,
+            siteId: home.id,
+            targetSiteId: undefined,
+            x: home.x + Math.cos(angle) * 1.1,
+            z: home.z + Math.sin(angle) * 1.1,
+            tx: home.x,
+            tz: home.z,
+          },
+        ];
+      });
+      fresh.timeOfDay = save.timeOfDay;
+      fresh.resources = save.resources;
+      fresh.deaths = save.deaths;
+      gameRef.current = fresh;
+    }
+    sceneApi.current?.sync();
+    setSelected(null);
+    setSaveOpen(false);
+  };
+  const deleteSave = (savedAt: number) => {
+    const next = readSaves().filter((s) => s.savedAt !== savedAt);
+    localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+    setSaves(next);
+  };
+  const newGame = () => {
+    gameRef.current = makeFreshGame();
+    sceneApi.current?.sync();
+    setSelected(null);
+  };
+  const stanceText = useMemo(
+    () => ({ defend: "🛡 防守", guard: "📡 守卫", standby: "⏸ 待命" }),
+    [],
+  );
+  const setStance = (s: Stance) => {
+    if (!selectedSite || selectedSite.team !== "pku") return;
+    selectedSite.stance = s;
+    setSelected(selectedSite.id);
+  };
+  return (
+    <main className="game-shell">
+      <div ref={hostRef} className="webgl-stage" />
+      <header className="hud-top">
+        <div>
+          <h1>燕园远征：求真书院</h1>
+          <p>OSM导航级路网 · WebGL地形版</p>
+        </div>
+        <div className="time-pill">
+          <span>{clock}</span>
+          <button onClick={() => setAutoDay((v) => !v)}>
+            {autoDay ? "自动昼夜" : "时间暂停"}
+          </button>
+        </div>
+        <button
+          className="save-main"
+          onClick={() => {
+            refreshSaves();
+            setSaveOpen(true);
+          }}
+        >
+          存档管理
+        </button>
+      </header>
+      <nav className="region-switch">
+        <button
+          className={region === "main" ? "active" : ""}
+          onClick={() => {
+            setRegion("main");
+            sceneApi.current?.focus("main");
+            setNotice("已进入燕园—清华园主战场");
+          }}
+        >
+          燕园—清华园
+        </button>
+        <button
+          className={region === "newYanyuan" ? "active" : ""}
+          onClick={() => {
+            setRegion("newYanyuan");
+            sceneApi.current?.focus("newYanyuan");
+            setNotice("已进入北大新燕园校区");
+          }}
+        >
+          北大新燕园
+        </button>
+      </nav>
+      <div className="command-notice">{notice}</div>
+      <aside className="war-overview">
+        <h2>总体战况</h2>
+        <div className="stat-grid">
+          <span>总兵力</span>
+          <b className="red">{stats.pku}</b>
+          <b className="purple">{stats.thu}</b>
+          <span>控制据点</span>
+          <b className="red">{stats.pkuSites}</b>
+          <b className="purple">{stats.thuSites}</b>
+          <span>战略资源</span>
+          <b className="red">{Math.floor(gameRef.current.resources.pku)}</b>
+          <b className="purple">{Math.floor(gameRef.current.resources.thu)}</b>
+          <span>累计阵亡</span>
+          <b className="red">{gameRef.current.deaths.pku}</b>
+          <b className="purple">{gameRef.current.deaths.thu}</b>
+        </div>
+        <button onClick={newGame}>重新开始</button>
+      </aside>
+      <nav className="region-extra">
+        <button
+          className={region === "medical" ? "active" : ""}
+          onClick={() => {
+            setRegion("medical");
+            sceneApi.current?.focus("medical");
+            setNotice("已进入北大医学部—学院路片区");
+          }}
+        >
+          北大医学部
+        </button>
+        <button
+          className={region === "wanliu" ? "active" : ""}
+          onClick={() => {
+            setRegion("wanliu");
+            sceneApi.current?.focus("wanliu");
+            setNotice("已进入北大万柳学区");
+          }}
+        >
+          北大万柳
+        </button>
+      </nav>
+      {selectedSite && (
+        <section className="site-menu">
+          <strong>{selectedSite.name}</strong>
+          <p className={selectedSite.team === "pku" ? "red" : "purple"}>
+            {selectedSite.team === "pku" ? "北大控制" : "清华控制"} · 补给{" "}
+            {Math.round(selectedSite.supply)}
+          </p>
+          <div>
+            {(Object.keys(stanceText) as Stance[]).map((s) => (
+              <button
+                key={s}
+                className={selectedSite.stance === s ? "active" : ""}
+                disabled={selectedSite.team !== "pku"}
+                onClick={() => setStance(s)}
+              >
+                {stanceText[s]}
+              </button>
+            ))}
+          </div>
+          <small>从此据点拖向友方可增援，拖向敌方可进攻</small>
+        </section>
+      )}
+      <div className="day-slider">
+        <span>昼夜</span>
+        <input
+          aria-label="时间"
+          type="range"
+          min="0"
+          max="24"
+          step=".1"
+          value={gameRef.current.timeOfDay}
+          onChange={(e) => {
+            gameRef.current.timeOfDay = Number(e.target.value);
+            setAutoDay(false);
+            setClock(
+              `${String(Math.floor(Number(e.target.value))).padStart(2, "0")}:00`,
+            );
+          }}
+        />
+      </div>
+      <div className="map-attribution">
+        道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo
+      </div>
+      {saveOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setSaveOpen(false)}>
+          <section
+            className="save-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="save-head">
+              <div>
+                <small>本机存档</small>
+                <h2>战局档案馆</h2>
+              </div>
+              <button onClick={() => setSaveOpen(false)}>×</button>
+            </div>
+            <div className="new-save">
+              <input
+                value={saveName}
+                maxLength={24}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder="输入存档名称"
+              />
+              <button onClick={saveGame}>保存当前战局</button>
+            </div>
+            <div className="save-list">
+              {!saves.length && <p className="empty">暂无存档</p>}
+              {saves.map((s) => (
+                <article key={s.savedAt}>
+                  <div>
+                    <strong>{s.name}</strong>
+                    <span>
+                      {new Date(s.savedAt).toLocaleString("zh-CN")} ·{" "}
+                      {s.units.length}人 · {s.timeOfDay.toFixed(1)}时
+                    </span>
+                  </div>
+                  <button className="enter" onClick={() => loadGame(s)}>
+                    进入
+                  </button>
+                  <button
+                    className="delete"
+                    onClick={() => deleteSave(s.savedAt)}
+                  >
+                    删除
+                  </button>
+                </article>
+              ))}
+            </div>
+            <p className="save-note">
+              存档保存在当前浏览器的本地存储中；清除浏览器数据会一并删除。
+            </p>
+          </section>
+        </div>
+      )}
+    </main>
+  );
 }
