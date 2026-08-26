@@ -5,9 +5,6 @@ import fs from 'node:fs/promises';
 // cover the full declared rectangle without gaps.
 const regionSpecs = [
   { id:'main',label:'燕园—清华园及相连片区',bbox:[39.974,116.284,40.027,116.353],width:132,offsetX:0,tiles:[4,4] },
-  { id:'newYanyuan',label:'北大新燕园',bbox:[40.1687,116.1485,40.1813,116.1655],width:48,offsetX:145,tiles:[1,1] },
-  { id:'medical',label:'北大医学部—学院路',bbox:[39.9792,116.3462,39.9862,116.3582],width:42,offsetX:215,tiles:[1,1] },
-  { id:'wanliu',label:'北大万柳学区',bbox:[39.9562,116.2862,39.9635,116.2972],width:38,offsetX:275,tiles:[1,1] },
 ];
 const regions=regionSpecs.map(spec=>{
   const [s,w,n,e]=spec.bbox,lat0=(s+n)/2*Math.PI/180,metresWide=(e-w)*111320*Math.cos(lat0),metresDeep=(n-s)*110574;
