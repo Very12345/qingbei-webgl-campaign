@@ -393,6 +393,25 @@ input {
   grid-template-columns: none !important;
   margin: 8px 0;
 }
+.site-mechanic {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid #ffffff1c;
+  border-radius: 8px;
+  background: #0e1715aa;
+}
+.site-mechanic > span {
+  font-size: 20px;
+}
+.site-mechanic > small {
+  margin: 0 !important;
+  color: #d9ddcf;
+  font-size: 10px;
+}
 .rename-row input {
   min-width: 0;
   flex: 1;
@@ -463,6 +482,55 @@ input {
   padding: 20px;
   background: #020506a8;
   pointer-events: none;
+}
+.victory-backdrop {
+  position: fixed;
+  z-index: 140;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #020506c7;
+  backdrop-filter: blur(8px);
+}
+.victory-card {
+  width: min(620px, 94vw);
+  padding: 34px;
+  border: 3px double #f0d57e;
+  background: linear-gradient(145deg, #1a211d, #080d0b);
+  box-shadow: 0 30px 120px #000;
+  text-align: center;
+}
+.victory-card.pku {
+  border-color: #ff6479;
+}
+.victory-card.thu {
+  border-color: #ba7cea;
+}
+.victory-card > small {
+  color: #cfbd81;
+  letter-spacing: 5px;
+}
+.victory-card h2 {
+  margin: 14px 0;
+  color: #fff0ba;
+  font:
+    900 34px/1.2 "SimSun",
+    serif;
+}
+.victory-card p {
+  color: #e2e5db;
+  line-height: 1.8;
+}
+.victory-card button {
+  width: 100%;
+  margin-top: 14px;
+  border: 1px solid #e7cd76;
+  padding: 11px;
+  background: #6f2638;
+  color: #fff7d1;
+  cursor: pointer;
+  font-weight: 900;
 }
 .event-card {
   display: grid;
