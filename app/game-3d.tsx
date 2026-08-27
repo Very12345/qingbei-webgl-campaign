@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
@@ -710,10 +711,12 @@ export default function Game3D() {
   const playerTeamRef = useRef<Team>("pku");
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [homeSettingsOpen, setHomeSettingsOpen] = useState(false);
-  const [homePage, setHomePage] = useState<"new" | "servers" | "settings">(
-    "new",
+  const [homePage, setHomePage] = useState<
+    "menu" | "new" | "servers" | "settings"
+  >(
+    "menu",
   );
+  const [newGameTeam, setNewGameTeam] = useState<Team>("pku");
   const [openToLan, setOpenToLan] = useState(false);
   const [lanInput, setLanInput] = useState("");
   const [lanOutput, setLanOutput] = useState("");
@@ -745,6 +748,9 @@ export default function Game3D() {
     worldZ: number;
   } | null>(null);
   const [directControl, setDirectControl] = useState(false);
+  const joystickRef = useRef<HTMLDivElement>(null);
+  const mobileMoveRef = useRef({ x: 0, z: 0 });
+  const [joystickKnob, setJoystickKnob] = useState({ x: 0, y: 0 });
   const [assetOpen, setAssetOpen] = useState(false);
   const [eventLogOpen, setEventLogOpen] = useState(false);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
@@ -922,6 +928,25 @@ export default function Game3D() {
     const windowMaterials: THREE.MeshStandardMaterial[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main;
+    const footprintArea = (points: readonly (readonly number[])[]) =>
+      Math.abs(
+        points.reduce((sum, point, index) => {
+          const next = points[(index + 1) % points.length];
+          return sum + point[0] * next[1] - next[0] * point[1];
+        }, 0) / 2,
+      );
+    const gameplayBuildingCache = new WeakMap<object, any[]>();
+    const gameplayBuildings = (r: any) => {
+      const cached = gameplayBuildingCache.get(r);
+      if (cached) return cached;
+      const filtered = r.buildings.filter((building: any) => {
+        const smallAnonymous =
+          !building.name && footprintArea(building.points) < 0.13;
+        return !smallAnonymous || Math.abs(building.osmId) % 4 !== 0;
+      });
+      gameplayBuildingCache.set(r, filtered);
+      return filtered;
+    };
     const terrainHeight = (r: any, x: number, z: number) => {
       const { cols, rows, heights } = r.terrain,
         u =
@@ -952,6 +977,8 @@ export default function Game3D() {
       minX: number;
       minZ: number;
       blocked: Uint8Array;
+      building: Uint8Array;
+      water: Uint8Array;
       road: Uint8Array;
       component: Int32Array;
       mainComponent: number;
@@ -963,8 +990,10 @@ export default function Game3D() {
         cols = Math.ceil(r.width / cell),
         rows = Math.ceil(r.depth / cell),
         blocked = new Uint8Array(cols * rows),
+        building = new Uint8Array(cols * rows),
+        water = new Uint8Array(cols * rows),
         road = new Uint8Array(cols * rows),
-        markPolygons = (polygons: readonly any[]) => {
+        markPolygons = (polygons: readonly any[], mask: Uint8Array) => {
           for (const polygon of polygons) {
             const xs = polygon.points.map((p: number[]) => p[0]),
               zs = polygon.points.map((p: number[]) => p[1]),
@@ -982,13 +1011,15 @@ export default function Game3D() {
               for (let gx = x0; gx <= x1; gx++) {
                 const x = minX + (gx + 0.5) * cell,
                   z = minZ + (gz + 0.5) * cell;
-                if (pointInPolygon(x, z, polygon.points))
+                if (pointInPolygon(x, z, polygon.points)) {
                   blocked[gz * cols + gx] = 1;
+                  mask[gz * cols + gx] = 1;
+                }
               }
           }
         };
-      markPolygons(r.buildings);
-      markPolygons(r.waters);
+      markPolygons(gameplayBuildings(r), building);
+      markPolygons(r.waters, water);
       for (const route of r.roads) {
         for (let i = 1; i < route.points.length; i++) {
           const [x1, z1] = route.points[i - 1],
@@ -1045,6 +1076,8 @@ export default function Game3D() {
         minX,
         minZ,
         blocked,
+        building,
+        water,
         road,
         component,
         mainComponent,
@@ -1126,7 +1159,13 @@ export default function Game3D() {
             }
         return -1;
       },
-      findPath = (fromX: number, fromZ: number, toX: number, toZ: number) => {
+      findPath = (
+        fromX: number,
+        fromZ: number,
+        toX: number,
+        toZ: number,
+        allowBuildingFallback = false,
+      ) => {
         const grid = navGrid,
           start = nearestOpenIndex(grid, fromX, fromZ),
           goal = nearestOpenIndex(grid, toX, toZ);
@@ -1184,7 +1223,10 @@ export default function Game3D() {
           [1, -1],
           [-1, 1],
           [1, 1],
-        ];
+        ],
+          pathBlocked = (index: number) =>
+            grid.water[index] ||
+            (!allowBuildingFallback && grid.building[index]);
         while (heap.length) {
           const current = pop();
           if (!current || closed[current.index]) continue;
@@ -1198,16 +1240,21 @@ export default function Game3D() {
             if (nx < 0 || nz < 0 || nx >= grid.cols || nz >= grid.rows)
               continue;
             const next = nz * grid.cols + nx;
-            if (grid.blocked[next] || closed[next]) continue;
+            if (pathBlocked(next) || closed[next]) continue;
             if (
               dx &&
               dz &&
-              (grid.blocked[cz * grid.cols + nx] ||
-                grid.blocked[nz * grid.cols + cx])
+              (pathBlocked(cz * grid.cols + nx) ||
+                pathBlocked(nz * grid.cols + cx))
             )
               continue;
             const stepCost =
-                Math.hypot(dx, dz) * (grid.road[next] ? 0.68 : 1.18),
+                Math.hypot(dx, dz) *
+                (grid.building[next]
+                  ? 5.8
+                  : grid.road[next]
+                    ? 0.68
+                    : 1.18),
               nextCost = cost[current.index] + stepCost;
             if (nextCost >= cost[next]) continue;
             cost[next] = nextCost;
@@ -1216,7 +1263,10 @@ export default function Game3D() {
             push({ index: next, score: nextCost + heuristic });
           }
         }
-        if (came[goal] < 0) return [];
+        if (came[goal] < 0)
+          return allowBuildingFallback
+            ? []
+            : findPath(fromX, fromZ, toX, toZ, true);
         const reversed: [number, number][] = [];
         let cursor = goal;
         while (cursor !== start && cursor >= 0) {
@@ -1236,10 +1286,17 @@ export default function Game3D() {
         return simplified;
       };
     const collisionAreas = [
-      ...regions.main.buildings,
-      ...regions.main.waters,
+      ...gameplayBuildings(regions.main).map((area: any) => ({
+        ...area,
+        obstacleKind: "building" as const,
+      })),
+      ...regions.main.waters.map((area: any) => ({
+        ...area,
+        obstacleKind: "water" as const,
+      })),
     ].map((area: any) => ({
       points: area.points,
+      kind: area.obstacleKind as "building" | "water",
       minX: Math.min(...area.points.map((point: number[]) => point[0])),
       maxX: Math.max(...area.points.map((point: number[]) => point[0])),
       minZ: Math.min(...area.points.map((point: number[]) => point[1])),
@@ -1264,12 +1321,12 @@ export default function Game3D() {
           else collisionIndex.set(key, [area]);
         }
     });
-    const insideObstacle = (x: number, z: number) =>
+    const obstaclesAt = (x: number, z: number) =>
         (
           collisionIndex.get(
             `${Math.floor(x / collisionCell)}/${Math.floor(z / collisionCell)}`,
           ) ?? []
-        ).some(
+        ).filter(
           (area) =>
             x >= area.minX &&
             x <= area.maxX &&
@@ -1277,29 +1334,38 @@ export default function Game3D() {
             z <= area.maxZ &&
             pointInPolygon(x, z, area.points),
         ),
-      walkableWithClearance = (x: number, z: number, clearance = 0.11) => {
-        const samples = [
-          [0, 0],
-          [clearance, 0],
-          [-clearance, 0],
-          [0, clearance],
-          [0, -clearance],
-          [clearance * 0.72, clearance * 0.72],
-          [-clearance * 0.72, clearance * 0.72],
-          [clearance * 0.72, -clearance * 0.72],
-          [-clearance * 0.72, -clearance * 0.72],
-        ];
-        return samples.every(([offsetX, offsetZ]) => {
-          const sampleX = x + offsetX,
-            sampleZ = z + offsetZ,
-            index = navIndex(navGrid, sampleX, sampleZ);
-          return (
-            index >= 0 &&
-            !navGrid.blocked[index] &&
-            navGrid.component[index] === navGrid.mainComponent &&
-            !insideObstacle(sampleX, sampleZ)
-          );
-        });
+      insideObstacle = (x: number, z: number) => obstaclesAt(x, z).length > 0,
+      insideWater = (x: number, z: number) =>
+        obstaclesAt(x, z).some((area) => area.kind === "water"),
+      buildingAt = (x: number, z: number) =>
+        obstaclesAt(x, z).find((area) => area.kind === "building"),
+      enemyInsideBuilding = (
+        building: (typeof collisionAreas)[number],
+        team: Team,
+      ) =>
+        gameRef.current.units.some(
+          (unit) =>
+            unit.team !== team &&
+            unit.x >= building.minX &&
+            unit.x <= building.maxX &&
+            unit.z >= building.minZ &&
+            unit.z <= building.maxZ &&
+            pointInPolygon(unit.x, unit.z, building.points),
+        ),
+      pointWalkable = (x: number, z: number, team?: Team) => {
+        const index = navIndex(navGrid, x, z);
+        if (index < 0 || insideWater(x, z)) return false;
+        const building = buildingAt(x, z);
+        return !building || (!!team && !enemyInsideBuilding(building, team));
+      },
+      walkableWithClearance = (x: number, z: number) => {
+        const index = navIndex(navGrid, x, z);
+        return (
+          index >= 0 &&
+          !navGrid.blocked[index] &&
+          navGrid.component[index] === navGrid.mainComponent &&
+          !insideObstacle(x, z)
+        );
       },
       nearestClearIndex = (x: number, z: number) => {
         const centerX = THREE.MathUtils.clamp(
@@ -1329,11 +1395,7 @@ export default function Game3D() {
       ejectTrappedUnits = () => {
         gameRef.current.units.forEach((unit) => {
           const current = navIndex(navGrid, unit.x, unit.z),
-            trapped =
-              current < 0 ||
-              navGrid.blocked[current] ||
-              navGrid.component[current] !== navGrid.mainComponent ||
-              insideObstacle(unit.x, unit.z);
+            trapped = current < 0 || insideWater(unit.x, unit.z);
           if (!trapped) return;
           const openIndex = nearestClearIndex(unit.x, unit.z);
           if (openIndex < 0) return;
@@ -1822,7 +1884,7 @@ export default function Game3D() {
           0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
         ];
       let bv = 0;
-      for (const b of r.buildings) {
+      for (const b of gameplayBuildings(r)) {
         const pts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
@@ -1907,7 +1969,7 @@ export default function Game3D() {
         roofMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
         windowLimit = r === regions.main ? 13500 : 2600;
-      for (const b of r.buildings) {
+      for (const b of gameplayBuildings(r)) {
         const pts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
@@ -2123,6 +2185,8 @@ export default function Game3D() {
         directLeaderId = null;
         nextDirectFollowerPathAt = 0;
         directKeys.clear();
+        mobileMoveRef.current = { x: 0, z: 0 };
+        setJoystickKnob({ x: 0, y: 0 });
         unitObjects.forEach((object) => {
           const ring = object.userData.selectionRing as THREE.Mesh | undefined;
           ring?.scale.setScalar(1);
@@ -2176,7 +2240,10 @@ export default function Game3D() {
           return;
         }
         if (key === "f" && !directControlActive) {
-          if (!enterDirectControl()) setNotice("请先双击选中一批北大学生");
+          if (!enterDirectControl())
+            setNotice(
+              `请先双击选中一批${playerTeamRef.current === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}学生`,
+            );
           return;
         }
         if (directControlActive && ["w", "a", "s", "d"].includes(key)) {
@@ -2561,16 +2628,28 @@ export default function Game3D() {
       if (!sharedPath.length) return 0;
       source.orderTarget = target.id;
       source.orderPath = sharedPath;
+      let deployed = 0;
       moving.forEach((unit) => {
+        const offsetX = ((unit.id % 7) - 3) * 0.13,
+          offsetZ = ((Math.floor(unit.id / 7) % 7) - 3) * 0.13,
+          personalPath = findPath(
+            unit.x,
+            unit.z,
+            targetX + offsetX,
+            targetZ + offsetZ,
+          );
+        if (!personalPath.length) return;
+        const destination = personalPath.at(-1)!;
         unit.targetSiteId = target.id;
-        unit.path = sharedPath;
+        unit.path = personalPath;
         unit.pathIndex = 0;
-        unit.tx = targetX + ((unit.id % 5) - 2) * 0.24;
-        unit.tz = targetZ + ((unit.id % 4) - 1.5) * 0.24;
+        unit.tx = destination[0];
+        unit.tz = destination[1];
+        deployed += unit.strength;
       });
       rebuildCommandLines();
       refreshRouteHighlights();
-      return moving.reduce((sum, unit) => sum + unit.strength, 0);
+      return deployed;
     };
     const labelTexture = (text: string, color: string) => {
       const c = document.createElement("canvas");
@@ -3832,13 +3911,18 @@ export default function Game3D() {
             unit.team === campTeam &&
             Math.hypot(unit.x - point.x, unit.z - point.z) < 4.5,
         ).length,
-        nearbyThu = g.units.some(
+        nearbyEnemy = g.units.some(
           (unit) =>
-            unit.team === "thu" &&
+            unit.team !== campTeam &&
             Math.hypot(unit.x - point.x, unit.z - point.z) < 5,
         );
-      if (nearbyPku < 3 || nearbyThu)
-        return (setNotice("需要附近至少3名北大学生且5格内没有清华部队"), false);
+      if (nearbyPku < 3 || nearbyEnemy)
+        return (
+          setNotice(
+            `需要附近至少3名${campTeam === "pku" ? "北大" : g.campaign.thuFactionName}学生，且5格内没有${campTeam === "pku" ? g.campaign.thuFactionName : "北大"}部队`,
+          ),
+          false
+        );
       const id = g.campaign.nextSiteId++,
         name = `临时营地 ${activeCamps.length + 1}`,
         camp: SiteState = {
@@ -4011,7 +4095,9 @@ export default function Game3D() {
           target.team !== playerTeamRef.current &&
           !gameRef.current.campaign.warUnlocked
         ) {
-          setNotice("8月19日前可自由调兵，但不能向清华据点发起进攻");
+          setNotice(
+            `8月19日前可自由调兵，但不能向${playerTeamRef.current === "pku" ? "清华" : "北大"}据点发起进攻`,
+          );
           down = null;
           return;
         }
@@ -4020,18 +4106,25 @@ export default function Game3D() {
             destinationZ = target?.navZ ?? point.z,
             path = findPath(center.x, center.z, destinationX, destinationZ);
           if (path.length) {
-            const destination = path.at(-1)!;
             const selectedUnits = gameRef.current.units.filter(
               (unit) =>
                 unit.team === playerTeamRef.current &&
                 selectedUnitIds.has(unit.id),
             );
             selectedUnits.forEach((unit, index) => {
+              const personalPath = findPath(
+                unit.x,
+                unit.z,
+                destinationX + ((index % 7) - 3) * 0.12,
+                destinationZ + ((Math.floor(index / 7) % 7) - 3) * 0.12,
+              );
+              if (!personalPath.length) return;
+              const destination = personalPath.at(-1)!;
               unit.targetSiteId = target?.id;
-              unit.path = path;
+              unit.path = personalPath;
               unit.pathIndex = 0;
-              unit.tx = destination[0] + ((index % 5) - 2) * 0.18;
-              unit.tz = destination[1] + ((index % 4) - 1.5) * 0.18;
+              unit.tx = destination[0];
+              unit.tz = destination[1];
             });
             const people = selectedUnits.reduce(
               (sum, unit) => sum + unit.strength,
@@ -4160,10 +4253,10 @@ export default function Game3D() {
         .reduce((sum, unit) => sum + unit.strength, 0);
       setNotice(
         selectedPeople
-          ? `已选中附近 ${selectedPeople} 名北大学生；再次双击可释放控制`
+          ? `已选中附近 ${selectedPeople} 名${playerTeamRef.current === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}学生；再次双击可释放控制`
           : nearby.length
-            ? "已释放对这批北大学生的控制"
-            : "附近没有可选中的北大学生",
+            ? `已释放对这批${playerTeamRef.current === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}学生的控制`
+            : `附近没有可选中的${playerTeamRef.current === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}学生`,
       );
     });
     const fireEvent = (id: keyof typeof EVENT_CARDS, apply?: () => void) => {
@@ -5131,7 +5224,9 @@ export default function Game3D() {
             site.orderTarget != null &&
             g.sites[site.orderTarget]?.team === enemyTeam &&
             !site.destroyed,
-        ).length;
+        ).length,
+        routeLimit = aiTeam === "thu" ? 10 : 8,
+        waveLimit = aiTeam === "thu" ? 4 : 3;
       if (qz && aiTeam === "thu") {
         const threat = g.units.filter(
           (unit) =>
@@ -5157,7 +5252,6 @@ export default function Game3D() {
             .forEach((source) =>
               issueOrder("thu", source, qz, Math.ceil(threat / 2) + 2, true),
             );
-          return;
         }
       }
       const enemySites = g.sites.filter(
@@ -5199,18 +5293,18 @@ export default function Game3D() {
               );
             return threatAt(b) * 8 - threatAt(a) * 8 + da - db;
           })
-          .slice(0, 6),
+          .slice(0, 8),
         rearSources = friendlySites
           .filter(
             (site) =>
               (site.type === "dorm" || site.type === "dining") &&
               site.orderTarget == null &&
-              idleAt(site) >= 2,
+              idleAt(site) >= 3,
           )
           .sort((a, b) => idleAt(b) - idleAt(a));
       for (
         let i = 0;
-        i < Math.min(2, rearSources.length, frontier.length);
+        i < Math.min(3, rearSources.length, frontier.length);
         i++
       ) {
         const source = rearSources[i],
@@ -5224,24 +5318,37 @@ export default function Game3D() {
             true,
           );
       }
-      if (activeAiRoutes >= 6) return;
+      if (activeAiRoutes >= routeLimit) return;
       const attackSources = friendlySites
         .filter(
           (site) =>
-            site.orderTarget == null &&
-            idleAt(site) >= 2 &&
+            (site.orderTarget == null ||
+              g.sites[site.orderTarget]?.team === aiTeam) &&
+            idleAt(site) >= 3 &&
             (!qz || Math.hypot(site.x - qz.x, site.z - qz.z) > 4),
         )
         .sort((a, b) => idleAt(b) - idleAt(a));
       let routesCreated = 0;
       for (const source of attackSources) {
-        if (activeAiRoutes + routesCreated >= 6 || routesCreated >= 2) break;
+        if (
+          activeAiRoutes + routesCreated >= routeLimit ||
+          routesCreated >= waveLimit
+        )
+          break;
         const target = enemySites.slice().sort((a, b) => {
-          const valueA =
-              (a.type === "capital" ? -18 : 0) +
+          const defendersAt = (site: SiteState) =>
+              g.units.filter(
+                (unit) =>
+                  unit.team === enemyTeam &&
+                  Math.hypot(unit.x - site.x, unit.z - site.z) < 3.4,
+              ).length,
+            valueA =
+              (a.type === "capital" ? -14 : 0) +
+              defendersAt(a) * 1.35 +
               Math.hypot(a.x - source.x, a.z - source.z),
             valueB =
-              (b.type === "capital" ? -18 : 0) +
+              (b.type === "capital" ? -14 : 0) +
+              defendersAt(b) * 1.35 +
               Math.hypot(b.x - source.x, b.z - source.z);
           return valueA - valueB;
         })[0];
@@ -5257,7 +5364,7 @@ export default function Game3D() {
         )
           routesCreated++;
       }
-    }, 2200);
+    }, 1700);
     let raf = 0,
       last = performance.now(),
       statAt = 0,
@@ -5317,10 +5424,15 @@ export default function Game3D() {
             directLeaderId = leader.id;
             nextDirectFollowerPathAt = 0;
           }
-          const moveX =
-              (directKeys.has("d") ? 1 : 0) - (directKeys.has("a") ? 1 : 0),
+          const stick = mobileMoveRef.current,
+            moveX =
+              (directKeys.has("d") ? 1 : 0) -
+              (directKeys.has("a") ? 1 : 0) +
+              stick.x,
             moveZ =
-              (directKeys.has("s") ? 1 : 0) - (directKeys.has("w") ? 1 : 0),
+              (directKeys.has("s") ? 1 : 0) -
+              (directKeys.has("w") ? 1 : 0) +
+              stick.z,
             moveLength = Math.hypot(moveX, moveZ);
           leader.path = undefined;
           leader.pathIndex = undefined;
@@ -5548,6 +5660,7 @@ export default function Game3D() {
           if (g.campaign.freezeUntil[u.team] > g.campaign.elapsedHours) return;
           const gridIndex = navIndex(navGrid, u.x, u.z),
             roadSpeed = gridIndex >= 0 && navGrid.road[gridIndex] ? 0.78 : 0.5,
+            buildingSpeed = buildingAt(u.x, u.z) ? 0.34 : 1,
             morningMove =
               (g.campaign.morningPenaltyUntil ?? 0) > g.campaign.elapsedHours
                 ? 0.68
@@ -5555,6 +5668,7 @@ export default function Game3D() {
             statusMovement = unitStatusModifiers(u).movement,
             s =
               roadSpeed *
+              buildingSpeed *
               (u.moveModifier ?? 1) *
               morningMove *
               statusMovement *
@@ -5597,13 +5711,13 @@ export default function Game3D() {
             nextZ = u.z + (moveZ / moveLength) * s;
           let resolvedX = nextX,
             resolvedZ = nextZ;
-          if (!walkableWithClearance(nextX, nextZ)) {
+          if (!pointWalkable(nextX, nextZ, u.team)) {
             const slideCandidates = [
                 [nextX, u.z],
                 [u.x, nextZ],
                 [u.x + (moveZ / moveLength) * s, u.z],
                 [u.x, u.z - (moveX / moveLength) * s],
-              ].filter(([x, z]) => walkableWithClearance(x, z)),
+              ].filter(([x, z]) => pointWalkable(x, z, u.team)),
               bestSlide = slideCandidates.sort(
                 (a, b) =>
                   (b[0] - u.x) * forwardX +
@@ -5904,7 +6018,24 @@ export default function Game3D() {
       removeEventListener("keyup", onDirectKeyUp);
       controls.removeEventListener("start", hideSitePanel);
       controls.dispose();
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        mesh.geometry?.dispose?.();
+        const materials = Array.isArray(mesh.material)
+          ? mesh.material
+          : mesh.material
+            ? [mesh.material]
+            : [];
+        materials.forEach((material) => {
+          Object.values(material).forEach((value) => {
+            if (value instanceof THREE.Texture) value.dispose();
+          });
+          material.dispose();
+        });
+      });
+      renderer.renderLists.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
       sceneApi.current = null;
       if (renderer.domElement.parentNode === host)
         host.removeChild(renderer.domElement);
@@ -6256,6 +6387,24 @@ export default function Game3D() {
     }, 700);
     return () => clearInterval(timer);
   }, []);
+  const updateMobileJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pad = joystickRef.current;
+    if (!pad) return;
+    const bounds = pad.getBoundingClientRect(),
+      dx = event.clientX - (bounds.left + bounds.width / 2),
+      dy = event.clientY - (bounds.top + bounds.height / 2),
+      radius = bounds.width * 0.34,
+      length = Math.hypot(dx, dy),
+      scale = length > radius ? radius / length : 1,
+      x = dx * scale,
+      y = dy * scale;
+    setJoystickKnob({ x, y });
+    mobileMoveRef.current = { x: x / radius, z: y / radius };
+  };
+  const releaseMobileJoystick = () => {
+    mobileMoveRef.current = { x: 0, z: 0 };
+    setJoystickKnob({ x: 0, y: 0 });
+  };
   return (
     <main className="game-shell">
       {screen === "game" && <div ref={hostRef} className="webgl-stage" />}
@@ -6269,6 +6418,7 @@ export default function Game3D() {
                 refreshSaves();
                 setMoreOpen(false);
                 setSettingsOpen(false);
+                setHomePage("menu");
                 setScreen("home");
               }}
             >
@@ -6400,27 +6550,25 @@ export default function Game3D() {
         <section
           className="home-screen"
           style={{
-            backgroundImage: `linear-gradient(115deg,#06100dcc,#17241ba8 48%,#160a12d4),url(${import.meta.env.BASE_URL}event-archive-sheet-v2.webp)`,
+            backgroundImage: `linear-gradient(90deg,#0308076b,#07100bc4 44%,#07100bc4 56%,#0308076b),url(${import.meta.env.BASE_URL}menu-poster-v2.webp)`,
           }}
         >
           <div className="home-card">
-            <header>
-              <div>
-                <small>燕园—清华园实时战役</small>
-                <h1>解放清华园</h1>
-              </div>
-              <button
-                className="home-settings-button"
-                onClick={() => setHomeSettingsOpen((value) => !value)}
-                aria-label="主页设置"
-              >
-                ⚙︎
-              </button>
+            <header className="home-title">
+              <h1>解放清华园</h1>
+              <small>燕园—清华园实时战役</small>
             </header>
+            {homePage === "menu" && (
+              <nav className="home-main-menu" aria-label="主菜单">
+                <button onClick={() => setHomePage("new")}>新建游戏</button>
+                <button onClick={() => setHomePage("servers")}>服务器</button>
+                <button onClick={() => setHomePage("settings")}>设置</button>
+              </nav>
+            )}
             {homePage === "settings" && (
               <div className="home-settings-panel">
                 <div className="home-setting-row">
-                  <strong>主页设置</strong>
+                  <strong>设置</strong>
                   <button onClick={() => setAssetOpen(true)}>
                     更换士兵与据点材质
                   </button>
@@ -6501,48 +6649,40 @@ export default function Game3D() {
                   />
                 </label>
                 <label>
-                  <span>对局域网开放</span>
-                  <input
-                    type="checkbox"
-                    checked={openToLan}
-                    onChange={(event) => setOpenToLan(event.target.checked)}
-                  />
+                  <span>玩家视角</span>
+                  <select
+                    value={newGameTeam}
+                    onChange={(event) =>
+                      setNewGameTeam(event.target.value as Team)
+                    }
+                  >
+                    <option value="pku">北京大学</option>
+                    <option value="thu">清华大学（视角旋转180°）</option>
+                  </select>
                 </label>
+                <label>
+                  <span>对局域网开放</span>
+                  <select
+                    value={openToLan ? "yes" : "no"}
+                    onChange={(event) =>
+                      setOpenToLan(event.target.value === "yes")
+                    }
+                  >
+                    <option value="no">关闭</option>
+                    <option value="yes">开放</option>
+                  </select>
+                </label>
+                <button
+                  className="new-game-button"
+                  onClick={() => {
+                    newGame(newGameTeam);
+                    if (openToLan) void createLanHost();
+                  }}
+                >
+                  创建新战局
+                </button>
               </div>
             )}
-            <div
-              className={`perspective-buttons ${homePage !== "new" ? "home-page-hidden" : ""}`}
-            >
-              <button
-                className="new-game-button"
-                onClick={() => {
-                  newGame("pku");
-                  if (openToLan) void createLanHost();
-                }}
-              >
-                北大视角新游戏
-              </button>
-              <button
-                className="new-game-button thu"
-                onClick={() => {
-                  newGame("thu");
-                  if (openToLan) void createLanHost();
-                }}
-              >
-                清华视角新游戏
-              </button>
-            </div>
-            <div
-              className={`home-save-row ${homePage !== "new" ? "home-page-hidden" : ""}`}
-            >
-              <input
-                value={saveName}
-                maxLength={24}
-                onChange={(event) => setSaveName(event.target.value)}
-                placeholder="当前战局存档名称"
-              />
-              <button onClick={saveGame}>保存当前战局</button>
-            </div>
             <div
               className={`home-save-list ${homePage !== "new" ? "home-page-hidden" : ""}`}
             >
@@ -6557,12 +6697,7 @@ export default function Game3D() {
                       {save.units.length}人
                     </span>
                   </div>
-                  <button onClick={() => loadGame(save, "pku")}>
-                    北大进入
-                  </button>
-                  <button onClick={() => loadGame(save, "thu")}>
-                    清华进入
-                  </button>
+                  <button onClick={() => loadGame(save, newGameTeam)}>进入</button>
                   <button
                     className="delete"
                     onClick={() => deleteSave(save.savedAt)}
@@ -6572,26 +6707,11 @@ export default function Game3D() {
                 </article>
               ))}
             </div>
-            <nav className="home-bottom-nav">
-              <button
-                className={homePage === "new" ? "active" : ""}
-                onClick={() => setHomePage("new")}
-              >
-                新建游戏
-              </button>
-              <button
-                className={homePage === "servers" ? "active" : ""}
-                onClick={() => setHomePage("servers")}
-              >
-                服务器
-              </button>
-              <button
-                className={homePage === "settings" ? "active" : ""}
-                onClick={() => setHomePage("settings")}
-              >
-                设置
-              </button>
-            </nav>
+            {homePage !== "menu" && (
+              <nav className="home-bottom-nav">
+                <button onClick={() => setHomePage("menu")}>返回主菜单</button>
+              </nav>
+            )}
           </div>
         </section>
       )}
@@ -6652,6 +6772,36 @@ export default function Game3D() {
           <span>WASD 控制领队 · 队员自动寻路跟随 · Esc 退出</span>
           <canvas ref={minimapRef} width={240} height={160} />
           <small>黄色为领队，青色为自动跟随的队员</small>
+          <div className="mobile-direct-controls">
+            <div
+              ref={joystickRef}
+              className="mobile-joystick"
+              aria-label="移动摇杆"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                updateMobileJoystick(event);
+              }}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId))
+                  updateMobileJoystick(event);
+              }}
+              onPointerUp={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId))
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                releaseMobileJoystick();
+              }}
+              onPointerCancel={releaseMobileJoystick}
+            >
+              <span
+                style={{
+                  transform: `translate(${joystickKnob.x}px, ${joystickKnob.y}px)`,
+                }}
+              />
+            </div>
+            <button onClick={() => sceneApi.current?.exitDirectControl()}>
+              退出控制
+            </button>
+          </div>
         </aside>
       )}
       <div className="command-notice">{notice}</div>
