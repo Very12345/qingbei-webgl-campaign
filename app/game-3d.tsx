@@ -694,13 +694,18 @@ export default function Game3D() {
     focus: (region: RegionId) => void;
     applyMaterials: (unitUrl: string | null, siteUrl: string | null) => void;
     clearUnitSelection: () => void;
-    setViewMode: (mode: MapViewMode) => void;
+    setLayers: (sites: boolean, control: boolean) => void;
     buildCampAt: (x: number, z: number) => boolean;
     enterDirectControl: () => boolean;
     exitDirectControl: () => void;
   } | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [screen, setScreen] = useState<"home" | "game">("home");
+  const screenRef = useRef<"home" | "game">("home");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [homeSettingsOpen, setHomeSettingsOpen] = useState(false);
   const [saveName, setSaveName] = useState("解放清华园");
   const [autoDay, setAutoDay] = useState(true);
   const autoDayRef = useRef(true);
@@ -715,8 +720,8 @@ export default function Game3D() {
   const [notice, setNotice] = useState("拖动己方据点到目标即可下达命令");
   const [renameDraft, setRenameDraft] = useState("");
   const [renamingSite, setRenamingSite] = useState(false);
-  const [viewMode, setViewMode] = useState<MapViewMode>("sites");
-  const viewModeRef = useRef<MapViewMode>("sites");
+  const [showSites, setShowSites] = useState(true);
+  const [showControl, setShowControl] = useState(false);
   const [campContext, setCampContext] = useState<{
     x: number;
     y: number;
@@ -778,6 +783,9 @@ export default function Game3D() {
     timeScaleRef.current = timeScale;
   }, [timeScale]);
   useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+  useEffect(() => {
     regionRef.current = region;
   }, [region]);
   useEffect(() => {
@@ -785,12 +793,10 @@ export default function Game3D() {
     setRenamingSite(false);
   }, [selected]);
   useEffect(() => {
-    viewModeRef.current = viewMode;
-    if (viewMode === "control") sceneApi.current?.exitDirectControl();
-    sceneApi.current?.setViewMode(viewMode);
+    sceneApi.current?.setLayers(showSites, showControl);
     setSelected(null);
     setCampContext(null);
-  }, [viewMode]);
+  }, [showSites, showControl]);
   useEffect(() => {
     const unit = localStorage.getItem("qingbei-custom-unit-material"),
       site = localStorage.getItem("qingbei-custom-site-material");
@@ -1981,8 +1987,7 @@ export default function Game3D() {
         const selectedUnits = gameRef.current.units.filter(
           (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
         );
-        if (!selectedUnits.length || viewModeRef.current !== "sites")
-          return false;
+        if (!selectedUnits.length) return false;
         cameraBeforeDirect = {
           position: camera.position.clone(),
           target: controls.target.clone(),
@@ -5100,6 +5105,11 @@ export default function Game3D() {
         performanceFrameCount = 0;
       }
       const g = gameRef.current;
+      if (screenRef.current === "home") {
+        controls.update();
+        renderer.render(scene, camera);
+        return;
+      }
       if (now >= nextStuckCheckAt) {
         nextStuckCheckAt = now + 280;
         ejectTrappedUnits();
@@ -5646,25 +5656,9 @@ export default function Game3D() {
         selectedUnitIds.clear();
         refreshUnitSelection();
       },
-      setViewMode: (mode) => {
-        const detailed = mode === "sites";
-        buildingGroup.visible = detailed;
-        unitGroup.visible = detailed;
-        commandGroup.visible = detailed;
-        combatGroup.visible = detailed;
-        battleAlertGroup.visible = detailed;
-        territoryGroup.visible = !detailed;
-        if (!detailed) {
-          const direction = camera.position
-            .clone()
-            .sub(controls.target)
-            .normalize();
-          controls.target.set(regions.main.offsetX, 0, 0);
-          camera.position
-            .copy(controls.target)
-            .addScaledVector(direction, controls.maxDistance);
-          controls.update();
-        }
+      setLayers: (sites, control) => {
+        buildingGroup.visible = sites;
+        territoryGroup.visible = control;
       },
       buildCampAt: (x, z) =>
         buildCampAt(
@@ -5673,7 +5667,7 @@ export default function Game3D() {
       enterDirectControl,
       exitDirectControl,
     };
-    sceneApi.current.setViewMode(viewModeRef.current);
+    sceneApi.current.setLayers(showSites, showControl);
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,
@@ -5850,6 +5844,7 @@ export default function Game3D() {
     eventQueueRef.current = [];
     setActiveEvent(null);
     setVictoryBroadcast(null);
+    setScreen("game");
   };
   const deleteSave = (savedAt: number) => {
     const next = readSaves().filter((s) => s.savedAt !== savedAt);
@@ -5864,6 +5859,7 @@ export default function Game3D() {
     eventQueueRef.current = [];
     setActiveEvent(null);
     setVictoryBroadcast(null);
+    setScreen("game");
   };
   const stanceText = useMemo(
     () => ({
@@ -5946,6 +5942,190 @@ export default function Game3D() {
   return (
     <main className="game-shell">
       <div ref={hostRef} className="webgl-stage" />
+      {screen === "game" && (
+        <>
+          <nav className="battle-nav" aria-label="战场菜单">
+            <button
+              aria-label="返回主页面"
+              title="返回主页面"
+              onClick={() => {
+                refreshSaves();
+                setMoreOpen(false);
+                setSettingsOpen(false);
+                setScreen("home");
+              }}
+            >
+              ‹
+            </button>
+            <button
+              aria-label="更多"
+              title="更多"
+              className={moreOpen ? "active" : ""}
+              onClick={() => {
+                setMoreOpen((value) => !value);
+                setSettingsOpen(false);
+              }}
+            >
+              ☰
+            </button>
+            <button
+              aria-label="设置"
+              title="设置"
+              className={settingsOpen ? "active" : ""}
+              onClick={() => {
+                setSettingsOpen((value) => !value);
+                setMoreOpen(false);
+              }}
+            >
+              ⚙︎
+            </button>
+          </nav>
+          {moreOpen && (
+            <aside className="battle-drawer more-drawer">
+              <header>
+                <strong>战况与记录</strong>
+                <span>{clock}</span>
+              </header>
+              <div className="drawer-stats">
+                <span>总兵力</span>
+                <b className="red">{stats.pku}</b>
+                <b className="purple">{stats.thu}</b>
+                <span>据点</span>
+                <b className="red">{stats.pkuSites}</b>
+                <b className="purple">{stats.thuSites}</b>
+                <span>增长/时</span>
+                <b className="red">+{stats.pkuGrowth.toFixed(1)}</b>
+                <b className="purple">+{stats.thuGrowth.toFixed(1)}</b>
+                <span>阵亡</span>
+                <b className="red">{gameRef.current.deaths.pku}</b>
+                <b className="purple">{gameRef.current.deaths.thu}</b>
+              </div>
+              <div className="drawer-battle-log">
+                <strong>战报</strong>
+                {(gameRef.current.campaign.battleAlerts ?? [])
+                  .filter((alert) => !alert.seen)
+                  .slice(-4)
+                  .reverse()
+                  .map((alert) => (
+                    <span key={alert.id}>
+                      未查看交战 · 坐标 {alert.x.toFixed(1)},{" "}
+                      {alert.z.toFixed(1)}
+                    </span>
+                  ))}
+                {!(gameRef.current.campaign.battleAlerts ?? []).some(
+                  (alert) => !alert.seen,
+                ) && <span>暂无未查看交战。</span>}
+              </div>
+              <button onClick={() => setEventLogOpen(true)}>事件档案</button>
+              <button onClick={saveGame}>保存当前战局</button>
+            </aside>
+          )}
+          {settingsOpen && (
+            <aside className="battle-drawer settings-drawer">
+              <strong>显示与时间</strong>
+              <label>
+                <span>显示据点</span>
+                <input
+                  type="checkbox"
+                  checked={showSites}
+                  onChange={(event) => setShowSites(event.target.checked)}
+                />
+              </label>
+              <label>
+                <span>显示控制范围</span>
+                <input
+                  type="checkbox"
+                  checked={showControl}
+                  onChange={(event) => setShowControl(event.target.checked)}
+                />
+              </label>
+              <label>
+                <span>自动昼夜</span>
+                <input
+                  type="checkbox"
+                  checked={autoDay}
+                  onChange={(event) => setAutoDay(event.target.checked)}
+                />
+              </label>
+              <label className="time-scale-field">
+                <span>时间倍率</span>
+                <input
+                  type="number"
+                  min="0.5"
+                  step="0.1"
+                  value={timeScale}
+                  onChange={(event) =>
+                    setTimeScale(
+                      Math.max(0.5, Number(event.target.value) || 0.5),
+                    )
+                  }
+                />
+              </label>
+            </aside>
+          )}
+        </>
+      )}
+      {screen === "home" && (
+        <section className="home-screen">
+          <div className="home-card">
+            <header>
+              <div>
+                <small>燕园—清华园实时战役</small>
+                <h1>解放清华园</h1>
+              </div>
+              <button
+                className="home-settings-button"
+                onClick={() => setHomeSettingsOpen((value) => !value)}
+                aria-label="主页设置"
+              >
+                ⚙︎
+              </button>
+            </header>
+            {homeSettingsOpen && (
+              <div className="home-settings-panel">
+                <strong>主页设置</strong>
+                <button onClick={() => setAssetOpen(true)}>
+                  更换士兵与据点材质
+                </button>
+              </div>
+            )}
+            <button className="new-game-button" onClick={newGame}>
+              新游戏
+            </button>
+            <div className="home-save-row">
+              <input
+                value={saveName}
+                maxLength={24}
+                onChange={(event) => setSaveName(event.target.value)}
+                placeholder="当前战局存档名称"
+              />
+              <button onClick={saveGame}>保存当前战局</button>
+            </div>
+            <div className="home-save-list">
+              <h2>选择存档</h2>
+              {!saves.length && <p>暂无存档，可直接开始新游戏。</p>}
+              {saves.map((save) => (
+                <article key={save.savedAt}>
+                  <div>
+                    <strong>{save.name}</strong>
+                    <span>
+                      {new Date(save.savedAt).toLocaleString("zh-CN")} ·{" "}
+                      {save.units.length}人
+                    </span>
+                  </div>
+                  <button onClick={() => loadGame(save)}>进入</button>
+                  <button
+                    className="delete"
+                    onClick={() => deleteSave(save.savedAt)}
+                  >
+                    删除
+                  </button>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
       <header className="hud-top">
         <div>
           <h1>解放清华园</h1>
@@ -5970,14 +6150,14 @@ export default function Game3D() {
       <nav className="campaign-tools">
         <div className="map-view-switch" aria-label="地图视图">
           <button
-            className={viewMode === "sites" ? "active" : ""}
-            onClick={() => setViewMode("sites")}
+            className={showSites ? "active" : ""}
+            onClick={() => setShowSites((value) => !value)}
           >
             ◉ 据点视图
           </button>
           <button
-            className={viewMode === "control" ? "active" : ""}
-            onClick={() => setViewMode("control")}
+            className={showControl ? "active" : ""}
+            onClick={() => setShowControl((value) => !value)}
           >
             ◒ 控制范围
           </button>

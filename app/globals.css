@@ -35,6 +35,216 @@ input {
   height: 100%;
   outline: none;
 }
+.hud-top,
+.campaign-tools,
+.war-overview,
+.day-slider {
+  display: none !important;
+}
+.battle-nav {
+  position: absolute;
+  z-index: 85;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  gap: 6px;
+}
+.battle-nav button,
+.battle-drawer button {
+  border: 1px solid #d9c36d70;
+  border-radius: 9px;
+  background: #101b18e8;
+  color: #f8edc9;
+  cursor: pointer;
+}
+.battle-nav button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 22px;
+}
+.battle-nav button.active {
+  background: #704b34;
+  color: #ffe89a;
+}
+.battle-drawer {
+  position: absolute;
+  z-index: 84;
+  top: 59px;
+  left: 14px;
+  display: grid;
+  width: 280px;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #dac36d;
+  border-radius: 13px;
+  background: #101a17ef;
+  box-shadow: 0 18px 50px #0009;
+  backdrop-filter: blur(12px);
+}
+.battle-drawer header {
+  display: flex;
+  justify-content: space-between;
+  color: #ffe49b;
+}
+.battle-drawer header span {
+  color: #c8cfc2;
+  font-size: 10px;
+}
+.battle-drawer > button {
+  padding: 8px;
+}
+.drawer-stats {
+  display: grid;
+  grid-template-columns: 1fr 55px 55px;
+  gap: 5px;
+  font-size: 11px;
+}
+.drawer-battle-log {
+  display: grid;
+  gap: 4px;
+  max-height: 110px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #ffffff16;
+  border-radius: 8px;
+  background: #08110e;
+}
+.drawer-battle-log span {
+  color: #c8d0c4;
+  font-size: 10px;
+}
+.settings-drawer label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  border-bottom: 1px solid #ffffff13;
+  color: #dce1d5;
+  font-size: 12px;
+}
+.settings-drawer input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #d4b85e;
+}
+.settings-drawer input[type="number"] {
+  width: 82px;
+  border: 1px solid #ffffff28;
+  border-radius: 7px;
+  padding: 6px;
+  background: #09120f;
+  color: #ffe49b;
+}
+.home-screen {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(
+    circle at 28% 20%,
+    #263b34 0,
+    #09120f 55%,
+    #050a08 100%
+  );
+}
+.home-card {
+  width: min(760px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #d8bf67;
+  border-radius: 20px;
+  background: #111b18f5;
+  box-shadow: 0 28px 100px #000b;
+}
+.home-card > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+}
+.home-card h1 {
+  margin: 4px 0 20px;
+  color: #ffe298;
+  font-size: 34px;
+}
+.home-card small,
+.home-save-list span {
+  color: #aeb9ad;
+  font-size: 10px;
+}
+.home-settings-button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #d9c36d70;
+  border-radius: 10px;
+  background: #25332e;
+  color: #ffe49b;
+  cursor: pointer;
+  font-size: 20px;
+}
+.home-settings-panel,
+.home-save-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #ffffff18;
+  border-radius: 10px;
+  background: #09120f;
+}
+.home-settings-panel {
+  align-items: center;
+  justify-content: space-between;
+}
+.home-card button,
+.home-card input {
+  border: 1px solid #ffffff24;
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: #293832;
+  color: #f7edd0;
+}
+.home-card button {
+  cursor: pointer;
+}
+.new-game-button {
+  width: 100%;
+  margin-bottom: 12px;
+  border-color: #e5ca6f !important;
+  background: #703147 !important;
+  font-size: 17px;
+  font-weight: 900;
+}
+.home-save-row input {
+  flex: 1;
+  min-width: 0;
+  background: #07100d;
+}
+.home-save-list h2 {
+  margin: 18px 0 8px;
+  color: #f1d783;
+  font-size: 16px;
+}
+.home-save-list article {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid #ffffff14;
+}
+.home-save-list article > div {
+  display: grid;
+  gap: 3px;
+}
+.home-save-list .delete {
+  color: #ff98a5;
+}
 .hud-top {
   position: absolute;
   left: 0;
