@@ -1264,6 +1264,74 @@ export default function Game3D() {
               pointInPolygon(x, z, water.points),
           );
       let vi = 0;
+      const pushRoadColor = (color: THREE.Color, count: number) => {
+          for (let index = 0; index < count; index++)
+            rc.push(color.r, color.g, color.b);
+        },
+        addRoadQuad = (
+          x1: number,
+          z1: number,
+          x2: number,
+          z2: number,
+          width: number,
+          color: THREE.Color,
+        ) => {
+          const dx = x2 - x1,
+            dz = z2 - z1,
+            length = Math.hypot(dx, dz);
+          if (length < 0.002) return;
+          const px = ((-dz / length) * width) / 2,
+            pz = ((dx / length) * width) / 2,
+            left1X = x1 + px,
+            left1Z = z1 + pz,
+            right1X = x1 - px,
+            right1Z = z1 - pz,
+            left2X = x2 + px,
+            left2Z = z2 + pz,
+            right2X = x2 - px,
+            right2Z = z2 - pz,
+            lift = 0.205;
+          rv.push(
+            left1X,
+            terrainHeight(r, left1X, left1Z) + lift,
+            left1Z,
+            right1X,
+            terrainHeight(r, right1X, right1Z) + lift,
+            right1Z,
+            left2X,
+            terrainHeight(r, left2X, left2Z) + lift,
+            left2Z,
+            right2X,
+            terrainHeight(r, right2X, right2Z) + lift,
+            right2Z,
+          );
+          pushRoadColor(color, 4);
+          ri.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
+          vi += 4;
+        },
+        addRoundJoin = (
+          x: number,
+          z: number,
+          radius: number,
+          color: THREE.Color,
+        ) => {
+          if (inWater(x, z)) return;
+          const centerIndex = vi,
+            lift = 0.21;
+          rv.push(x, terrainHeight(r, x, z) + lift, z);
+          pushRoadColor(color, 1);
+          vi++;
+          for (let step = 0; step <= 8; step++) {
+            const angle = (step / 8) * Math.PI * 2,
+              edgeX = x + Math.cos(angle) * radius,
+              edgeZ = z + Math.sin(angle) * radius;
+            rv.push(edgeX, terrainHeight(r, edgeX, edgeZ) + lift, edgeZ);
+            pushRoadColor(color, 1);
+            vi++;
+            if (step > 0)
+              ri.push(centerIndex, centerIndex + step, centerIndex + step + 1);
+          }
+        };
       for (const road of r.roads) {
         const kind = road.kind as string,
           pedestrianRoad = [
@@ -1285,74 +1353,37 @@ export default function Game3D() {
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
           if (len < 0.01) continue;
-          if (
-            inWater(x1, z1) ||
-            inWater(x2, z2) ||
-            inWater((x1 + x2) / 2, (z1 + z2) / 2)
-          )
-            continue;
-          const px = ((-dz / len) * displayWidth) / 2,
-            pz = ((dx / len) * displayWidth) / 2,
-            y1 = terrainHeight(r, x1, z1) + 0.12,
-            y2 = terrainHeight(r, x2, z2) + 0.12;
-          rv.push(
-            x1 + px,
-            y1,
-            z1 + pz,
-            x1 - px,
-            y1,
-            z1 - pz,
-            x2 + px,
-            y2,
-            z2 + pz,
-            x2 - px,
-            y2,
-            z2 - pz,
-          );
-          for (let n = 0; n < 4; n++) rc.push(color.r, color.g, color.b);
-          ri.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
-          vi += 4;
+          const steps = Math.max(1, Math.ceil(len / 0.28));
+          for (let step = 0; step < steps; step++) {
+            const startT = step / steps,
+              endT = (step + 1) / steps,
+              startX = x1 + dx * startT,
+              startZ = z1 + dz * startT,
+              endX = x1 + dx * endT,
+              endZ = z1 + dz * endT,
+              midX = (startX + endX) / 2,
+              midZ = (startZ + endZ) / 2;
+            if (inWater(midX, midZ)) continue;
+            addRoadQuad(startX, startZ, endX, endZ, displayWidth, color);
+          }
         }
-        for (const [x, z] of road.points) {
-          if (inWater(x, z)) continue;
-          const y = terrainHeight(r, x, z) + 0.125,
-            radius = displayWidth / 2;
-          rv.push(
-            x - radius,
-            y,
-            z - radius,
-            x + radius,
-            y,
-            z - radius,
-            x + radius,
-            y,
-            z + radius,
-            x - radius,
-            y,
-            z + radius,
-          );
-          for (let step = 0; step < 4; step++)
-            rc.push(color.r, color.g, color.b);
-          ri.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
-          vi += 4;
-        }
+        for (const [x, z] of road.points)
+          addRoundJoin(x, z, displayWidth / 2, color);
       }
       const rg = new THREE.BufferGeometry();
       rg.setAttribute("position", new THREE.Float32BufferAttribute(rv, 3));
       rg.setAttribute("color", new THREE.Float32BufferAttribute(rc, 3));
       rg.setIndex(ri);
-      rg.computeVertexNormals();
       const roads = new THREE.Mesh(
         rg,
-        new THREE.MeshStandardMaterial({
+        new THREE.MeshBasicMaterial({
           vertexColors: true,
-          roughness: 0.92,
           polygonOffset: true,
-          polygonOffsetFactor: -2,
-          polygonOffsetUnits: -2,
+          polygonOffsetFactor: -4,
+          polygonOffsetUnits: -4,
         }),
       );
-      roads.receiveShadow = true;
+      roads.receiveShadow = false;
       roads.renderOrder = 2;
       mapGroup.add(roads);
       const bp: number[] = [],
