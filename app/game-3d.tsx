@@ -1660,6 +1660,7 @@ export default function Game3D() {
     const commandAnimations: {
         curve: THREE.Curve<THREE.Vector3>;
         movers: THREE.Sprite[];
+        label: THREE.Sprite;
         phase: number;
       }[] = [],
       commandTangent = new THREE.Vector3(),
@@ -1808,9 +1809,15 @@ export default function Game3D() {
       label.position.copy(curve.getPoint(0.5));
       label.position.y += 0.55;
       label.renderOrder = 38;
+      label.visible = false;
       group.add(label);
       commandGroup.add(group);
-      commandAnimations.push({ curve, movers, phase: (a.x + a.z) * 0.071 });
+      commandAnimations.push({
+        curve,
+        movers,
+        label,
+        phase: (a.x + a.z) * 0.071,
+      });
       return group;
     };
     const rebuildCommandLines = () => {
@@ -2264,8 +2271,11 @@ export default function Game3D() {
                 depthTest: false,
               }),
             );
-          sprite.scale.set(isTarget ? 4.6 : 3.7, isTarget ? 0.82 : 0.68, 1);
-          sprite.position.y = 2.75 + (site.id % 3) * 0.42;
+          const labelScaleX = isTarget ? 4.6 : 3.7,
+            labelScaleY = isTarget ? 0.82 : 0.68,
+            labelY = 2.75 + (site.id % 3) * 0.42;
+          sprite.scale.set(labelScaleX, labelScaleY, 1);
+          sprite.position.y = labelY;
           sprite.renderOrder = 20;
           g.add(sprite);
           const stanceSprite = new THREE.Sprite(
@@ -2334,6 +2344,13 @@ export default function Game3D() {
               y: 0.92,
               scaleX: 1.65,
               scaleY: 0.46,
+            },
+            {
+              object: sprite,
+              x: 0,
+              y: labelY,
+              scaleX: labelScaleX,
+              scaleY: labelScaleY,
             },
             ...(materialBadge
               ? [
@@ -2882,6 +2899,67 @@ export default function Game3D() {
       setRay(ev);
       return ray.intersectObjects(terrainMeshes, false)[0]?.point ?? null;
     };
+    const commandHoverPoint = new THREE.Vector3(),
+      hideCommandLabels = () =>
+        commandAnimations.forEach((animation) => {
+          animation.label.visible = false;
+        }),
+      pointSegmentDistance = (
+        px: number,
+        py: number,
+        ax: number,
+        ay: number,
+        bx: number,
+        by: number,
+      ) => {
+        const dx = bx - ax,
+          dy = by - ay,
+          lengthSquared = dx * dx + dy * dy;
+        if (!lengthSquared) return Math.hypot(px - ax, py - ay);
+        const t = THREE.MathUtils.clamp(
+          ((px - ax) * dx + (py - ay) * dy) / lengthSquared,
+          0,
+          1,
+        );
+        return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+      },
+      updateCommandLabelHover = (ev: MouseEvent) => {
+        const rect = renderer.domElement.getBoundingClientRect(),
+          pointerX = ev.clientX - rect.left,
+          pointerY = ev.clientY - rect.top;
+        camera.updateMatrixWorld();
+        let closest: (typeof commandAnimations)[number] | undefined,
+          closestDistance = 11;
+        commandAnimations.forEach((animation) => {
+          animation.curve.getPoint(0, commandHoverPoint).project(camera);
+          let previousX = ((commandHoverPoint.x + 1) * rect.width) / 2,
+            previousY = ((1 - commandHoverPoint.y) * rect.height) / 2;
+          for (let step = 1; step <= 32; step++) {
+            animation.curve
+              .getPoint(step / 32, commandHoverPoint)
+              .project(camera);
+            const currentX = ((commandHoverPoint.x + 1) * rect.width) / 2,
+              currentY = ((1 - commandHoverPoint.y) * rect.height) / 2,
+              distance = pointSegmentDistance(
+                pointerX,
+                pointerY,
+                previousX,
+                previousY,
+                currentX,
+                currentY,
+              );
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closest = animation;
+            }
+            previousX = currentX;
+            previousY = currentY;
+          }
+        });
+        commandAnimations.forEach((animation) => {
+          animation.label.visible = animation === closest;
+        });
+      };
     const buildCampAt = (point: THREE.Vector3) => {
       const g = gameRef.current,
         index = navIndex(navGrid, point.x, point.z),
@@ -2975,6 +3053,7 @@ export default function Game3D() {
       }
     };
     renderer.domElement.addEventListener("pointerdown", (e) => {
+      hideCommandLabels();
       const site = hitSite(e),
         point = site == null ? groundAt(e) : null,
         selection =
@@ -2994,8 +3073,12 @@ export default function Game3D() {
       }
     });
     renderer.domElement.addEventListener("pointermove", (e) => {
-      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8)
+      if (!down) {
+        updateCommandLabelHover(e);
         return;
+      }
+      hideCommandLabels();
+      if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8) return;
       const p = groundAt(e);
       if (!p) return;
       if (previewLine) {
@@ -3130,6 +3213,7 @@ export default function Game3D() {
       setHoveredSite(null);
       down = null;
     });
+    renderer.domElement.addEventListener("pointerleave", hideCommandLabels);
     renderer.domElement.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       setRay(e);
