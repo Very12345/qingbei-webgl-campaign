@@ -657,6 +657,7 @@ export default function Game3D() {
   const regionRef = useRef<RegionId>("main");
   const [notice, setNotice] = useState("拖动己方据点到目标即可下达命令");
   const [renameDraft, setRenameDraft] = useState("");
+  const [renamingSite, setRenamingSite] = useState(false);
   const [viewMode, setViewMode] = useState<MapViewMode>("sites");
   const viewModeRef = useRef<MapViewMode>("sites");
   const [campContext, setCampContext] = useState<{
@@ -682,7 +683,6 @@ export default function Game3D() {
     title: string;
     body: string;
   } | null>(null);
-  const [, setUiRevision] = useState(0);
   const eventQueueRef = useRef<EventCard[]>([]);
   const pushEvent = useCallback((event: EventCard) => {
     setActiveEvent((current) => {
@@ -715,6 +715,7 @@ export default function Game3D() {
   }, [region]);
   useEffect(() => {
     selectedRef.current = selected;
+    setRenamingSite(false);
   }, [selected]);
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -4898,8 +4899,8 @@ export default function Game3D() {
             siteMenu.style.display = "none";
           else {
             const rect = renderer.domElement.getBoundingClientRect(),
-              menuWidth = siteMenu.offsetWidth || 340,
-              menuHeight = siteMenu.offsetHeight || 230,
+              menuWidth = siteMenu.offsetWidth || 252,
+              menuHeight = siteMenu.offsetHeight || 86,
               screenX =
                 rect.left + ((siteMenuProjection.x + 1) * rect.width) / 2,
               screenY =
@@ -5174,20 +5175,6 @@ export default function Game3D() {
     }),
     [],
   );
-  const siteTypeInfo = useMemo<
-    Record<SiteKind, { icon: string; text: string }>
-  >(
-    () => ({
-      dorm: { icon: "🛏️", text: "宿舍：每6小时补充兵力" },
-      dining: { icon: "🍚", text: "食堂：每12小时补充高补给兵力" },
-      teaching: { icon: "🎓", text: "教学/学院楼：防守交换加成25%" },
-      gate: { icon: "🚪", text: "校门：防守交换加成55%" },
-      target: { icon: "🎓", text: "学院据点：防守交换加成25%" },
-      capital: { icon: "★", text: "核心学院：失守将判定战役失败" },
-      camp: { icon: "⛺", text: "临时营地：补给周边部队，被攻克后拆除" },
-    }),
-    [],
-  );
   const selectedNearbyFriendly = selectedSite
     ? gameRef.current.units
         .filter(
@@ -5203,17 +5190,10 @@ export default function Game3D() {
   const setStance = (s: Stance) => {
     if (!selectedSite || selectedSite.team !== "pku") return;
     selectedSite.stance = s;
+    selectedSite.dispatchRatio = s === "defend" ? 0.4 : s === "guard" ? 0.7 : 1;
     sceneApi.current?.sync();
     setNotice(
-      `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}`,
-    );
-  };
-  const setDispatchLevel = (ratio: number) => {
-    if (!selectedSite || selectedSite.team !== "pku") return;
-    selectedSite.dispatchRatio = ratio;
-    setUiRevision((value) => value + 1);
-    setNotice(
-      `${selectedSite.displayName ?? selectedSite.name}输送比例设为${Math.round(ratio * 100)}%`,
+      `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}，输送${Math.round(selectedSite.dispatchRatio * 100)}%`,
     );
   };
   const renameSelectedSite = () => {
@@ -5223,7 +5203,7 @@ export default function Game3D() {
     selectedSite.displayName = nextName;
     sceneApi.current?.sync();
     setNotice(`据点已改名为“${nextName}”`);
-    setSelected(null);
+    setRenamingSite(false);
   };
   const handleMaterialUpload = async (kind: "unit" | "site", file?: File) => {
     if (!file) return;
@@ -5391,73 +5371,64 @@ export default function Game3D() {
         <button onClick={newGame}>重新开始</button>
       </aside>
       {selectedSite && (
-        <section ref={siteMenuRef} className="site-menu floating-site-menu">
+        <section
+          ref={siteMenuRef}
+          className={`site-menu floating-site-menu ${selectedSite.team}`}
+        >
           <div className="site-heading-row">
-            <div className="rename-row compact">
+            {renamingSite ? (
               <input
+                autoFocus
                 value={renameDraft}
                 maxLength={24}
-                disabled={selectedSite.team !== "pku"}
                 onChange={(event) => setRenameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") renameSelectedSite();
+                  if (event.key === "Escape") setRenamingSite(false);
                 }}
                 aria-label="据点名称"
               />
-              {selectedSite.team === "pku" && (
-                <button onClick={renameSelectedSite} aria-label="保存名称">
-                  ✓
-                </button>
-              )}
-            </div>
-            <span className="site-bonus">
-              {siteTypeInfo[selectedSite.type].icon}{" "}
-              {siteTypeInfo[selectedSite.type].text.replace(/^.+?：/, "")}
-            </span>
+            ) : (
+              <strong>{selectedSite.displayName ?? selectedSite.name}</strong>
+            )}
+            {selectedSite.team === "pku" && (
+              <button
+                className="rename-icon"
+                onClick={() =>
+                  renamingSite ? renameSelectedSite() : setRenamingSite(true)
+                }
+                aria-label={renamingSite ? "保存名称" : "修改名称"}
+                title={renamingSite ? "保存名称" : "修改名称"}
+              >
+                {renamingSite ? "✓" : "✎"}
+              </button>
+            )}
           </div>
-          <p
-            className={`site-summary ${selectedSite.team === "pku" ? "red" : "purple"}`}
-          >
-            {selectedSite.team === "pku"
-              ? "北大控制"
-              : `${gameRef.current.campaign.thuFactionName}控制`}{" "}
-            · 补给 {Math.round(selectedSite.supply)}· 附近友军{" "}
-            {selectedNearbyFriendly} 人
-            {selectedSite.hasPortal ? " · ◎道路接入" : ""}
-          </p>
-          <div className="stance-actions">
+          <div className="site-quick-actions">
+            <span
+              className="site-number supply"
+              title={`补给 ${Math.round(selectedSite.supply)}`}
+              aria-label={`补给 ${Math.round(selectedSite.supply)}`}
+            >
+              {Math.round(selectedSite.supply)}
+            </span>
+            <span
+              className="site-number troops"
+              title={`附近友军 ${selectedNearbyFriendly}`}
+              aria-label={`附近友军 ${selectedNearbyFriendly}`}
+            >
+              {selectedNearbyFriendly}
+            </span>
             {(Object.keys(stanceText) as Stance[]).map((s) => (
               <button
                 key={s}
+                title={`${stanceText[s].title} · 输送${s === "defend" ? 40 : s === "guard" ? 70 : 100}%`}
+                aria-label={`${stanceText[s].title}模式`}
                 className={selectedSite.stance === s ? "active" : ""}
                 disabled={selectedSite.team !== "pku"}
                 onClick={() => setStance(s)}
               >
                 <span>{stanceText[s].icon}</span>
-                <b>{stanceText[s].title}</b>
-              </button>
-            ))}
-          </div>
-          <div className="dispatch-presets">
-            <span>输送</span>
-            {[
-              [0.4, "40%"],
-              [0.7, "70%"],
-              [1, "100%"],
-            ].map(([ratio, label]) => (
-              <button
-                key={ratio}
-                className={
-                  Math.abs(
-                    (selectedSite.dispatchRatio ?? 0.7) - Number(ratio),
-                  ) < 0.02
-                    ? "active"
-                    : ""
-                }
-                disabled={selectedSite.team !== "pku"}
-                onClick={() => setDispatchLevel(Number(ratio))}
-              >
-                {label}
               </button>
             ))}
           </div>

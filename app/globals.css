@@ -608,8 +608,8 @@ input {
   position: fixed;
   z-index: 70;
   bottom: auto;
-  width: min(360px, calc(100vw - 16px));
-  padding: 10px;
+  width: min(252px, calc(100vw - 16px));
+  padding: 8px;
   transform: translate(-50%, -100%);
   border-width: 1px;
   border-radius: 12px;
@@ -631,64 +631,71 @@ input {
   display: flex !important;
   grid-template-columns: none !important;
   align-items: center;
-  gap: 7px !important;
+  gap: 5px !important;
 }
-.rename-row.compact {
-  display: flex !important;
+.site-heading-row strong,
+.site-heading-row input {
   flex: 1;
   min-width: 0;
-  margin: 0;
-}
-.rename-row.compact input {
-  padding: 6px 7px;
+  overflow: hidden;
+  color: #ffe396;
   font-size: 13px;
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.rename-row.compact button {
-  flex: 0 0 30px;
-  padding: 5px !important;
+.site-heading-row input {
+  border: 1px solid #ffffff2d;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: #0d1714;
 }
-.site-bonus {
-  max-width: 148px;
-  color: #f1dfa6;
-  font-size: 10px;
-  line-height: 1.25;
-  text-align: right;
+.site-heading-row .rename-icon {
+  flex: 0 0 27px;
+  width: 27px;
+  height: 27px;
+  padding: 0 !important;
+  font-size: 15px;
 }
-.site-summary {
-  margin: 6px 1px 8px !important;
-  font-size: 11px !important;
-}
-.floating-site-menu .stance-actions {
-  gap: 5px !important;
-}
-.floating-site-menu .stance-actions button {
+.site-quick-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 42px;
-  padding: 6px;
+  gap: 4px !important;
+  margin-top: 6px;
 }
-.floating-site-menu .stance-actions button > span {
-  font-size: 17px;
-}
-.dispatch-presets {
-  display: flex !important;
-  grid-template-columns: none !important;
+.site-number {
+  display: inline-flex;
   align-items: center;
-  gap: 5px !important;
-  margin-top: 7px;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 30px;
+  border: 1px solid #ffffff1d;
+  border-radius: 7px;
+  background: #0d1714;
+  color: #ffe49a;
+  font-size: 12px;
+  font-weight: 900;
 }
-.dispatch-presets > span {
-  margin-right: 2px;
-  color: #d5dccf;
-  font-size: 10px;
+.floating-site-menu.pku .site-number.troops {
+  color: #ff7182;
 }
-.dispatch-presets button {
+.floating-site-menu.thu .site-number.troops {
+  color: #c98cf2;
+}
+.site-quick-actions button {
   flex: 1;
-  padding: 6px !important;
-  font-size: 11px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px !important;
+}
+.site-quick-actions button > span {
+  font-size: 18px;
+}
+.floating-site-menu.pku {
+  border-color: #df3b50;
+}
+.floating-site-menu.thu {
+  border-color: #a569d0;
 }
 .event-backdrop {
   position: fixed;
