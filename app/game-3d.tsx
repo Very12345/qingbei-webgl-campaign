@@ -11,6 +11,7 @@ import { osmRegions } from "../src/osm-map-data";
 type Team = "pku" | "thu";
 type Stance = "defend" | "guard" | "standby";
 type RegionId = "main";
+type MapViewMode = "sites" | "control";
 type SiteKind =
   "dorm" | "dining" | "teaching" | "gate" | "target" | "capital" | "camp";
 type SiteState = {
@@ -628,18 +629,25 @@ function readSaves(): Snapshot[] {
 
 export default function Game3D() {
   const hostRef = useRef<HTMLDivElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameData>(makeFreshGame());
   const sceneApi = useRef<{
     sync: () => void;
     focus: (region: RegionId) => void;
     applyMaterials: (unitUrl: string | null, siteUrl: string | null) => void;
     clearUnitSelection: () => void;
+    setViewMode: (mode: MapViewMode) => void;
+    buildCampAt: (x: number, z: number) => boolean;
+    enterDirectControl: () => boolean;
+    exitDirectControl: () => void;
   } | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("解放清华园");
   const [autoDay, setAutoDay] = useState(true);
   const autoDayRef = useRef(true);
+  const [timeScale, setTimeScale] = useState(1);
+  const timeScaleRef = useRef(1);
   const [clock, setClock] = useState("8月16日 08:00");
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedUnitCount, setSelectedUnitCount] = useState(0);
@@ -647,8 +655,15 @@ export default function Game3D() {
   const regionRef = useRef<RegionId>("main");
   const [notice, setNotice] = useState("拖动己方据点到目标即可下达命令");
   const [renameDraft, setRenameDraft] = useState("");
-  const [campMode, setCampMode] = useState(false);
-  const campModeRef = useRef(false);
+  const [viewMode, setViewMode] = useState<MapViewMode>("sites");
+  const viewModeRef = useRef<MapViewMode>("sites");
+  const [campContext, setCampContext] = useState<{
+    x: number;
+    y: number;
+    worldX: number;
+    worldZ: number;
+  } | null>(null);
+  const [directControl, setDirectControl] = useState(false);
   const [assetOpen, setAssetOpen] = useState(false);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
   const [siteMaterialUrl, setSiteMaterialUrl] = useState<string | null>(null);
@@ -691,11 +706,18 @@ export default function Game3D() {
     autoDayRef.current = autoDay;
   }, [autoDay]);
   useEffect(() => {
+    timeScaleRef.current = timeScale;
+  }, [timeScale]);
+  useEffect(() => {
     regionRef.current = region;
   }, [region]);
   useEffect(() => {
-    campModeRef.current = campMode;
-  }, [campMode]);
+    viewModeRef.current = viewMode;
+    if (viewMode === "control") sceneApi.current?.exitDirectControl();
+    sceneApi.current?.setViewMode(viewMode);
+    setSelected(null);
+    setCampContext(null);
+  }, [viewMode]);
   useEffect(() => {
     const unit = localStorage.getItem("qingbei-custom-unit-material"),
       site = localStorage.getItem("qingbei-custom-site-material");
@@ -1200,6 +1222,7 @@ export default function Game3D() {
           }),
         );
         fill.renderOrder = 0;
+        fill.visible = false;
         mapGroup.add(fill);
         const borderPoints = campus.points.map(
             (p: number[]) =>
@@ -1218,24 +1241,43 @@ export default function Game3D() {
             }),
           );
         border.renderOrder = 3;
+        border.visible = false;
         mapGroup.add(border);
       }
       const rv: number[] = [],
         ri: number[] = [],
-        rc: number[] = [];
+        rc: number[] = [],
+        waterAreas = r.waters.map((water: any) => ({
+          points: water.points,
+          minX: Math.min(...water.points.map((point: number[]) => point[0])),
+          maxX: Math.max(...water.points.map((point: number[]) => point[0])),
+          minZ: Math.min(...water.points.map((point: number[]) => point[1])),
+          maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
+        })),
+        inWater = (x: number, z: number) =>
+          waterAreas.some(
+            (water: any) =>
+              x >= water.minX &&
+              x <= water.maxX &&
+              z >= water.minZ &&
+              z <= water.maxZ &&
+              pointInPolygon(x, z, water.points),
+          );
       let vi = 0;
       for (const road of r.roads) {
         const kind = road.kind as string,
+          pedestrianRoad = [
+            "footway",
+            "path",
+            "pedestrian",
+            "steps",
+            "cycleway",
+            "corridor",
+          ].includes(kind),
           color = new THREE.Color(
-            ["footway", "path", "pedestrian", "steps", "cycleway"].includes(
-              kind,
-            )
-              ? 0xd8cfb9
-              : ["primary", "secondary", "tertiary"].includes(kind)
-                ? 0xd1c7ad
-                : 0xbdb49e,
+            pedestrianRoad ? 0xd8cfb9 : kind === "track" ? 0xa99470 : 0x343a3f,
           ),
-          displayWidth = Math.max(road.width, 0.16);
+          displayWidth = Math.max(road.width, pedestrianRoad ? 0.15 : 0.24);
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
             [x2, z2] = road.points[k],
@@ -1243,6 +1285,12 @@ export default function Game3D() {
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
           if (len < 0.01) continue;
+          if (
+            inWater(x1, z1) ||
+            inWater(x2, z2) ||
+            inWater((x1 + x2) / 2, (z1 + z2) / 2)
+          )
+            continue;
           const px = ((-dz / len) * displayWidth) / 2,
             pz = ((dx / len) * displayWidth) / 2,
             y1 = terrainHeight(r, x1, z1) + 0.12,
@@ -1263,6 +1311,29 @@ export default function Game3D() {
           );
           for (let n = 0; n < 4; n++) rc.push(color.r, color.g, color.b);
           ri.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
+          vi += 4;
+        }
+        for (const [x, z] of road.points) {
+          if (inWater(x, z)) continue;
+          const y = terrainHeight(r, x, z) + 0.125,
+            radius = displayWidth / 2;
+          rv.push(
+            x - radius,
+            y,
+            z - radius,
+            x + radius,
+            y,
+            z - radius,
+            x + radius,
+            y,
+            z + radius,
+            x - radius,
+            y,
+            z + radius,
+          );
+          for (let step = 0; step < 4; step++)
+            rc.push(color.r, color.g, color.b);
+          ri.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
           vi += 4;
         }
       }
@@ -1570,9 +1641,82 @@ export default function Game3D() {
     scene.add(commandGroup);
     const combatGroup = new THREE.Group();
     scene.add(combatGroup);
+    const territoryGroup = new THREE.Group();
+    territoryGroup.visible = false;
+    scene.add(territoryGroup);
     const siteObjects = new Map<number, THREE.Group>();
     const unitObjects = new Map<number, THREE.Group>();
     const selectedUnitIds = new Set<number>();
+    const directKeys = new Set<string>();
+    let directControlActive = false,
+      cameraBeforeDirect: {
+        position: THREE.Vector3;
+        target: THREE.Vector3;
+      } | null = null;
+    const exitDirectControl = () => {
+        if (!directControlActive) return;
+        directControlActive = false;
+        directKeys.clear();
+        controls.enabled = true;
+        if (cameraBeforeDirect) {
+          camera.position.copy(cameraBeforeDirect.position);
+          controls.target.copy(cameraBeforeDirect.target);
+          controls.update();
+        }
+        cameraBeforeDirect = null;
+        setDirectControl(false);
+        setNotice("已退出近距离控制");
+      },
+      enterDirectControl = () => {
+        const selectedUnits = gameRef.current.units.filter(
+          (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+        );
+        if (!selectedUnits.length || viewModeRef.current !== "sites")
+          return false;
+        cameraBeforeDirect = {
+          position: camera.position.clone(),
+          target: controls.target.clone(),
+        };
+        selectedUnits.forEach((unit) => {
+          unit.path = undefined;
+          unit.pathIndex = undefined;
+          unit.targetSiteId = undefined;
+          unit.tx = unit.x;
+          unit.tz = unit.z;
+        });
+        directControlActive = true;
+        controls.enabled = false;
+        setDirectControl(true);
+        setSelected(null);
+        setNotice("近距离控制：WASD移动所选学生，Esc退出");
+        return true;
+      };
+    const onDirectKeyDown = (event: KeyboardEvent) => {
+        const target = event.target as HTMLElement | null,
+          typing =
+            target?.tagName === "INPUT" ||
+            target?.tagName === "TEXTAREA" ||
+            target?.tagName === "SELECT";
+        if (typing) return;
+        const key = event.key.toLowerCase();
+        if (key === "escape") {
+          exitDirectControl();
+          return;
+        }
+        if (key === "f" && !directControlActive) {
+          if (!enterDirectControl()) setNotice("请先双击选中一批北大学生");
+          return;
+        }
+        if (directControlActive && ["w", "a", "s", "d"].includes(key)) {
+          directKeys.add(key);
+          event.preventDefault();
+        }
+      },
+      onDirectKeyUp = (event: KeyboardEvent) => {
+        directKeys.delete(event.key.toLowerCase());
+      };
+    addEventListener("keydown", onDirectKeyDown);
+    addEventListener("keyup", onDirectKeyUp);
     let customSiteTexture: THREE.Texture | null = null,
       customUnitTexture: THREE.Texture | null = null,
       unitMaterialRequest = 0,
@@ -1876,6 +2020,7 @@ export default function Game3D() {
             unit.team === team &&
             unit.siteId === source.id &&
             unit.targetSiteId == null &&
+            (!directControlActive || !selectedUnitIds.has(unit.id)) &&
             Math.hypot(
               unit.x - (source.navX ?? source.x),
               unit.z - (source.navZ ?? source.z),
@@ -2046,10 +2191,11 @@ export default function Game3D() {
         siteTypeTextureCache.set(kind, texture);
         return texture;
       };
-    const nodeTextureCache = new Map<Team, THREE.CanvasTexture>(),
+    const nodeTextureCache = new Map<string, THREE.CanvasTexture>(),
       haloTextureCache = new Map<string, THREE.CanvasTexture>(),
-      siteNodeTexture = (team: Team) => {
-        const cached = nodeTextureCache.get(team);
+      siteNodeTexture = (team: Team, stance: Stance) => {
+        const key = `${team}/${stance}`,
+          cached = nodeTextureCache.get(key);
         if (cached) return cached;
         const canvas = document.createElement("canvas");
         canvas.width = 192;
@@ -2062,14 +2208,30 @@ export default function Game3D() {
         context.lineWidth = 18;
         context.strokeStyle = team === "pku" ? "#d62b46" : "#9153b9";
         context.stroke();
-        context.beginPath();
-        context.arc(96, 96, 56, 0, Math.PI * 2);
-        context.strokeStyle = "rgba(255,243,196,.55)";
-        context.lineWidth = 5;
-        context.stroke();
+        const drawShield = (inset: number, width: number, opacity: number) => {
+          context.beginPath();
+          context.moveTo(96, 38 + inset);
+          context.lineTo(140 - inset, 55 + inset * 0.35);
+          context.lineTo(133 - inset * 0.7, 111 - inset * 0.25);
+          context.quadraticCurveTo(
+            96,
+            151 - inset,
+            59 + inset * 0.7,
+            111 - inset * 0.25,
+          );
+          context.lineTo(52 + inset, 55 + inset * 0.35);
+          context.closePath();
+          context.globalAlpha = opacity;
+          context.strokeStyle = "#ffe39a";
+          context.lineWidth = width;
+          context.stroke();
+          context.globalAlpha = 1;
+        };
+        if (stance === "guard" || stance === "defend") drawShield(0, 8, 0.92);
+        if (stance === "defend") drawShield(13, 5, 0.74);
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
-        nodeTextureCache.set(team, texture);
+        nodeTextureCache.set(key, texture);
         return texture;
       },
       haloTexture = (color: string) => {
@@ -2115,6 +2277,98 @@ export default function Game3D() {
         context.textAlign = "center";
         context.fillText(`友军 ${count}人`, 128, 47);
       };
+    const rebuildTerritory = () => {
+      territoryGroup.children.slice().forEach((child) => {
+        territoryGroup.remove(child);
+        const mesh = child as THREE.Mesh;
+        mesh.geometry?.dispose();
+        if (Array.isArray(mesh.material))
+          mesh.material.forEach((material) => material.dispose());
+        else mesh.material?.dispose();
+      });
+      const region = regions.main,
+        cols = 72,
+        rows = 56,
+        activeSites = gameRef.current.sites.filter((site) => !site.destroyed),
+        positions: number[] = [],
+        colors: number[] = [],
+        indices: number[] = [],
+        pkuColor = new THREE.Color(0xd92845),
+        thuColor = new THREE.Color(0x7a3fa2),
+        blended = new THREE.Color();
+      for (let row = 0; row <= rows; row++) {
+        const z = region.depth / 2 - (row / rows) * region.depth;
+        for (let col = 0; col <= cols; col++) {
+          const x =
+            region.offsetX - region.width / 2 + (col / cols) * region.width;
+          let pkuInfluence = 0,
+            thuInfluence = 0;
+          activeSites.forEach((site) => {
+            const distanceSquared =
+                (x - site.x) * (x - site.x) + (z - site.z) * (z - site.z),
+              strategicWeight =
+                site.type === "capital" || site.type === "target"
+                  ? 1.65
+                  : site.type === "gate"
+                    ? 1.25
+                    : site.type === "camp"
+                      ? 0.65
+                      : 1,
+              influence =
+                strategicWeight / Math.pow(distanceSquared + 18, 0.82);
+            if (site.team === "pku") pkuInfluence += influence;
+            else thuInfluence += influence;
+          });
+          const balance =
+              (pkuInfluence - thuInfluence) /
+              Math.max(0.0001, pkuInfluence + thuInfluence),
+            teamMix = THREE.MathUtils.smoothstep(balance, -0.075, 0.075);
+          blended.copy(thuColor).lerp(pkuColor, teamMix);
+          positions.push(x, terrainHeight(region, x, z) + 0.22, z);
+          colors.push(blended.r, blended.g, blended.b);
+        }
+      }
+      for (let row = 0; row < rows; row++)
+        for (let col = 0; col < cols; col++) {
+          const topLeft = row * (cols + 1) + col,
+            topRight = topLeft + 1,
+            bottomLeft = topLeft + cols + 1,
+            bottomRight = bottomLeft + 1;
+          indices.push(
+            topLeft,
+            bottomLeft,
+            topRight,
+            topRight,
+            bottomLeft,
+            bottomRight,
+          );
+        }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3),
+      );
+      geometry.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(colors, 3),
+      );
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+        }),
+      );
+      mesh.renderOrder = 7;
+      territoryGroup.add(mesh);
+    };
     const rebuildBuildings = () => {
       buildingGroup.children.slice().forEach((child) => {
         buildingGroup.remove(child);
@@ -2171,7 +2425,7 @@ export default function Game3D() {
           }
           const nodeSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
-                map: siteNodeTexture(site.team),
+                map: siteNodeTexture(site.team, site.stance),
                 transparent: true,
                 depthTest: false,
                 depthWrite: false,
@@ -2278,18 +2532,6 @@ export default function Game3D() {
           sprite.position.y = labelY;
           sprite.renderOrder = 20;
           g.add(sprite);
-          const stanceSprite = new THREE.Sprite(
-            new THREE.SpriteMaterial({
-              map: stanceIconTexture(site.stance, labelColor),
-              transparent: true,
-              depthTest: false,
-              depthWrite: false,
-            }),
-          );
-          stanceSprite.scale.set(0.5, 0.5, 1);
-          stanceSprite.position.set(-0.76, 1.75, 0);
-          stanceSprite.renderOrder = 26;
-          g.add(stanceSprite);
           const typeSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
               map: siteTypeIconTexture(site.type),
@@ -2298,7 +2540,7 @@ export default function Game3D() {
               depthWrite: false,
             }),
           );
-          typeSprite.scale.set(0.56, 0.56, 1);
+          typeSprite.scale.set(0.44, 0.44, 1);
           typeSprite.position.set(0, 1.75, 0);
           typeSprite.renderOrder = 26;
           g.add(typeSprite);
@@ -2325,18 +2567,11 @@ export default function Game3D() {
               scaleY: 1.15,
             },
             {
-              object: stanceSprite,
-              x: -0.76,
-              y: 1.75,
-              scaleX: 0.5,
-              scaleY: 0.5,
-            },
-            {
               object: typeSprite,
               x: 0,
               y: 1.75,
-              scaleX: 0.56,
-              scaleY: 0.56,
+              scaleX: 0.44,
+              scaleY: 0.44,
             },
             {
               object: countSprite,
@@ -2381,6 +2616,7 @@ export default function Game3D() {
           buildingGroup.add(g);
           siteObjects.set(site.id, g);
         });
+      rebuildTerritory();
     };
     const refreshRouteHighlights = () => {
       const targets = new Set(
@@ -2848,6 +3084,9 @@ export default function Game3D() {
     const ray = new THREE.Raycaster(),
       mouse = new THREE.Vector2(),
       projectedSiteNode = new THREE.Vector3(),
+      projectedSiteEdge = new THREE.Vector3(),
+      siteNodeWorld = new THREE.Vector3(),
+      siteNodeCameraRight = new THREE.Vector3(),
       siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
         target.set(
           site.x,
@@ -2858,36 +3097,66 @@ export default function Game3D() {
         x: number;
         y: number;
         site?: number;
+        sourceSite?: number;
         selection?: boolean;
       } | null = null,
-      previewLine: THREE.Object3D | null = null;
+      previewLine: THREE.Object3D | null = null,
+      rightGesture: {
+        x: number;
+        y: number;
+        moved: boolean;
+      } | null = null;
     const setRay = (ev: MouseEvent) => {
       const r = renderer.domElement.getBoundingClientRect();
       mouse.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
       mouse.y = (-(ev.clientY - r.top) / r.height) * 2 + 1;
       ray.setFromCamera(mouse, camera);
     };
-    const hitSite = (ev: MouseEvent) => {
+    const hitSiteNode = (ev: MouseEvent, radiusMultiplier = 1) => {
       const rect = renderer.domElement.getBoundingClientRect(),
         pointerX = ev.clientX - rect.left,
-        pointerY = ev.clientY - rect.top;
+        pointerY = ev.clientY - rect.top,
+        markerScale = THREE.MathUtils.clamp(
+          camera.position.distanceTo(controls.target) / Math.hypot(24, 22),
+          0.45,
+          1.9,
+        );
       camera.updateMatrixWorld();
+      siteNodeCameraRight
+        .setFromMatrixColumn(camera.matrixWorld, 0)
+        .normalize();
       const screenHit = gameRef.current.sites
         .filter((site) => !site.destroyed)
         .map((site) => {
-          siteNodeWorldPosition(site, projectedSiteNode).project(camera);
+          siteNodeWorldPosition(site, siteNodeWorld);
+          projectedSiteNode.copy(siteNodeWorld).project(camera);
+          projectedSiteEdge
+            .copy(siteNodeWorld)
+            .addScaledVector(siteNodeCameraRight, (1.15 * markerScale) / 2)
+            .project(camera);
+          const centerX = ((projectedSiteNode.x + 1) * rect.width) / 2,
+            centerY = ((1 - projectedSiteNode.y) * rect.height) / 2,
+            edgeX = ((projectedSiteEdge.x + 1) * rect.width) / 2,
+            edgeY = ((1 - projectedSiteEdge.y) * rect.height) / 2,
+            radius = Math.hypot(edgeX - centerX, edgeY - centerY);
           return {
             id: site.id,
             visible: projectedSiteNode.z >= -1 && projectedSiteNode.z <= 1,
-            distance: Math.hypot(
-              pointerX - ((projectedSiteNode.x + 1) * rect.width) / 2,
-              pointerY - ((1 - projectedSiteNode.y) * rect.height) / 2,
-            ),
+            distance: Math.hypot(pointerX - centerX, pointerY - centerY),
+            radius,
           };
         })
-        .filter((candidate) => candidate.visible && candidate.distance <= 34)
+        .filter(
+          (candidate) =>
+            candidate.visible &&
+            candidate.distance <= candidate.radius * radiusMultiplier,
+        )
         .sort((a, b) => a.distance - b.distance)[0];
-      if (screenHit) return screenHit.id;
+      return screenHit?.id;
+    };
+    const hitSite = (ev: MouseEvent) => {
+      const screenHit = hitSiteNode(ev);
+      if (screenHit != null) return screenHit;
       setRay(ev);
       const hit = ray
         .intersectObjects(buildingGroup.children, true)
@@ -3021,7 +3290,6 @@ export default function Game3D() {
       rebuildBuildings();
       setSelected(id);
       setRenameDraft(name);
-      setCampMode(false);
       if (!g.campaign.firedEvents.includes("first_camp")) {
         g.campaign.firedEvents.push("first_camp");
         pushEvent({ id: "first_camp", ...EVENT_CARDS.first_camp });
@@ -3054,10 +3322,20 @@ export default function Game3D() {
     };
     renderer.domElement.addEventListener("pointerdown", (e) => {
       hideCommandLabels();
+      setCampContext(null);
+      if (e.button === 2) {
+        rightGesture = {
+          x: e.clientX,
+          y: e.clientY,
+          moved: false,
+        };
+        down = null;
+        return;
+      }
       const site = hitSite(e),
+        sourceSite = hitSiteNode(e, 0.9),
         point = site == null ? groundAt(e) : null,
         selection =
-          !campModeRef.current &&
           !!point &&
           [...selectedUnitIds].some((id) => {
             const unit = gameRef.current.units.find(
@@ -3065,14 +3343,21 @@ export default function Game3D() {
             );
             return !!unit && Math.hypot(unit.x - point.x, unit.z - point.z) < 3;
           });
-      down = { x: e.clientX, y: e.clientY, site, selection };
+      down = { x: e.clientX, y: e.clientY, site, sourceSite, selection };
       if (site == null) setSelected(null);
-      if (site != null || selection) {
+      if (sourceSite != null || selection) {
         controls.enabled = false;
         renderer.domElement.setPointerCapture(e.pointerId);
       }
     });
     renderer.domElement.addEventListener("pointermove", (e) => {
+      if (rightGesture && (e.buttons & 2) !== 0) {
+        if (
+          Math.hypot(e.clientX - rightGesture.x, e.clientY - rightGesture.y) > 7
+        )
+          rightGesture.moved = true;
+        return;
+      }
       if (!down) {
         updateCommandLabelHover(e);
         return;
@@ -3098,14 +3383,16 @@ export default function Game3D() {
         );
         return;
       }
-      if (down.site == null) return;
-      const s = gameRef.current.sites[down.site];
+      if (down.sourceSite == null) return;
+      const s = gameRef.current.sites[down.sourceSite];
       if (!s) return;
       const hovered = hitSite(e);
-      setHoveredSite(hovered != null && hovered !== down.site ? hovered : null);
+      setHoveredSite(
+        hovered != null && hovered !== down.sourceSite ? hovered : null,
+      );
       previewLine = addCommandLine(
         siteNodeWorldPosition(s),
-        hovered != null && hovered !== down.site
+        hovered != null && hovered !== down.sourceSite
           ? siteNodeWorldPosition(gameRef.current.sites[hovered])
           : p.clone(),
         true,
@@ -3168,19 +3455,18 @@ export default function Game3D() {
         down = null;
         return;
       }
-      if (campModeRef.current && !moved && down.site == null) {
-        const point = groundAt(e);
-        if (point) buildCampAt(point);
-        down = null;
-        return;
-      }
       if (!moved && down.site != null) {
         setSelected(down.site);
         const site = gameRef.current.sites[down.site];
         setRenameDraft(site?.displayName ?? site?.name ?? "");
       }
-      if (moved && down.site != null && end != null && end !== down.site) {
-        const source = gameRef.current.sites[down.site],
+      if (
+        moved &&
+        down.sourceSite != null &&
+        end != null &&
+        end !== down.sourceSite
+      ) {
+        const source = gameRef.current.sites[down.sourceSite],
           target = gameRef.current.sites[end];
         if (source.team === "pku") {
           if (target.team !== "pku" && !gameRef.current.campaign.warUnlocked) {
@@ -3216,28 +3502,45 @@ export default function Game3D() {
     renderer.domElement.addEventListener("pointerleave", hideCommandLabels);
     renderer.domElement.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      if (rightGesture?.moved) {
+        rightGesture = null;
+        return;
+      }
       setRay(e);
       const hit = ray
           .intersectObjects(commandGroup.children, true)
           .find((item) => item.object.userData.commandSourceId != null),
         sourceId = hit?.object.userData.commandSourceId as number | undefined;
-      if (sourceId == null) return;
-      const source = gameRef.current.sites[sourceId];
-      if (!source) return;
-      source.orderTarget = undefined;
-      source.orderPath = undefined;
-      gameRef.current.units
-        .filter((unit) => unit.siteId === sourceId)
-        .forEach((unit) => {
-          unit.targetSiteId = undefined;
-          unit.path = undefined;
-          unit.pathIndex = undefined;
-          unit.tx = unit.x;
-          unit.tz = unit.z;
-        });
-      rebuildCommandLines();
-      rebuildBuildings();
-      setNotice(`已右键取消 ${source.displayName ?? source.name} 的持续兵线`);
+      if (sourceId != null) {
+        const source = gameRef.current.sites[sourceId];
+        rightGesture = null;
+        if (!source) return;
+        source.orderTarget = undefined;
+        source.orderPath = undefined;
+        gameRef.current.units
+          .filter((unit) => unit.siteId === sourceId)
+          .forEach((unit) => {
+            unit.targetSiteId = undefined;
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+            unit.tx = unit.x;
+            unit.tz = unit.z;
+          });
+        rebuildCommandLines();
+        rebuildBuildings();
+        setNotice(`已右键取消 ${source.displayName ?? source.name} 的持续兵线`);
+        return;
+      }
+      const point = groundAt(e);
+      rightGesture = null;
+      if (!point) return;
+      setSelected(null);
+      setCampContext({
+        x: e.clientX,
+        y: e.clientY,
+        worldX: point.x,
+        worldZ: point.z,
+      });
     });
     renderer.domElement.addEventListener("dblclick", (e) => {
       const point = groundAt(e);
@@ -4101,12 +4404,85 @@ export default function Game3D() {
     let raf = 0,
       last = performance.now(),
       statAt = 0;
+    const directCenter = new THREE.Vector3(),
+      directCameraGoal = new THREE.Vector3();
     const animate = (now: number) => {
       raf = requestAnimationFrame(animate);
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const g = gameRef.current;
-      g.campaign.elapsedHours += dt * 0.18;
+      if (directControlActive) {
+        const controlled = g.units.filter(
+          (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+        );
+        if (!controlled.length) exitDirectControl();
+        else {
+          const moveX =
+              (directKeys.has("d") ? 1 : 0) - (directKeys.has("a") ? 1 : 0),
+            moveZ =
+              (directKeys.has("s") ? 1 : 0) - (directKeys.has("w") ? 1 : 0),
+            moveLength = Math.hypot(moveX, moveZ);
+          controlled.forEach((unit) => {
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+            unit.targetSiteId = undefined;
+            if (moveLength) {
+              unit.tx = unit.x + (moveX / moveLength) * 1.2;
+              unit.tz = unit.z + (moveZ / moveLength) * 1.2;
+            } else {
+              unit.tx = unit.x;
+              unit.tz = unit.z;
+            }
+          });
+          const centerX =
+              controlled.reduce((sum, unit) => sum + unit.x, 0) /
+              controlled.length,
+            centerZ =
+              controlled.reduce((sum, unit) => sum + unit.z, 0) /
+              controlled.length,
+            centerY = terrainHeight(regionForX(centerX), centerX, centerZ);
+          directCenter.set(centerX, centerY + 0.15, centerZ);
+          directCameraGoal.set(centerX, centerY + 5.4, centerZ + 4.4);
+          camera.position.lerp(directCameraGoal, 0.16);
+          controls.target.copy(directCenter);
+          camera.lookAt(directCenter);
+          const minimap = minimapRef.current;
+          if (minimap) {
+            const context = minimap.getContext("2d")!,
+              region = regions.main,
+              mapX = (x: number) =>
+                ((x - (region.offsetX - region.width / 2)) / region.width) *
+                minimap.width,
+              mapY = (z: number) =>
+                ((region.depth / 2 - z) / region.depth) * minimap.height;
+            context.clearRect(0, 0, minimap.width, minimap.height);
+            context.fillStyle = "rgba(6,14,18,.92)";
+            context.fillRect(0, 0, minimap.width, minimap.height);
+            context.strokeStyle = "rgba(255,255,255,.12)";
+            context.strokeRect(0.5, 0.5, minimap.width - 1, minimap.height - 1);
+            g.sites
+              .filter((site) => !site.destroyed)
+              .forEach((site) => {
+                context.fillStyle = site.team === "pku" ? "#e52c49" : "#9855bd";
+                context.beginPath();
+                context.arc(mapX(site.x), mapY(site.z), 1.6, 0, Math.PI * 2);
+                context.fill();
+              });
+            context.fillStyle = "#72edff";
+            controlled.forEach((unit) => {
+              context.beginPath();
+              context.arc(mapX(unit.x), mapY(unit.z), 2.5, 0, Math.PI * 2);
+              context.fill();
+            });
+            context.strokeStyle = "#fff2a6";
+            context.lineWidth = 2;
+            context.beginPath();
+            context.arc(mapX(centerX), mapY(centerZ), 7, 0, Math.PI * 2);
+            context.stroke();
+          }
+        }
+      }
+      g.campaign.elapsedHours += dt * 0.18 * timeScaleRef.current;
       if (autoDayRef.current) {
         g.timeOfDay = (8 + g.campaign.elapsedHours) % 24;
       }
@@ -4311,7 +4687,7 @@ export default function Game3D() {
           badge.last = count;
         });
       }
-      controls.update();
+      if (!directControlActive) controls.update();
       const fixedRingScale = THREE.MathUtils.clamp(
         camera.position.distanceTo(controls.target) / Math.hypot(24, 22),
         0.45,
@@ -4423,7 +4799,33 @@ export default function Game3D() {
         selectedUnitIds.clear();
         refreshUnitSelection();
       },
+      setViewMode: (mode) => {
+        const detailed = mode === "sites";
+        buildingGroup.visible = detailed;
+        unitGroup.visible = detailed;
+        commandGroup.visible = detailed;
+        combatGroup.visible = detailed;
+        territoryGroup.visible = !detailed;
+        if (!detailed) {
+          const direction = camera.position
+            .clone()
+            .sub(controls.target)
+            .normalize();
+          controls.target.set(regions.main.offsetX, 0, 0);
+          camera.position
+            .copy(controls.target)
+            .addScaledVector(direction, controls.maxDistance);
+          controls.update();
+        }
+      },
+      buildCampAt: (x, z) =>
+        buildCampAt(
+          new THREE.Vector3(x, terrainHeight(regionForX(x), x, z), z),
+        ),
+      enterDirectControl,
+      exitDirectControl,
     };
+    sceneApi.current.setViewMode(viewModeRef.current);
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,
@@ -4434,6 +4836,8 @@ export default function Game3D() {
       clearInterval(campaignTimer);
       clearInterval(aiTimer);
       removeEventListener("resize", resize);
+      removeEventListener("keydown", onDirectKeyDown);
+      removeEventListener("keyup", onDirectKeyUp);
       controls.removeEventListener("start", hideSitePanel);
       controls.dispose();
       renderer.dispose();
@@ -4683,25 +5087,71 @@ export default function Game3D() {
         </button>
       </header>
       <nav className="campaign-tools">
-        <button
-          className={campMode ? "active" : ""}
-          onClick={() => {
-            setCampMode((value) => !value);
-            setNotice(
-              campMode
-                ? "已取消营地放置"
-                : "营地模式：在空地单击放置（80资源，附近需3名北大学生）",
-            );
-          }}
-        >
-          ⛺ 建立临时据点
-        </button>
+        <div className="map-view-switch" aria-label="地图视图">
+          <button
+            className={viewMode === "sites" ? "active" : ""}
+            onClick={() => setViewMode("sites")}
+          >
+            ◉ 据点视图
+          </button>
+          <button
+            className={viewMode === "control" ? "active" : ""}
+            onClick={() => setViewMode("control")}
+          >
+            ◒ 控制范围
+          </button>
+        </div>
         <button onClick={() => setAssetOpen(true)}>🖼 更换材质</button>
+        <span className="camp-hint">右键空地建立临时据点</span>
         {selectedUnitCount > 0 && (
           <span className="selected-squad">◎ 已选 {selectedUnitCount} 人</span>
         )}
+        {selectedUnitCount > 0 && !directControl && (
+          <button
+            onClick={() => sceneApi.current?.enterDirectControl()}
+            title="也可以按 F"
+          >
+            ⌨ 近距控制
+          </button>
+        )}
       </nav>
+      {directControl && (
+        <aside className="direct-control-hud">
+          <strong>近距离控制</strong>
+          <span>WASD 移动 · Esc 退出</span>
+          <canvas ref={minimapRef} width={240} height={160} />
+          <small>青色标记为当前控制的学生在全图中的位置</small>
+        </aside>
+      )}
       <div className="command-notice">{notice}</div>
+      {campContext && (
+        <div
+          className="camp-context-menu"
+          style={{
+            left: Math.min(campContext.x, globalThis.innerWidth - 250),
+            top: Math.min(campContext.y, globalThis.innerHeight - 150),
+          }}
+        >
+          <strong>在此建立临时据点？</strong>
+          <small>消耗 80 战略资源，附近需要至少 3 名北大学生</small>
+          <div>
+            <button
+              onClick={() => {
+                if (
+                  sceneApi.current?.buildCampAt(
+                    campContext.worldX,
+                    campContext.worldZ,
+                  )
+                )
+                  setCampContext(null);
+              }}
+            >
+              ⛺ 建立营地
+            </button>
+            <button onClick={() => setCampContext(null)}>取消</button>
+          </div>
+        </div>
+      )}
       <aside className="war-overview">
         <h2>总体战况</h2>
         <p className="campaign-phase">
@@ -4818,14 +5268,18 @@ export default function Game3D() {
           max="24"
           step=".1"
           value={gameRef.current.timeOfDay}
-          onChange={(e) => {
-            gameRef.current.timeOfDay = Number(e.target.value);
-            setAutoDay(false);
-            setClock(
-              `${String(Math.floor(Number(e.target.value))).padStart(2, "0")}:00`,
-            );
-          }}
+          disabled
         />
+        <select
+          aria-label="时间流逝倍率"
+          value={timeScale}
+          onChange={(event) => setTimeScale(Number(event.target.value))}
+        >
+          <option value={0.5}>0.5×</option>
+          <option value={1}>1×</option>
+          <option value={2}>2×</option>
+          <option value={4}>4×</option>
+        </select>
       </div>
       <div className="map-attribution">
         道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo

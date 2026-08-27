@@ -93,6 +93,116 @@ input {
   font-weight: 900;
   pointer-events: auto;
 }
+.campaign-tools {
+  position: absolute;
+  z-index: 35;
+  top: 82px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: auto;
+}
+.campaign-tools button,
+.map-view-switch button {
+  border: 1px solid #d7c26c80;
+  border-radius: 9px;
+  padding: 8px 11px;
+  background: #14201ddd;
+  color: #f8efd3;
+  cursor: pointer;
+}
+.map-view-switch {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid #d7c26c80;
+  border-radius: 10px;
+}
+.map-view-switch button {
+  border: 0;
+  border-radius: 0;
+}
+.map-view-switch button.active {
+  background: #705029;
+  color: #fff1a9;
+}
+.camp-hint,
+.selected-squad {
+  padding: 7px 10px;
+  border-radius: 99px;
+  background: #101a17d9;
+  color: #d8dccf;
+  font-size: 11px;
+}
+.command-notice {
+  position: absolute;
+  z-index: 30;
+  top: 128px;
+  left: 50%;
+  max-width: min(720px, 78vw);
+  transform: translateX(-50%);
+  padding: 8px 15px;
+  border: 1px solid #e3c965;
+  border-radius: 99px;
+  background: #111c19e8;
+  color: #ffe8a3;
+  font-size: 12px;
+  pointer-events: none;
+}
+.camp-context-menu {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  width: 240px;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid #efd471;
+  border-radius: 13px;
+  background: #111b18f2;
+  box-shadow: 0 14px 45px #000b;
+}
+.camp-context-menu small {
+  color: #cfd4c7;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.camp-context-menu > div {
+  display: flex;
+  gap: 7px;
+}
+.camp-context-menu button {
+  flex: 1;
+  border: 1px solid #ffffff24;
+  border-radius: 8px;
+  padding: 7px;
+  background: #6c304f;
+  color: #fff;
+  cursor: pointer;
+}
+.direct-control-hud {
+  position: absolute;
+  z-index: 45;
+  left: 16px;
+  bottom: 18px;
+  display: grid;
+  gap: 5px;
+  width: 264px;
+  padding: 11px;
+  border: 1px solid #72edff;
+  border-radius: 14px;
+  background: #071216e8;
+  box-shadow: 0 12px 40px #0009;
+}
+.direct-control-hud > span,
+.direct-control-hud > small {
+  color: #c9e7e9;
+  font-size: 10px;
+}
+.direct-control-hud canvas {
+  width: 240px;
+  height: 160px;
+  border-radius: 7px;
+}
 .war-overview {
   position: absolute;
   right: 16px;
@@ -212,6 +322,17 @@ input {
 .day-slider input {
   width: 180px;
   accent-color: #f4c95c;
+}
+.day-slider input:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+.day-slider select {
+  border: 1px solid #e4cb7c80;
+  border-radius: 8px;
+  padding: 5px 7px;
+  background: #25312d;
+  color: #ffe293;
 }
 .modal-backdrop {
   position: fixed;
