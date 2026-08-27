@@ -745,10 +745,14 @@ export default function Game3D() {
       antialias: true,
       powerPreference: "high-performance",
     });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    const maximumPixelRatio = Math.min(devicePixelRatio, 1.4);
+    let renderPixelRatio = maximumPixelRatio;
+    renderer.setPixelRatio(renderPixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     host.appendChild(renderer.domElement);
@@ -785,7 +789,7 @@ export default function Game3D() {
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d0, 3.4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.left = -65;
     sun.shadow.camera.right = 65;
     sun.shadow.camera.top = 55;
@@ -2868,11 +2872,11 @@ export default function Game3D() {
           depthWrite: false,
         }),
       },
-      unitBodyGeometry = new THREE.SphereGeometry(0.58, 24, 18),
+      unitBodyGeometry = new THREE.SphereGeometry(0.58, 16, 12),
       unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
       unitHandGeometry = new THREE.SphereGeometry(0.09, 8, 6),
-      unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 28),
-      unitSelectionGeometry = new THREE.RingGeometry(0.91, 1.04, 32),
+      unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 18),
+      unitSelectionGeometry = new THREE.RingGeometry(0.91, 1.04, 24),
       unitBodyMaterials = {
         pku: new THREE.MeshStandardMaterial({
           color: 0xffffff,
@@ -2992,25 +2996,29 @@ export default function Game3D() {
           u.skin ? unitBodyMaterials[u.skin] : unitBodyMaterials[u.team],
         );
         body.position.y = 0.98;
-        body.castShadow = true;
-        body.receiveShadow = true;
+        body.castShadow = false;
+        body.receiveShadow = false;
         g.add(body);
         const arms: THREE.Mesh[] = [],
-          legs: THREE.Mesh[] = [];
+          legs: THREE.Mesh[] = [],
+          detailParts: THREE.Mesh[] = [];
         [-1, 1].forEach((s) => {
           const arm = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
           arm.position.set(s * 0.54, 0.9, 0);
           arm.rotation.z = s * 0.95;
           g.add(arm);
           arms.push(arm);
+          detailParts.push(arm);
           const leg = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
           leg.position.set(s * 0.25, 0.35, 0);
           leg.rotation.z = s * 0.28;
           g.add(leg);
           legs.push(leg);
+          detailParts.push(leg);
           const hand = new THREE.Mesh(unitHandGeometry, unitLimbMaterial);
           hand.position.set(s * 0.82, 0.71, 0);
           g.add(hand);
+          detailParts.push(hand);
         });
         const glow = new THREE.Mesh(
           unitGlowGeometry,
@@ -3046,6 +3054,8 @@ export default function Game3D() {
           arms,
           legs,
           body,
+          detailParts,
+          detailsVisible: true,
           glow,
           hpBack,
           hpFill,
@@ -4562,14 +4572,39 @@ export default function Game3D() {
     }, 2200);
     let raf = 0,
       last = performance.now(),
-      statAt = 0;
+      statAt = 0,
+      performanceWindowAt = last,
+      performanceFrameTime = 0,
+      performanceFrameCount = 0,
+      lastShadowUpdateAt = 0;
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
     const animate = (now: number) => {
       raf = requestAnimationFrame(animate);
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const rawDelta = (now - last) / 1000,
+        dt = Math.min(0.05, rawDelta);
       last = now;
+      if (rawDelta < 0.2) {
+        performanceFrameTime += rawDelta;
+        performanceFrameCount++;
+      }
+      if (now - performanceWindowAt > 2000 && performanceFrameCount > 20) {
+        const averageFrameTime = performanceFrameTime / performanceFrameCount;
+        let nextPixelRatio = renderPixelRatio;
+        if (averageFrameTime > 1 / 46)
+          nextPixelRatio = Math.max(0.82, renderPixelRatio - 0.12);
+        else if (averageFrameTime < 1 / 58)
+          nextPixelRatio = Math.min(maximumPixelRatio, renderPixelRatio + 0.06);
+        if (Math.abs(nextPixelRatio - renderPixelRatio) > 0.01) {
+          renderPixelRatio = nextPixelRatio;
+          renderer.setPixelRatio(renderPixelRatio);
+          renderer.setSize(host.clientWidth, host.clientHeight, false);
+        }
+        performanceWindowAt = now;
+        performanceFrameTime = 0;
+        performanceFrameCount = 0;
+      }
       const g = gameRef.current;
       if (directControlActive) {
         const controlled = g.units.filter(
@@ -4697,6 +4732,15 @@ export default function Game3D() {
         25,
       );
       sun.intensity = day * 3.4;
+      const shouldCastSunShadow = day > 0.08;
+      if (sun.castShadow !== shouldCastSunShadow) {
+        sun.castShadow = shouldCastSunShadow;
+        renderer.shadowMap.needsUpdate = true;
+      }
+      if (shouldCastSunShadow && now - lastShadowUpdateAt > 850) {
+        lastShadowUpdateAt = now;
+        renderer.shadowMap.needsUpdate = true;
+      }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
       moon.intensity = night * 0.6;
       hemi.intensity = 0.18 + day * 1.72;
@@ -4748,6 +4792,8 @@ export default function Game3D() {
         if (bucket) bucket.push(unit);
         else separationGrid.set(key, [unit]);
       });
+      const renderUnitDetails =
+        directControlActive || camera.position.distanceTo(controls.target) < 20;
       g.units.forEach((u) => {
         const mesh = unitObjects.get(u.id);
         if (!mesh) return;
@@ -4762,23 +4808,31 @@ export default function Game3D() {
           dist = Math.hypot(dx, dz),
           fighting = mesh.userData.fightingUntil > now,
           phase = now * 0.014 + u.id;
-        (mesh.userData.arms as THREE.Mesh[]).forEach(
-          (arm, index) =>
-            (arm.rotation.x =
-              (fighting ? 0.95 : dist > 0.18 ? 0.42 : 0) *
-              Math.sin(phase + index * Math.PI)),
-        );
-        (mesh.userData.legs as THREE.Mesh[]).forEach(
-          (leg, index) =>
-            (leg.rotation.x =
-              (fighting ? 0.38 : dist > 0.18 ? 0.5 : 0) *
-              Math.sin(phase + index * Math.PI)),
-        );
+        if (mesh.userData.detailsVisible !== renderUnitDetails) {
+          (mesh.userData.detailParts as THREE.Mesh[]).forEach(
+            (part) => (part.visible = renderUnitDetails),
+          );
+          mesh.userData.detailsVisible = renderUnitDetails;
+        }
+        if (renderUnitDetails) {
+          (mesh.userData.arms as THREE.Mesh[]).forEach(
+            (arm, index) =>
+              (arm.rotation.x =
+                (fighting ? 0.95 : dist > 0.18 ? 0.42 : 0) *
+                Math.sin(phase + index * Math.PI)),
+          );
+          (mesh.userData.legs as THREE.Mesh[]).forEach(
+            (leg, index) =>
+              (leg.rotation.x =
+                (fighting ? 0.38 : dist > 0.18 ? 0.5 : 0) *
+                Math.sin(phase + index * Math.PI)),
+          );
+        }
         mesh.userData.body.position.y =
           0.98 + (fighting ? Math.abs(Math.sin(phase * 1.7)) * 0.18 : 0);
-        mesh.userData.glow.scale.setScalar(
-          fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1,
-        );
+        const glow = mesh.userData.glow as THREE.Mesh;
+        glow.visible = fighting || selectedUnitIds.has(u.id) || night > 0.34;
+        glow.scale.setScalar(fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1);
         const hpRatio = THREE.MathUtils.clamp(u.hp / 100, 0, 1),
           hpBack = mesh.userData.hpBack as THREE.Mesh,
           hpFill = mesh.userData.hpFill as THREE.Mesh;
