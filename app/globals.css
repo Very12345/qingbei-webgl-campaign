@@ -412,6 +412,16 @@ input {
   color: #d9ddcf;
   font-size: 10px;
 }
+.portal-note {
+  display: block !important;
+  margin: -2px 0 8px;
+  padding: 6px 9px;
+  border: 1px dashed #70e8ff80;
+  border-radius: 8px;
+  background: #17414c80;
+  color: #bff7ff;
+  font-size: 10px;
+}
 .rename-row input {
   min-width: 0;
   flex: 1;

@@ -28,6 +28,7 @@ type SiteState = {
   z: number;
   navX?: number;
   navZ?: number;
+  hasPortal?: boolean;
   type: SiteKind;
   stance: Stance;
   supply: number;
@@ -951,6 +952,35 @@ export default function Game3D() {
             }
         return -1;
       },
+      nearestRoadIndex = (grid: NavGrid, x: number, z: number) => {
+        const cx = THREE.MathUtils.clamp(
+            Math.floor((x - grid.minX) / grid.cell),
+            0,
+            grid.cols - 1,
+          ),
+          cz = THREE.MathUtils.clamp(
+            Math.floor((z - grid.minZ) / grid.cell),
+            0,
+            grid.rows - 1,
+          );
+        for (let radius = 0; radius < 80; radius++)
+          for (let dz = -radius; dz <= radius; dz++)
+            for (let dx = -radius; dx <= radius; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+              const gx = cx + dx,
+                gz = cz + dz;
+              if (gx < 0 || gz < 0 || gx >= grid.cols || gz >= grid.rows)
+                continue;
+              const index = gz * grid.cols + gx;
+              if (
+                grid.road[index] &&
+                !grid.blocked[index] &&
+                grid.component[index] === grid.mainComponent
+              )
+                return index;
+            }
+        return -1;
+      },
       findPath = (fromX: number, fromZ: number, toX: number, toZ: number) => {
         const grid = navGrid,
           start = nearestOpenIndex(grid, fromX, fromZ),
@@ -1063,9 +1093,22 @@ export default function Game3D() {
     const refreshNavAnchors = () => {
       gameRef.current.sites.forEach((site) => {
         if (site.destroyed) return;
-        const anchor = nearestOpenIndex(navGrid, site.x, site.z);
+        let anchor = nearestOpenIndex(navGrid, site.x, site.z);
         if (anchor < 0) return;
-        [site.navX, site.navZ] = navPoint(navGrid, anchor);
+        let anchorPoint = navPoint(navGrid, anchor),
+          needsPortal =
+            Math.hypot(anchorPoint[0] - site.x, anchorPoint[1] - site.z) > 2.2;
+        if (needsPortal) {
+          const roadAnchor = nearestRoadIndex(navGrid, site.x, site.z);
+          if (roadAnchor >= 0) {
+            anchor = roadAnchor;
+            anchorPoint = navPoint(navGrid, roadAnchor);
+          }
+        }
+        [site.navX, site.navZ] = anchorPoint;
+        site.hasPortal =
+          needsPortal &&
+          Math.hypot(anchorPoint[0] - site.x, anchorPoint[1] - site.z) > 0.6;
       });
       gameRef.current.units.forEach((unit, index) => {
         const current = navIndex(navGrid, unit.x, unit.z);
@@ -2006,6 +2049,41 @@ export default function Game3D() {
             ),
             teamColor = TEAM_COLOR[site.team];
           g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
+          if (site.hasPortal && site.navX != null && site.navZ != null) {
+            const portalX = site.navX - site.x,
+              portalZ = site.navZ - site.z,
+              portalGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0.48, 0),
+                new THREE.Vector3(portalX, 0.48, portalZ),
+              ]),
+              portalLine = new THREE.Line(
+                portalGeometry,
+                new THREE.LineDashedMaterial({
+                  color: 0x6cecff,
+                  dashSize: 0.38,
+                  gapSize: 0.22,
+                  transparent: true,
+                  opacity: 0.9,
+                  depthTest: false,
+                }),
+              ),
+              portalRing = new THREE.Mesh(
+                new THREE.RingGeometry(0.32, 0.48, 28),
+                new THREE.MeshBasicMaterial({
+                  color: 0x6cecff,
+                  transparent: true,
+                  opacity: 0.95,
+                  side: THREE.DoubleSide,
+                  depthTest: false,
+                }),
+              );
+            portalLine.computeLineDistances();
+            portalLine.renderOrder = 26;
+            portalRing.rotation.x = -Math.PI / 2;
+            portalRing.position.set(portalX, 0.5, portalZ);
+            portalRing.renderOrder = 27;
+            g.add(portalLine, portalRing);
+          }
           const outer = new THREE.Mesh(
             new THREE.RingGeometry(
               isTarget ? 1.02 : 0.68,
@@ -4431,6 +4509,9 @@ export default function Game3D() {
             <span>{siteTypeInfo[selectedSite.type].icon}</span>
             <small>{siteTypeInfo[selectedSite.type].text}</small>
           </div>
+          {selectedSite.hasPortal && (
+            <div className="portal-note">◎ 已连接最近道路的传送通道</div>
+          )}
           <div className="rename-row">
             <input
               value={renameDraft}
