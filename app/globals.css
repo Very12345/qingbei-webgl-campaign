@@ -828,6 +828,70 @@ input {
   background: #020506a8;
   pointer-events: none;
 }
+.event-log-modal {
+  width: min(720px, 94vw);
+  max-height: 84vh;
+  overflow: auto;
+  padding: 20px;
+  border: 2px solid #d8bf6b;
+  border-radius: 18px;
+  background: #131d1a;
+  color: #eef0e6;
+  box-shadow: 0 24px 90px #000;
+}
+.event-log-modal > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+}
+.event-log-modal h2,
+.event-log-modal h3 {
+  margin: 0 0 8px;
+  color: #ffe49a;
+}
+.event-log-modal h3 {
+  margin-top: 18px;
+  font-size: 14px;
+}
+.event-log-modal button {
+  border: 1px solid #ffffff2a;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #3f2c48;
+  color: #fff;
+  cursor: pointer;
+}
+.active-status-list,
+.event-history-list {
+  display: grid;
+  gap: 7px;
+}
+.active-status-list article,
+.event-history-list article {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid #ffffff1b;
+  border-radius: 9px;
+  background: #0b1412;
+}
+.active-status-list article.pku {
+  border-left: 4px solid #df3b50;
+}
+.active-status-list article.thu {
+  border-left: 4px solid #a569d0;
+}
+.active-status-list span,
+.active-status-list small,
+.event-history-list time {
+  color: #bfc8bd;
+  font-size: 10px;
+}
+.event-history-list p {
+  margin: 0;
+  color: #d8ddd3;
+  font-size: 11px;
+}
 .victory-backdrop {
   position: fixed;
   z-index: 140;

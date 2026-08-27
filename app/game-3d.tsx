@@ -51,7 +51,27 @@ type UnitState = {
   pathIndex?: number;
   attackModifier?: number;
   moveModifier?: number;
+  morale?: number;
+  retreating?: boolean;
   skin?: "ustc" | "zju";
+};
+type TimedStatus = {
+  id: string;
+  title: string;
+  team: Team;
+  until: number;
+  attack: number;
+  movement: number;
+  morale: number;
+  unitIds: number[];
+};
+type EventHistoryEntry = EventCard & { atHour: number };
+type BattleAlert = {
+  id: number;
+  x: number;
+  z: number;
+  atHour: number;
+  seen: boolean;
 };
 type CampaignOutcome = {
   winner: Team;
@@ -73,6 +93,9 @@ type CampaignState = {
   lastMorningEventDay: number;
   morningPenaltyUntil?: number;
   thuFactionName: string;
+  statuses: TimedStatus[];
+  eventHistory: EventHistoryEntry[];
+  battleAlerts: BattleAlert[];
 };
 type GameData = {
   timeOfDay: number;
@@ -218,6 +241,36 @@ const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
     effect: "求真防区获得额外守军与补给。",
     quadrant: "march",
     date: "清华战时委员会",
+  },
+  thu_morning_run: {
+    title: "八月三十一日：清华晨跑",
+    body: "清晨的清华园突然响起整齐脚步声。队伍沿校园边缘据点循环行进，速度惊人，但进攻动作明显变形。",
+    effect:
+      "当日上午：清华移速+50%、攻击-10%、意志+20%；北大攻击+20%、意志+5%。仅影响当前单位。",
+    quadrant: "march",
+    date: "2026年8月31日 08:00",
+  },
+  pku_librarian: {
+    title: "图书管理员",
+    body: "图书馆进入战斗范围后，馆藏与目录被迅速转入战时保护。消息传遍燕园。",
+    effect: "北大当前全体单位攻击+10%、意志+50%，持续24小时。",
+    quadrant: "classroom",
+    date: "图书馆战线",
+  },
+  two_bombs_one_satellite: {
+    title: "两弹一星",
+    body: "物理学院遭到实际进攻。两弹元勋的历史被重新讲述，前线随即爆发压倒性的反击。",
+    effect:
+      "附近清华单位遭到毁灭性打击；北大当前全体单位意志+50%，持续24小时。",
+    quadrant: "classroom",
+    date: "物理学院战线",
+  },
+  chemistry_century: {
+    title: "百年化学",
+    body: "化学学院实验楼进入战斗范围，应急实验组以烟幕和材料储备支援防线。",
+    effect: "附近清华单位补给大幅下降；北大当前单位意志+20%，持续18小时。",
+    quadrant: "classroom",
+    date: "化学学院战线",
   },
 };
 
@@ -594,6 +647,7 @@ export function makeFreshGame(): GameData {
         hp: 100,
         supply: 100,
         strength: 5,
+        morale: 100,
         siteId: s.id,
       });
     }
@@ -616,6 +670,9 @@ export function makeFreshGame(): GameData {
       lastDiningCycle: 0,
       lastMorningEventDay: -1,
       thuFactionName: "清华",
+      statuses: [],
+      eventHistory: [],
+      battleAlerts: [],
     },
   };
 }
@@ -668,6 +725,7 @@ export default function Game3D() {
   } | null>(null);
   const [directControl, setDirectControl] = useState(false);
   const [assetOpen, setAssetOpen] = useState(false);
+  const [eventLogOpen, setEventLogOpen] = useState(false);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
   const [siteMaterialUrl, setSiteMaterialUrl] = useState<string | null>(null);
   const customMaterialsRef = useRef<{
@@ -685,6 +743,13 @@ export default function Game3D() {
   } | null>(null);
   const eventQueueRef = useRef<EventCard[]>([]);
   const pushEvent = useCallback((event: EventCard) => {
+    const campaign = gameRef.current.campaign;
+    campaign.eventHistory ??= [];
+    if (!campaign.eventHistory.some((entry) => entry.id === event.id))
+      campaign.eventHistory.push({
+        ...event,
+        atHour: campaign.elapsedHours,
+      });
     setActiveEvent((current) => {
       if (!current) return event;
       eventQueueRef.current.push(event);
@@ -696,6 +761,8 @@ export default function Game3D() {
     thu: 0,
     pkuSites: 0,
     thuSites: 0,
+    pkuGrowth: 0,
+    thuGrowth: 0,
   });
   const selectedSite =
     selected == null ? null : gameRef.current.sites[selected];
@@ -1794,6 +1861,8 @@ export default function Game3D() {
     scene.add(commandGroup);
     const combatGroup = new THREE.Group();
     scene.add(combatGroup);
+    const battleAlertGroup = new THREE.Group();
+    scene.add(battleAlertGroup);
     const territoryGroup = new THREE.Group();
     territoryGroup.visible = false;
     scene.add(territoryGroup);
@@ -1899,6 +1968,40 @@ export default function Game3D() {
     fightCtx.fillText("⚔", 96, 104);
     const fightTexture = new THREE.CanvasTexture(fightCanvas);
     fightTexture.colorSpace = THREE.SRGBColorSpace;
+    const battleAlertObjects = new Map<number, THREE.Sprite>(),
+      addBattleAlert = (x: number, z: number) => {
+        const campaign = gameRef.current.campaign;
+        campaign.battleAlerts ??= [];
+        if (
+          campaign.battleAlerts.some(
+            (alert) =>
+              !alert.seen && Math.hypot(alert.x - x, alert.z - z) < 3.5,
+          )
+        )
+          return;
+        const id =
+            campaign.battleAlerts.reduce(
+              (maximum, alert) => Math.max(maximum, alert.id),
+              -1,
+            ) + 1,
+          alert = { id, x, z, atHour: campaign.elapsedHours, seen: false },
+          sprite = new THREE.Sprite(
+            new THREE.SpriteMaterial({
+              map: fightTexture,
+              color: 0xff304e,
+              transparent: true,
+              depthTest: false,
+              depthWrite: false,
+            }),
+          );
+        campaign.battleAlerts.push(alert);
+        sprite.position.set(x, terrainHeight(regionForX(x), x, z) + 2.5, z);
+        sprite.scale.set(0.9, 0.9, 1);
+        sprite.renderOrder = 80;
+        sprite.userData.battleAlertId = id;
+        battleAlertGroup.add(sprite);
+        battleAlertObjects.set(id, sprite);
+      };
     const arrowCanvas = document.createElement("canvas");
     arrowCanvas.width = 128;
     arrowCanvas.height = 128;
@@ -1968,6 +2071,7 @@ export default function Game3D() {
         curve: THREE.Curve<THREE.Vector3>;
         movers: THREE.Sprite[];
         label: THREE.Sprite;
+        sourceId?: number;
         phase: number;
       }[] = [],
       commandTangent = new THREE.Vector3(),
@@ -1999,6 +2103,7 @@ export default function Game3D() {
       troops = 0,
       path?: [number, number][],
       dispatchRatio = 0.6,
+      sourceId?: number,
     ) => {
       const makeLine = (
           curve: THREE.Curve<THREE.Vector3>,
@@ -2123,6 +2228,7 @@ export default function Game3D() {
         curve,
         movers,
         label,
+        sourceId,
         phase: (a.x + a.z) * 0.071,
       });
       return group;
@@ -2155,6 +2261,7 @@ export default function Game3D() {
           troops,
           s.orderPath,
           s.dispatchRatio ?? 0.6,
+          s.id,
         );
         route.traverse((object) => {
           object.userData.commandSourceId = s.id;
@@ -2834,26 +2941,40 @@ export default function Game3D() {
         ustc: makeBallTexture(null, "科", "#174f78", "#174f78"),
         zju: makeBallTexture(null, "浙", "#175b9b", "#175b9b"),
       };
+    const routeDotCanvas = document.createElement("canvas");
+    routeDotCanvas.width = 64;
+    routeDotCanvas.height = 64;
+    const routeDotContext = routeDotCanvas.getContext("2d")!;
+    routeDotContext.beginPath();
+    routeDotContext.arc(32, 32, 24, 0, Math.PI * 2);
+    routeDotContext.fillStyle = "#fff";
+    routeDotContext.shadowColor = "#fff";
+    routeDotContext.shadowBlur = 10;
+    routeDotContext.fill();
+    const routeDotTexture = new THREE.CanvasTexture(routeDotCanvas);
     const UNIT_RENDER_SCALE = 0.56 / 3,
       UNIT_SEPARATION_DISTANCE = 0.48 / 3,
       hpGeometry = new THREE.PlaneGeometry(1, 0.1),
       hpBackMaterial = new THREE.MeshBasicMaterial({
-        color: 0x17201c,
+        color: 0x241014,
         transparent: true,
         opacity: 0.9,
-        depthTest: true,
+        depthTest: false,
         depthWrite: false,
+        side: THREE.DoubleSide,
       }),
       hpFillMaterials = {
         pku: new THREE.MeshBasicMaterial({
           color: 0xff5368,
-          depthTest: true,
+          depthTest: false,
           depthWrite: false,
+          side: THREE.DoubleSide,
         }),
         thu: new THREE.MeshBasicMaterial({
           color: 0xb67aff,
-          depthTest: true,
+          depthTest: false,
           depthWrite: false,
+          side: THREE.DoubleSide,
         }),
       },
       unitBodyGeometry = new THREE.SphereGeometry(0.58, 16, 12),
@@ -2920,6 +3041,22 @@ export default function Game3D() {
         side: THREE.DoubleSide,
         depthTest: false,
       }),
+      routeDotMaterials = {
+        pku: new THREE.SpriteMaterial({
+          map: routeDotTexture,
+          color: 0xff3552,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+        thu: new THREE.SpriteMaterial({
+          map: routeDotTexture,
+          color: 0xb56bea,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      },
       sharedUnitGeometries = new Set<THREE.BufferGeometry>([
         hpGeometry,
         unitBodyGeometry,
@@ -2940,6 +3077,8 @@ export default function Game3D() {
         unitGlowMaterials.pku,
         unitGlowMaterials.thu,
         unitSelectionMaterial,
+        routeDotMaterials.pku,
+        routeDotMaterials.thu,
       ]);
     const disposeUnitObject = (object: THREE.Object3D) => {
       const geometries = new Set<THREE.BufferGeometry>(),
@@ -3020,6 +3159,12 @@ export default function Game3D() {
         selectionRing.visible = selectedUnitIds.has(u.id);
         selectionRing.renderOrder = 45;
         g.add(selectionRing);
+        const routeMarker = new THREE.Sprite(routeDotMaterials[u.team]);
+        routeMarker.position.y = 1.9;
+        routeMarker.scale.set(1.15, 1.15, 1);
+        routeMarker.visible = false;
+        routeMarker.renderOrder = 90;
+        g.add(routeMarker);
         const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
           hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
         hpBack.scale.set(0.78, 1, 1);
@@ -3044,6 +3189,7 @@ export default function Game3D() {
           hpBack,
           hpFill,
           selectionRing,
+          routeMarker,
           fightingUntil: 0,
         };
         unitGroup.add(g);
@@ -3322,10 +3468,25 @@ export default function Game3D() {
       return ray.intersectObjects(terrainMeshes, false)[0]?.point ?? null;
     };
     const commandHoverPoint = new THREE.Vector3(),
-      hideCommandLabels = () =>
+      setRouteUnitMarkers = (sourceId?: number) => {
+        const source =
+          sourceId == null ? undefined : gameRef.current.sites[sourceId];
+        gameRef.current.units.forEach((unit) => {
+          const marker = unitObjects.get(unit.id)?.userData.routeMarker as
+            THREE.Sprite | undefined;
+          if (marker)
+            marker.visible =
+              !!source &&
+              unit.siteId === source.id &&
+              unit.targetSiteId === source.orderTarget;
+        });
+      },
+      hideCommandLabels = () => {
         commandAnimations.forEach((animation) => {
           animation.label.visible = false;
-        }),
+        });
+        setRouteUnitMarkers();
+      },
       pointSegmentDistance = (
         px: number,
         py: number,
@@ -3381,6 +3542,7 @@ export default function Game3D() {
         commandAnimations.forEach((animation) => {
           animation.label.visible = animation === closest;
         });
+        setRouteUnitMarkers(closest?.sourceId);
       };
     const buildCampAt = (point: THREE.Vector3) => {
       const g = gameRef.current,
@@ -3476,6 +3638,26 @@ export default function Game3D() {
     renderer.domElement.addEventListener("pointerdown", (e) => {
       hideCommandLabels();
       setCampContext(null);
+      if (e.button === 0) {
+        setRay(e);
+        const alertHit = ray.intersectObjects(
+            battleAlertGroup.children,
+            false,
+          )[0],
+          alertId = alertHit?.object.userData.battleAlertId as
+            number | undefined;
+        if (alertId != null) {
+          const alert = gameRef.current.campaign.battleAlerts?.find(
+            (candidate) => candidate.id === alertId,
+          );
+          if (alert) alert.seen = true;
+          const sprite = battleAlertObjects.get(alertId);
+          if (sprite) battleAlertGroup.remove(sprite);
+          battleAlertObjects.delete(alertId);
+          setNotice("已查看这处交战记录");
+          return;
+        }
+      }
       if (e.button === 2) {
         rightGesture = {
           x: e.clientX,
@@ -3731,6 +3913,49 @@ export default function Game3D() {
         pushEvent({ id, ...EVENT_CARDS[id] });
         return true;
       },
+      addTimedStatus = (
+        id: string,
+        title: string,
+        team: Team,
+        duration: number,
+        attack: number,
+        movement: number,
+        morale: number,
+      ) => {
+        const campaign = gameRef.current.campaign;
+        campaign.statuses ??= [];
+        campaign.statuses = campaign.statuses.filter(
+          (status) => status.id !== id,
+        );
+        campaign.statuses.push({
+          id,
+          title,
+          team,
+          until: campaign.elapsedHours + duration,
+          attack,
+          movement,
+          morale,
+          unitIds: gameRef.current.units
+            .filter((unit) => unit.team === team)
+            .map((unit) => unit.id),
+        });
+      },
+      unitStatusModifiers = (unit: UnitState) =>
+        (gameRef.current.campaign.statuses ?? [])
+          .filter(
+            (status) =>
+              status.team === unit.team &&
+              status.until > gameRef.current.campaign.elapsedHours &&
+              status.unitIds.includes(unit.id),
+          )
+          .reduce(
+            (result, status) => ({
+              attack: result.attack * status.attack,
+              movement: result.movement * status.movement,
+              morale: result.morale * status.morale,
+            }),
+            { attack: 1, movement: 1, morale: 1 },
+          ),
       nextUnitId = () =>
         gameRef.current.units.reduce(
           (max, unit) => Math.max(max, unit.id),
@@ -3761,6 +3986,7 @@ export default function Game3D() {
             hp: 100,
             supply,
             strength: 5,
+            morale: 100,
             skin,
             siteId: site.id,
             attackModifier,
@@ -3806,6 +4032,10 @@ export default function Game3D() {
         if (bucket) bucket.push(unit);
         else grid.set(key, [unit]);
       });
+      const aliveByTeam = {
+        pku: g.units.filter((candidate) => candidate.team === "pku").length,
+        thu: g.units.filter((candidate) => candidate.team === "thu").length,
+      };
       for (const unit of g.units) {
         if (!g.campaign.warUnlocked) break;
         if (used.has(unit.id) || unit.hp <= 0) continue;
@@ -3869,28 +4099,76 @@ export default function Game3D() {
             (g.campaign.morningPenaltyUntil ?? 0) > g.campaign.elapsedHours
               ? 0.72
               : 1,
+          unitStatus = unitStatusModifiers(unit),
+          enemyStatus = unitStatusModifiers(enemy),
+          unitMorale = Math.min(150, (unit.morale ?? 100) * unitStatus.morale),
+          enemyMorale = Math.min(
+            150,
+            (enemy.morale ?? 100) * enemyStatus.morale,
+          ),
           unitPower =
             (unit.attackModifier ?? 1) *
+            unitStatus.attack *
+            (0.62 + unitMorale / 250) *
             g.campaign.attackBonus[unit.team] *
             caution *
             morningPenalty *
             unitDefense.attack,
           enemyPower =
             (enemy.attackModifier ?? 1) *
+            enemyStatus.attack *
+            (0.62 + enemyMorale / 250) *
             g.campaign.attackBonus[enemy.team] *
             caution *
             morningPenalty *
             enemyDefense.attack;
-        unit.hp -=
-          (1.25 + enemy.supply * 0.007) * enemyPower * unitDefense.taken;
-        enemy.hp -=
-          (1.25 + unit.supply * 0.007) * unitPower * enemyDefense.taken;
+        const unitDamage =
+            (1.25 + enemy.supply * 0.007) * enemyPower * unitDefense.taken,
+          enemyDamage =
+            (1.25 + unit.supply * 0.007) * unitPower * enemyDefense.taken;
+        unit.hp -= unitDamage;
+        enemy.hp -= enemyDamage;
+        unit.morale = Math.max(0, (unit.morale ?? 100) - unitDamage * 0.72);
+        enemy.morale = Math.max(0, (enemy.morale ?? 100) - enemyDamage * 0.72);
         unit.supply = Math.max(0, unit.supply - 0.07);
         enemy.supply = Math.max(0, enemy.supply - 0.07);
         if (unit.hp <= 0) dead.add(unit.id);
         if (enemy.hp <= 0) dead.add(enemy.id);
         if (combatPulse % 3 === 0 && combatEffects.length < 18)
           spawnCombatEffect((unit.x + enemy.x) / 2, (unit.z + enemy.z) / 2);
+        if (combatPulse % 5 === 0)
+          addBattleAlert((unit.x + enemy.x) / 2, (unit.z + enemy.z) / 2);
+      }
+      for (const unit of g.units) {
+        if (dead.has(unit.id) || unit.retreating) continue;
+        const status = unitStatusModifiers(unit),
+          effectiveMorale = Math.min(150, (unit.morale ?? 100) * status.morale),
+          alive = aliveByTeam[unit.team],
+          casualtyRatio =
+            g.deaths[unit.team] /
+            Math.max(1, g.deaths[unit.team] + alive * unit.strength),
+          collapse =
+            (1 - effectiveMorale / 100) * 0.58 +
+            (1 - Math.max(0, unit.hp) / 100) * 0.22 +
+            casualtyRatio * 0.42;
+        if (collapse < 0.62) continue;
+        const fallback = g.sites
+          .filter((site) => site.team === unit.team && !site.destroyed)
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - unit.x, a.z - unit.z) -
+              Math.hypot(b.x - unit.x, b.z - unit.z),
+          )[0];
+        if (!fallback) continue;
+        unit.retreating = true;
+        unit.targetSiteId = fallback.id;
+        unit.path = findPath(
+          unit.x,
+          unit.z,
+          fallback.navX ?? fallback.x,
+          fallback.navZ ?? fallback.z,
+        );
+        unit.pathIndex = 0;
       }
       for (const unit of g.units) {
         if (used.has(unit.id)) continue;
@@ -3902,6 +4180,10 @@ export default function Game3D() {
             distance = Math.hypot(unit.x - targetX, unit.z - targetZ);
           if (target.team === unit.team && distance < 1.18) {
             unit.siteId = target.id;
+            if (unit.retreating) {
+              unit.retreating = false;
+              unit.morale = Math.min(100, (unit.morale ?? 40) + 28);
+            }
             unit.targetSiteId = undefined;
             unit.path = undefined;
             unit.pathIndex = undefined;
@@ -4121,7 +4403,21 @@ export default function Game3D() {
           (site) =>
             site.name === "北京大学数学科学学院（理科一号楼）" &&
             !site.destroyed,
+        ),
+        library = g.sites.find(
+          (site) => site.name === "北京大学图书馆" && !site.destroyed,
+        ),
+        physics = g.sites.find(
+          (site) =>
+            (site.name === "北京大学物理学院" || site.name === "物理学院") &&
+            !site.destroyed,
+        ),
+        chemistry = g.sites.find(
+          (site) => site.name.includes("化学学院") && !site.destroyed,
         );
+      campaign.statuses = (campaign.statuses ?? []).filter(
+        (status) => status.until > campaign.elapsedHours,
+      );
       if (campaign.elapsedHours >= 0) fireEvent("thu_arrival");
       const morningDay = Math.floor(campaign.elapsedHours / 24);
       if (morningDay > campaign.lastMorningEventDay) {
@@ -4130,6 +4426,8 @@ export default function Game3D() {
         const id = `morning_class_${morningDay}`;
         if (!campaign.firedEvents.includes(id)) {
           campaign.firedEvents.push(id);
+          addTimedStatus(`${id}_pku`, "上早八", "pku", 1, 0.72, 0.68, 0.9);
+          addTimedStatus(`${id}_thu`, "上早八", "thu", 1, 0.72, 0.68, 0.9);
           pushEvent({
             id,
             ...EVENT_CARDS.morning_class,
@@ -4161,17 +4459,127 @@ export default function Game3D() {
         fireEvent("war_begins", () => {
           campaign.warUnlocked = true;
         });
+      if (campaign.elapsedHours >= 360)
+        fireEvent("thu_morning_run", () => {
+          addTimedStatus("thu_run_thu", "清华晨跑", "thu", 12, 0.9, 1.5, 1.2);
+          addTimedStatus("thu_run_pku", "晨跑对峙", "pku", 12, 1.2, 1, 1.05);
+          const edgeSites = g.sites
+            .filter(
+              (site) =>
+                site.team === "thu" &&
+                !site.destroyed &&
+                (site.type === "gate" ||
+                  Math.abs(site.x) > 18 ||
+                  Math.abs(site.z) > 25),
+            )
+            .slice(0, 12);
+          if (edgeSites.length)
+            g.units
+              .filter((unit) => unit.team === "thu")
+              .forEach((unit, index) => {
+                const target = edgeSites[(index + 1) % edgeSites.length];
+                unit.targetSiteId = target.id;
+                unit.path = findPath(
+                  unit.x,
+                  unit.z,
+                  target.navX ?? target.x,
+                  target.navZ ?? target.z,
+                );
+                unit.pathIndex = 0;
+              });
+        });
+      const activeRun = (campaign.statuses ?? []).find(
+        (status) => status.id === "thu_run_thu",
+      );
+      if (activeRun) {
+        const edgeSites = g.sites
+          .filter(
+            (site) =>
+              site.team === "thu" &&
+              !site.destroyed &&
+              (site.type === "gate" ||
+                Math.abs(site.x) > 18 ||
+                Math.abs(site.z) > 25),
+          )
+          .slice(0, 12);
+        if (edgeSites.length)
+          g.units
+            .filter(
+              (unit) =>
+                unit.team === "thu" &&
+                activeRun.unitIds.includes(unit.id) &&
+                unit.targetSiteId == null,
+            )
+            .forEach((unit) => {
+              const currentIndex = Math.max(
+                  0,
+                  edgeSites.findIndex((site) => site.id === unit.siteId),
+                ),
+                target = edgeSites[(currentIndex + 1) % edgeSites.length];
+              unit.targetSiteId = target.id;
+              unit.path = findPath(
+                unit.x,
+                unit.z,
+                target.navX ?? target.x,
+                target.navZ ?? target.z,
+              );
+              unit.pathIndex = 0;
+            });
+      }
+      const thuArrivedAt = (site?: SiteState) =>
+        !!site &&
+        g.units.some(
+          (unit) =>
+            unit.team === "thu" &&
+            Math.hypot(
+              unit.x - (site.navX ?? site.x),
+              unit.z - (site.navZ ?? site.z),
+            ) < 1.8,
+        );
+      if (campaign.warUnlocked && thuArrivedAt(library))
+        fireEvent("pku_librarian", () =>
+          addTimedStatus("librarian", "图书管理员", "pku", 24, 1.1, 1, 1.5),
+        );
+      if (campaign.warUnlocked && thuArrivedAt(physics))
+        fireEvent("two_bombs_one_satellite", () => {
+          g.units
+            .filter(
+              (unit) =>
+                unit.team === "thu" &&
+                physics &&
+                Math.hypot(unit.x - physics.x, unit.z - physics.z) < 6,
+            )
+            .forEach((unit) => {
+              unit.hp = Math.max(5, unit.hp - 68);
+              unit.morale = Math.max(0, (unit.morale ?? 100) - 45);
+            });
+          addTimedStatus("two_bombs", "两弹一星", "pku", 24, 1, 1, 1.5);
+        });
+      if (campaign.warUnlocked && thuArrivedAt(chemistry))
+        fireEvent("chemistry_century", () => {
+          g.units
+            .filter(
+              (unit) =>
+                unit.team === "thu" &&
+                chemistry &&
+                Math.hypot(unit.x - chemistry.x, unit.z - chemistry.z) < 5,
+            )
+            .forEach((unit) => (unit.supply = Math.max(0, unit.supply - 65)));
+          addTimedStatus("chemistry", "百年化学", "pku", 18, 1, 1, 1.2);
+        });
       if (
         campaign.warUnlocked &&
         qz &&
         g.units.some(
           (unit) =>
             unit.team === "pku" &&
-            (unit.targetSiteId === qz.id ||
-              Math.hypot(unit.x - qz.x, unit.z - qz.z) < 8),
+            Math.hypot(unit.x - (qz.navX ?? qz.x), unit.z - (qz.navZ ?? qz.z)) <
+              1.8,
         )
       )
         fireEvent("qz_approach", () => {
+          addTimedStatus("qz_defense", "水向下流", "thu", 24, 1, 1, 1.25);
+          addTimedStatus("qz_stall", "前锋受阻", "pku", 24, 1, 1, 0.8);
           spawnUnitsAt(qz, "thu", 10, 1.15);
           campaign.freezeUntil.pku = campaign.elapsedHours + 24;
           const emergencySources = g.sites
@@ -4222,10 +4630,13 @@ export default function Game3D() {
         campaign.warUnlocked &&
         yuanpei &&
         g.units.some(
-          (unit) => unit.team === "thu" && unit.targetSiteId === yuanpei.id,
+          (unit) =>
+            unit.team === "thu" &&
+            Math.hypot(unit.x - yuanpei.x, unit.z - yuanpei.z) < 1.8,
         )
       )
         fireEvent("yuanpei_attack", () => {
+          addTimedStatus("freedom", "为了自由", "pku", 24, 1.25, 1, 1.35);
           spawnUnitsAt(yuanpei, "pku", 10, 1.25);
           g.units
             .filter(
@@ -4246,10 +4657,21 @@ export default function Game3D() {
         campaign.warUnlocked &&
         mathSchool &&
         g.units.some(
-          (unit) => unit.team === "thu" && unit.targetSiteId === mathSchool.id,
+          (unit) =>
+            unit.team === "thu" &&
+            Math.hypot(unit.x - mathSchool.x, unit.z - mathSchool.z) < 1.8,
         )
       )
         fireEvent("double_fei", () => {
+          addTimedStatus(
+            "double_fei_status",
+            "双菲学校",
+            "thu",
+            18,
+            0.5,
+            0.5,
+            0.75,
+          );
           if (!qz) return;
           g.units
             .filter(
@@ -4272,10 +4694,13 @@ export default function Game3D() {
       )
         fireEvent("lake_awakened", () => {
           campaign.attackBonus.pku *= 1.15;
+          addTimedStatus("lake_morale", "胸中未名水", "pku", 24, 1, 1, 1.25);
         });
       if (g.deaths.pku + g.deaths.thu > 0)
         fireEvent("first_blood", () => {
           campaign.cautionUntil = campaign.elapsedHours + 12;
+          addTimedStatus("first_blood_pku", "伤亡震动", "pku", 12, 0.9, 1, 0.9);
+          addTimedStatus("first_blood_thu", "伤亡震动", "thu", 12, 0.9, 1, 0.9);
         });
       if (g.deaths.thu >= 180 || thuSites <= 60)
         fireEvent("thu_ustc", () => {
@@ -4837,7 +5262,13 @@ export default function Game3D() {
               (g.campaign.morningPenaltyUntil ?? 0) > g.campaign.elapsedHours
                 ? 0.68
                 : 1,
-            s = roadSpeed * (u.moveModifier ?? 1) * morningMove * dt;
+            statusMovement = unitStatusModifiers(u).movement,
+            s =
+              roadSpeed *
+              (u.moveModifier ?? 1) *
+              morningMove *
+              statusMovement *
+              dt;
           const forwardX = dx / dist,
             forwardZ = dz / dist,
             gx = Math.floor(u.x / separationCell),
@@ -4879,7 +5310,7 @@ export default function Game3D() {
           u.x = nextX;
           u.z = nextZ;
           mesh.position.set(u.x, terrainHeight(regionForX(u.x), u.x, u.z), u.z);
-          mesh.rotation.y = 0;
+          mesh.rotation.y = Math.atan2(moveX, moveZ);
         }
       });
       if (now - statAt > 500) {
@@ -4895,6 +5326,52 @@ export default function Game3D() {
             .length,
           thuSites: g.sites.filter((s) => s.team === "thu" && !s.destroyed)
             .length,
+          pkuGrowth:
+            (Math.min(
+              5,
+              g.sites.filter(
+                (site) =>
+                  site.team === "pku" &&
+                  site.type === "dorm" &&
+                  !site.destroyed,
+              ).length,
+            ) *
+              5) /
+              6 +
+            (Math.min(
+              2,
+              g.sites.filter(
+                (site) =>
+                  site.team === "pku" &&
+                  site.type === "dining" &&
+                  !site.destroyed,
+              ).length,
+            ) *
+              5) /
+              12,
+          thuGrowth:
+            (Math.min(
+              5,
+              g.sites.filter(
+                (site) =>
+                  site.team === "thu" &&
+                  site.type === "dorm" &&
+                  !site.destroyed,
+              ).length,
+            ) *
+              5) /
+              6 +
+            (Math.min(
+              2,
+              g.sites.filter(
+                (site) =>
+                  site.team === "thu" &&
+                  site.type === "dining" &&
+                  !site.destroyed,
+              ).length,
+            ) *
+              5) /
+              12,
         });
         const campaignDate = new Date(
           new Date(g.campaign.startDateISO).getTime() +
@@ -5086,6 +5563,7 @@ export default function Game3D() {
         unitGroup.visible = detailed;
         commandGroup.visible = detailed;
         combatGroup.visible = detailed;
+        battleAlertGroup.visible = detailed;
         territoryGroup.visible = !detailed;
         if (!detailed) {
           const direction = camera.position
@@ -5176,6 +5654,14 @@ export default function Game3D() {
           lastDiningCycle: campaign.lastDiningCycle ?? 0,
           lastMorningEventDay: campaign.lastMorningEventDay ?? -1,
           thuFactionName: campaign.thuFactionName || "清华",
+          statuses: campaign.statuses ?? [],
+          eventHistory:
+            campaign.eventHistory ??
+            (campaign.firedEvents ?? []).flatMap((id) => {
+              const card = EVENT_CARDS[id];
+              return card ? [{ id, ...card, atHour: 0 }] : [];
+            }),
+          battleAlerts: campaign.battleAlerts ?? [],
         };
       sites.forEach((site) => {
         site.displayName ??= site.name;
@@ -5185,6 +5671,8 @@ export default function Game3D() {
       });
       units.forEach((unit) => {
         unit.strength ??= 5;
+        unit.morale ??= 100;
+        unit.retreating ??= false;
         unit.path = undefined;
         unit.pathIndex = undefined;
       });
@@ -5379,6 +5867,7 @@ export default function Game3D() {
           </button>
         </div>
         <button onClick={() => setAssetOpen(true)}>🖼 更换材质</button>
+        <button onClick={() => setEventLogOpen(true)}>事件档案</button>
         <span className="camp-hint">右键空地建立临时据点</span>
         {selectedUnitCount > 0 && (
           <span className="selected-squad">◎ 已选 {selectedUnitCount} 人</span>
@@ -5455,6 +5944,9 @@ export default function Game3D() {
           <span>控制据点</span>
           <b className="red">{stats.pkuSites}</b>
           <b className="purple">{stats.thuSites}</b>
+          <span>增长/小时</span>
+          <b className="red">+{stats.pkuGrowth.toFixed(1)}</b>
+          <b className="purple">+{stats.thuGrowth.toFixed(1)}</b>
           <span>战略资源</span>
           <b className="red">{Math.floor(gameRef.current.resources.pku)}</b>
           <b className="purple">{Math.floor(gameRef.current.resources.thu)}</b>
@@ -5544,6 +6036,60 @@ export default function Game3D() {
       <div className="map-attribution">
         道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo
       </div>
+      {eventLogOpen && (
+        <div className="modal-backdrop" onClick={() => setEventLogOpen(false)}>
+          <section
+            className="event-log-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <h2>事件档案</h2>
+                <small>历史事件与当前生效状态</small>
+              </div>
+              <button onClick={() => setEventLogOpen(false)}>关闭</button>
+            </header>
+            <h3>当前状态</h3>
+            <div className="active-status-list">
+              {(gameRef.current.campaign.statuses ?? []).length ? (
+                gameRef.current.campaign.statuses.map((status) => (
+                  <article key={status.id} className={status.team}>
+                    <strong>{status.title}</strong>
+                    <span>
+                      {status.team === "pku" ? "北大" : "清华"} · 攻击
+                      {Math.round(status.attack * 100)}% · 移速
+                      {Math.round(status.movement * 100)}% · 意志
+                      {Math.round(status.morale * 100)}%
+                    </span>
+                    <small>
+                      剩余{" "}
+                      {Math.max(
+                        0,
+                        status.until - gameRef.current.campaign.elapsedHours,
+                      ).toFixed(1)}{" "}
+                      小时
+                    </small>
+                  </article>
+                ))
+              ) : (
+                <p>当前没有限时状态。</p>
+              )}
+            </div>
+            <h3>历史事件</h3>
+            <div className="event-history-list">
+              {[...(gameRef.current.campaign.eventHistory ?? [])]
+                .reverse()
+                .map((entry) => (
+                  <article key={entry.id}>
+                    <time>{entry.date}</time>
+                    <strong>{entry.title}</strong>
+                    <p>{entry.effect}</p>
+                  </article>
+                ))}
+            </div>
+          </section>
+        </div>
+      )}
       {victoryBroadcast && (
         <div className="victory-backdrop">
           <section className={`victory-card ${victoryBroadcast.winner}`}>
