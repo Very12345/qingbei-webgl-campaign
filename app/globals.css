@@ -608,7 +608,7 @@ input {
   position: fixed;
   z-index: 70;
   bottom: auto;
-  width: min(252px, calc(100vw - 16px));
+  width: min(300px, calc(100vw - 16px));
   padding: 8px;
   transform: translate(-50%, -100%);
   border-width: 1px;
@@ -655,41 +655,162 @@ input {
   width: 27px;
   height: 27px;
   padding: 0 !important;
-  font-size: 15px;
+  display: grid;
+  place-items: center;
 }
-.site-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px !important;
-  margin-top: 6px;
+.ui-pencil {
+  position: relative;
+  display: block;
+  width: 14px;
+  height: 5px;
+  transform: rotate(-45deg);
+  border: 2px solid #f4e5b4;
+  border-radius: 1px;
 }
-.site-number {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 38px;
-  min-height: 30px;
-  border: 1px solid #ffffff1d;
-  border-radius: 7px;
-  background: #0d1714;
+.ui-pencil::before {
+  position: absolute;
+  right: -5px;
+  top: -2px;
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 4px solid #f4e5b4;
+  content: "";
+}
+.metric-icon {
+  position: relative;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: #f0d77e;
+}
+.supply-icon {
+  border: 2px solid currentcolor;
+  border-radius: 2px;
+}
+.supply-icon::before {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 4px;
+  border-top: 2px solid currentcolor;
+  content: "";
+}
+.supply-icon::after {
+  position: absolute;
+  left: 6px;
+  top: 5px;
+  bottom: 1px;
+  border-left: 2px solid currentcolor;
+  content: "";
+}
+.soldier-icon::before {
+  position: absolute;
+  left: 5px;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  border: 2px solid currentcolor;
+  border-radius: 50%;
+  content: "";
+}
+.soldier-icon::after {
+  position: absolute;
+  left: 1px;
+  bottom: 0;
+  width: 14px;
+  height: 7px;
+  border: 2px solid currentcolor;
+  border-radius: 8px 8px 2px 2px;
+  content: "";
+}
+.metric-value {
+  min-width: 24px;
   color: #ffe49a;
   font-size: 12px;
-  font-weight: 900;
+  text-align: left;
 }
-.floating-site-menu.pku .site-number.troops {
+.floating-site-menu.pku .troop-value,
+.floating-site-menu.pku .soldier-icon {
   color: #ff7182;
 }
-.floating-site-menu.thu .site-number.troops {
+.floating-site-menu.thu .troop-value,
+.floating-site-menu.thu .soldier-icon {
   color: #c98cf2;
 }
-.site-quick-actions button {
-  flex: 1;
-  min-width: 34px;
-  min-height: 34px;
-  padding: 4px !important;
+.site-mode-actions {
+  display: flex !important;
+  grid-template-columns: none !important;
+  justify-content: center;
+  gap: 17px !important;
+  margin-top: 8px;
 }
-.site-quick-actions button > span {
-  font-size: 18px;
+.site-mode-actions button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0 !important;
+  border-radius: 50%;
+}
+.mode-icon {
+  position: relative;
+  display: block;
+  width: 19px;
+  height: 19px;
+  color: #f4e5b4;
+}
+.mode-icon.defend {
+  height: 21px;
+  background: currentcolor;
+  clip-path: polygon(50% 0, 92% 18%, 84% 70%, 50% 100%, 16% 70%, 8% 18%);
+}
+.mode-icon.defend::after {
+  position: absolute;
+  inset: 4px 5px 6px;
+  background: #3f2c48;
+  clip-path: inherit;
+  content: "";
+}
+.site-mode-actions button.active .mode-icon.defend::after {
+  background: #79581f;
+}
+.mode-icon.guard {
+  border: 2px solid currentcolor;
+  border-left-color: transparent;
+  border-radius: 50%;
+}
+.mode-icon.guard::before {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: "";
+}
+.mode-icon.guard::after {
+  position: absolute;
+  left: 7px;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  transform: rotate(-38deg);
+  transform-origin: bottom;
+  background: currentcolor;
+  content: "";
+}
+.mode-icon.standby {
+  background: linear-gradient(
+    90deg,
+    transparent 0 20%,
+    currentcolor 20% 40%,
+    transparent 40% 60%,
+    currentcolor 60% 80%,
+    transparent 80%
+  );
 }
 .floating-site-menu.pku {
   border-color: #df3b50;

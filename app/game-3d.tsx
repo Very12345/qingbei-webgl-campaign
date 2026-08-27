@@ -5005,8 +5005,8 @@ export default function Game3D() {
             siteMenu.style.display = "none";
           else {
             const rect = renderer.domElement.getBoundingClientRect(),
-              menuWidth = siteMenu.offsetWidth || 252,
-              menuHeight = siteMenu.offsetHeight || 86,
+              menuWidth = siteMenu.offsetWidth || 300,
+              menuHeight = siteMenu.offsetHeight || 110,
               screenX =
                 rect.left + ((siteMenuProjection.x + 1) * rect.width) / 2,
               screenY =
@@ -5275,9 +5275,9 @@ export default function Game3D() {
   };
   const stanceText = useMemo(
     () => ({
-      defend: { icon: "🛡️", title: "防守", detail: "保留55%驻军" },
-      guard: { icon: "📡", title: "守卫", detail: "保留28%并主动截击" },
-      standby: { icon: "⏸", title: "待命", detail: "可输送全部兵力" },
+      defend: { title: "防守", detail: "保留55%驻军" },
+      guard: { title: "守卫", detail: "保留28%并主动截击" },
+      standby: { title: "待命", detail: "可输送全部兵力" },
     }),
     [],
   );
@@ -5497,34 +5497,25 @@ export default function Game3D() {
             ) : (
               <strong>{selectedSite.displayName ?? selectedSite.name}</strong>
             )}
-            {selectedSite.team === "pku" && (
-              <button
-                className="rename-icon"
-                onClick={() =>
-                  renamingSite ? renameSelectedSite() : setRenamingSite(true)
-                }
-                aria-label={renamingSite ? "保存名称" : "修改名称"}
-                title={renamingSite ? "保存名称" : "修改名称"}
-              >
-                {renamingSite ? "✓" : "✎"}
-              </button>
-            )}
-          </div>
-          <div className="site-quick-actions">
-            <span
-              className="site-number supply"
-              title={`补给 ${Math.round(selectedSite.supply)}`}
-              aria-label={`补给 ${Math.round(selectedSite.supply)}`}
+            <button
+              className="rename-icon"
+              disabled={selectedSite.team !== "pku"}
+              onClick={() =>
+                renamingSite ? renameSelectedSite() : setRenamingSite(true)
+              }
+              aria-label={renamingSite ? "保存名称" : "修改名称"}
+              title={renamingSite ? "保存名称" : "修改名称"}
             >
+              <span className="ui-pencil" aria-hidden="true" />
+            </button>
+            <span className="metric-icon supply-icon" title="补给" />
+            <b className="metric-value supply-value">
               {Math.round(selectedSite.supply)}
-            </span>
-            <span
-              className="site-number troops"
-              title={`附近友军 ${selectedNearbyFriendly}`}
-              aria-label={`附近友军 ${selectedNearbyFriendly}`}
-            >
-              {selectedNearbyFriendly}
-            </span>
+            </b>
+            <span className="metric-icon soldier-icon" title="附近友军" />
+            <b className="metric-value troop-value">{selectedNearbyFriendly}</b>
+          </div>
+          <div className="site-mode-actions">
             {(Object.keys(stanceText) as Stance[]).map((s) => (
               <button
                 key={s}
@@ -5534,7 +5525,7 @@ export default function Game3D() {
                 disabled={selectedSite.team !== "pku"}
                 onClick={() => setStance(s)}
               >
-                <span>{stanceText[s].icon}</span>
+                <span className={`mode-icon ${s}`} aria-hidden="true" />
               </button>
             ))}
           </div>
