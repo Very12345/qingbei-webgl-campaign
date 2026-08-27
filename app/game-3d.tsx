@@ -629,7 +629,7 @@ export function makeFreshGame(): GameData {
   }));
   const units: UnitState[] = [];
   let uid = 0;
-  const initialBudget: Record<Team, number> = { pku: 90, thu: 108 };
+  const initialBudget: Record<Team, number> = { pku: 450, thu: 540 };
   (["pku", "thu"] as Team[]).forEach((team) => {
     const teamSites = sites.filter((site) => site.team === team);
     for (let i = 0; i < initialBudget[team]; i++) {
@@ -646,7 +646,7 @@ export function makeFreshGame(): GameData {
         tz: s.z,
         hp: 100,
         supply: 100,
-        strength: 5,
+        strength: 1,
         morale: 100,
         siteId: s.id,
       });
@@ -1415,7 +1415,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0x303840,
-            lift: 0.18,
+            lift: 0.035,
             renderOrder: 2,
           },
           dirt: {
@@ -1423,7 +1423,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0x9a805a,
-            lift: 0.194,
+            lift: 0.042,
             renderOrder: 3,
           },
           path: {
@@ -1431,7 +1431,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0xb9ad91,
-            lift: 0.208,
+            lift: 0.048,
             renderOrder: 4,
           },
         },
@@ -1639,10 +1639,13 @@ export default function Game3D() {
           new THREE.Float32BufferAttribute(bucket.positions, 3),
         );
         geometry.setIndex(bucket.indices);
+        geometry.computeVertexNormals();
         const roads = new THREE.Mesh(
           geometry,
-          new THREE.MeshBasicMaterial({
+          new THREE.MeshStandardMaterial({
             color: bucket.color,
+            roughness: 0.94,
+            metalness: 0,
             polygonOffset: true,
             polygonOffsetFactor: -bucket.renderOrder,
             polygonOffsetUnits: -bucket.renderOrder,
@@ -3253,6 +3256,9 @@ export default function Game3D() {
         hpFill.renderOrder = 43;
         hpFill.visible = false;
         g.add(hpBack, hpFill);
+        const initialDetailsVisible =
+          camera.position.distanceTo(controls.target) < 20;
+        detailParts.forEach((part) => (part.visible = initialDetailsVisible));
         g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
         g.scale.setScalar(UNIT_RENDER_SCALE);
         g.userData = {
@@ -3261,7 +3267,7 @@ export default function Game3D() {
           legs,
           body,
           detailParts,
-          detailsVisible: true,
+          detailsVisible: initialDetailsVisible,
           glow,
           hpBack,
           hpFill,
@@ -4048,8 +4054,9 @@ export default function Game3D() {
         skin?: "ustc" | "zju",
       ) => {
         let id = nextUnitId();
-        for (let i = 0; i < count; i++) {
-          const angle = (i / Math.max(1, count)) * Math.PI * 2,
+        const actualCount = count * 5;
+        for (let i = 0; i < actualCount; i++) {
+          const angle = (i / Math.max(1, actualCount)) * Math.PI * 2,
             radius = 0.48 + (i % 3) * 0.15,
             anchorX = site.navX ?? site.x,
             anchorZ = site.navZ ?? site.z;
@@ -4062,7 +4069,7 @@ export default function Game3D() {
             tz: anchorZ,
             hp: 100,
             supply,
-            strength: 5,
+            strength: 1,
             morale: 100,
             skin,
             siteId: site.id,
@@ -4528,7 +4535,7 @@ export default function Game3D() {
               (site) =>
                 site.team === "pku" && site.type === "dorm" && !site.destroyed,
             );
-          for (let i = 0; i < difference; i++)
+          for (let i = 0; i < Math.ceil(difference / 5); i++)
             spawnUnitsAt(dorms[i % dorms.length], "pku", 1, 1, false);
           if (difference) rebuildUnits();
         });
@@ -5233,10 +5240,10 @@ export default function Game3D() {
         renderer.shadowMap.needsUpdate = true;
       }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
-      moon.intensity = night * 0.6;
-      hemi.intensity = 0.18 + day * 1.72;
-      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x29436e);
-      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x101721);
+      moon.intensity = night * 0.9;
+      hemi.intensity = 0.36 + day * 1.54;
+      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x486795);
+      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x182437);
       const sky = new THREE.Color(0x07101f).lerp(
         new THREE.Color(0x9fc5d8),
         day,
@@ -5751,8 +5758,35 @@ export default function Game3D() {
           site.stance === "defend" ? 0.45 : site.stance === "guard" ? 0.72 : 1;
         site.orderPath = undefined;
       });
+      const expandedUnits: UnitState[] = [],
+        expandedIds = new Map<number, number[]>();
+      let migratedUnitId =
+        units.reduce((maximum, unit) => Math.max(maximum, unit.id), -1) + 1;
       units.forEach((unit) => {
-        unit.strength ??= 5;
+        const copies = Math.max(1, Math.round(unit.strength ?? 5)),
+          ids: number[] = [];
+        for (let copy = 0; copy < copies; copy++) {
+          const angle = (copy / copies) * Math.PI * 2,
+            id = copy === 0 ? unit.id : migratedUnitId++;
+          ids.push(id);
+          expandedUnits.push({
+            ...unit,
+            id,
+            x: unit.x + Math.cos(angle) * copy * 0.035,
+            z: unit.z + Math.sin(angle) * copy * 0.035,
+            strength: 1,
+          });
+        }
+        expandedIds.set(unit.id, ids);
+      });
+      normalizedCampaign.statuses.forEach((status) => {
+        status.unitIds = status.unitIds.flatMap(
+          (id) => expandedIds.get(id) ?? [id],
+        );
+      });
+      units.splice(0, units.length, ...expandedUnits);
+      units.forEach((unit) => {
+        unit.strength = 1;
         unit.morale ??= 100;
         unit.retreating ??= false;
         unit.path = undefined;
