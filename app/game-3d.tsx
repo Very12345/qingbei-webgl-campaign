@@ -756,6 +756,8 @@ export default function Game3D() {
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     controls.touches.ONE = THREE.TOUCH.PAN;
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
+    const hideSitePanel = () => setSelected(null);
+    controls.addEventListener("start", hideSitePanel);
     const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x324226, 1.9);
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d0, 3.4);
@@ -1654,10 +1656,8 @@ export default function Game3D() {
         group.add(line);
         head.position.copy(curve.getPoint(0.94));
         const previewTangent = curve.getTangent(0.94);
-        (head.material as THREE.SpriteMaterial).rotation = Math.atan2(
-          previewTangent.x,
-          previewTangent.z,
-        );
+        (head.material as THREE.SpriteMaterial).rotation =
+          Math.atan2(previewTangent.x, previewTangent.z) + Math.PI;
         head.renderOrder = 41;
         group.add(head);
         commandGroup.add(group);
@@ -1682,10 +1682,8 @@ export default function Game3D() {
       group.add(line);
       head.position.copy(curve.getPoint(0.94));
       const headTangent = curve.getTangent(0.94);
-      (head.material as THREE.SpriteMaterial).rotation = Math.atan2(
-        headTangent.x,
-        headTangent.z,
-      );
+      (head.material as THREE.SpriteMaterial).rotation =
+        Math.atan2(headTangent.x, headTangent.z) + Math.PI;
       head.renderOrder = 35;
       group.add(head);
       const movers: THREE.Sprite[] = [];
@@ -1720,6 +1718,7 @@ export default function Game3D() {
       commandAnimations.splice(0);
       commandLineMaterials.splice(0);
       gameRef.current.sites.forEach((s) => {
+        if (s.team !== "pku") return;
         if (s.destroyed || s.orderTarget == null) return;
         const t = gameRef.current.sites[s.orderTarget];
         if (!t || t.destroyed) return;
@@ -1781,7 +1780,6 @@ export default function Game3D() {
           0,
           Math.max(0, Math.min(desired, idle.length - reserve)),
         );
-      if (!moving.length) return 0;
       const targetX = target.navX ?? target.x,
         targetZ = target.navZ ?? target.z,
         sharedPath = findPath(
@@ -1946,7 +1944,10 @@ export default function Game3D() {
             region = regionForX(site.x),
             isTarget = false,
             isRouteTarget = gameRef.current.sites.some(
-              (source) => !source.destroyed && source.orderTarget === site.id,
+              (source) =>
+                source.team === "pku" &&
+                !source.destroyed &&
+                source.orderTarget === site.id,
             ),
             teamColor = TEAM_COLOR[site.team];
           g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
@@ -2091,6 +2092,10 @@ export default function Game3D() {
           typeSprite.position.set(0.88, 1.35, 0);
           typeSprite.renderOrder = 21;
           g.add(typeSprite);
+          g.userData.fixedMarkerIcons = [
+            { object: stanceSprite, x: -0.88, y: 1.35, scale: 0.72 },
+            { object: typeSprite, x: 0.88, y: 1.35, scale: 0.72 },
+          ];
           const hit = new THREE.Mesh(
             new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
             new THREE.MeshBasicMaterial({
@@ -2112,7 +2117,12 @@ export default function Game3D() {
     const refreshRouteHighlights = () => {
       const targets = new Set(
         gameRef.current.sites
-          .filter((source) => !source.destroyed && source.orderTarget != null)
+          .filter(
+            (source) =>
+              source.team === "pku" &&
+              !source.destroyed &&
+              source.orderTarget != null,
+          )
           .map((source) => source.orderTarget as number),
       );
       siteObjects.forEach((object, id) => {
@@ -2703,6 +2713,7 @@ export default function Game3D() {
             return !!unit && Math.hypot(unit.x - point.x, unit.z - point.z) < 3;
           });
       down = { x: e.clientX, y: e.clientY, site, selection };
+      if (site == null) setSelected(null);
       if (site != null || selection) {
         controls.enabled = false;
         renderer.domElement.setPointerCapture(e.pointerId);
@@ -2793,6 +2804,7 @@ export default function Game3D() {
             );
           } else setNotice("目标位置无法到达，调兵命令未执行");
         }
+        setSelected(null);
         down = null;
         return;
       }
@@ -2820,8 +2832,11 @@ export default function Game3D() {
           setNotice(
             troops
               ? `${source.displayName ?? source.name} → ${target.displayName ?? target.name}：${troops}名学生出发`
-              : `${source.displayName ?? source.name}受当前姿态限制，暂无可调动兵力`,
+              : source.orderTarget === target.id
+                ? `已建立 ${source.displayName ?? source.name} → ${target.displayName ?? target.name} 持续兵线；当前无可调动兵力，后续新兵会自动输送`
+                : `未找到可行路径，兵线建立失败`,
           );
+          setSelected(null);
         } else setNotice("只能从北大控制的据点发出命令");
       }
       down = null;
@@ -3624,26 +3639,83 @@ export default function Game3D() {
           return;
         }
       }
-      if (activeThuRoutes >= 2) return;
-      const sources = g.sites
+      const pkuSites = g.sites.filter(
+          (site) => site.team === "pku" && !site.destroyed,
+        ),
+        thuSites = g.sites.filter(
+          (site) => site.team === "thu" && !site.destroyed,
+        ),
+        idleAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === "thu" &&
+              unit.siteId === site.id &&
+              unit.targetSiteId == null &&
+              Math.hypot(
+                unit.x - (site.navX ?? site.x),
+                unit.z - (site.navZ ?? site.z),
+              ) < 3.2,
+          ).length,
+        threatAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === "pku" &&
+              (unit.targetSiteId === site.id ||
+                Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
+          ).length,
+        frontier = thuSites
+          .slice()
+          .sort((a, b) => {
+            const da = Math.min(
+                ...pkuSites.map((site) =>
+                  Math.hypot(site.x - a.x, site.z - a.z),
+                ),
+              ),
+              db = Math.min(
+                ...pkuSites.map((site) =>
+                  Math.hypot(site.x - b.x, site.z - b.z),
+                ),
+              );
+            return threatAt(b) * 8 - threatAt(a) * 8 + da - db;
+          })
+          .slice(0, 6),
+        rearSources = thuSites
           .filter(
             (site) =>
-              site.team === "thu" &&
-              !site.destroyed &&
+              (site.type === "dorm" || site.type === "dining") &&
               site.orderTarget == null &&
-              g.units.filter(
-                (unit) =>
-                  unit.team === "thu" &&
-                  unit.siteId === site.id &&
-                  unit.targetSiteId == null,
-              ).length >= 5,
+              idleAt(site) >= 2,
           )
-          .sort((a, b) => b.supply - a.supply),
-        targets = g.sites.filter(
-          (site) => site.team === "pku" && !site.destroyed,
-        );
-      for (const source of sources.slice(0, 4)) {
-        const target = targets.slice().sort((a, b) => {
+          .sort((a, b) => idleAt(b) - idleAt(a));
+      for (
+        let i = 0;
+        i < Math.min(2, rearSources.length, frontier.length);
+        i++
+      ) {
+        const source = rearSources[i],
+          target = frontier[i % frontier.length];
+        if (source.id !== target.id)
+          issueOrder(
+            "thu",
+            source,
+            target,
+            Math.max(1, idleAt(source) - 1),
+            true,
+          );
+      }
+      if (activeThuRoutes >= 6) return;
+      const attackSources = thuSites
+        .filter(
+          (site) =>
+            site.orderTarget == null &&
+            idleAt(site) >= 2 &&
+            (!qz || Math.hypot(site.x - qz.x, site.z - qz.z) > 4),
+        )
+        .sort((a, b) => idleAt(b) - idleAt(a));
+      let routesCreated = 0;
+      for (const source of attackSources) {
+        if (activeThuRoutes + routesCreated >= 6 || routesCreated >= 2) break;
+        const target = pkuSites.slice().sort((a, b) => {
           const valueA =
               (a.type === "capital" ? -18 : 0) +
               Math.hypot(a.x - source.x, a.z - source.z),
@@ -3652,7 +3724,17 @@ export default function Game3D() {
               Math.hypot(b.x - source.x, b.z - source.z);
           return valueA - valueB;
         })[0];
-        if (target && issueOrder("thu", source, target, 8)) break;
+        if (
+          target &&
+          issueOrder(
+            "thu",
+            source,
+            target,
+            Math.max(1, idleAt(source) - 1),
+            true,
+          )
+        )
+          routesCreated++;
       }
     }, 2200);
     let raf = 0,
@@ -3700,10 +3782,8 @@ export default function Game3D() {
           const t = (now * 0.00016 + animation.phase + index / 5) % 1;
           animation.curve.getPoint(t, mover.position);
           animation.curve.getTangent(t, commandTangent).normalize();
-          (mover.material as THREE.SpriteMaterial).rotation = Math.atan2(
-            commandTangent.x,
-            commandTangent.z,
-          );
+          (mover.material as THREE.SpriteMaterial).rotation =
+            Math.atan2(commandTangent.x, commandTangent.z) + Math.PI;
         });
       });
       for (let i = combatEffects.length - 1; i >= 0; i--) {
@@ -3862,6 +3942,19 @@ export default function Game3D() {
           | THREE.Object3D[]
           | undefined;
         rings?.forEach((ring) => ring.scale.setScalar(fixedRingScale));
+        const icons = object.userData.fixedMarkerIcons as
+          | {
+              object: THREE.Sprite;
+              x: number;
+              y: number;
+              scale: number;
+            }[]
+          | undefined;
+        icons?.forEach((icon) => {
+          icon.object.position.x = icon.x * fixedRingScale;
+          icon.object.position.y = icon.y * fixedRingScale;
+          icon.object.scale.setScalar(icon.scale * fixedRingScale);
+        });
       });
       const active = regions[regionRef.current],
         marginX = Math.min(18, active.width * 0.32),
@@ -3960,6 +4053,7 @@ export default function Game3D() {
       clearInterval(campaignTimer);
       clearInterval(aiTimer);
       removeEventListener("resize", resize);
+      controls.removeEventListener("start", hideSitePanel);
       controls.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === host)
@@ -4132,14 +4226,16 @@ export default function Game3D() {
     setNotice(
       `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}`,
     );
+    setSelected(null);
   };
   const renameSelectedSite = () => {
-    if (!selectedSite) return;
+    if (!selectedSite || selectedSite.team !== "pku") return;
     const nextName = renameDraft.trim().slice(0, 24);
     if (!nextName) return;
     selectedSite.displayName = nextName;
     sceneApi.current?.sync();
     setNotice(`据点已改名为“${nextName}”`);
+    setSelected(null);
   };
   const handleMaterialUpload = async (kind: "unit" | "site", file?: File) => {
     if (!file) return;
@@ -4277,13 +4373,19 @@ export default function Game3D() {
             <input
               value={renameDraft}
               maxLength={24}
+              disabled={selectedSite.team !== "pku"}
               onChange={(event) => setRenameDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") renameSelectedSite();
               }}
               aria-label="据点名称"
             />
-            <button onClick={renameSelectedSite}>改名</button>
+            <button
+              disabled={selectedSite.team !== "pku"}
+              onClick={renameSelectedSite}
+            >
+              改名
+            </button>
           </div>
           <div className="stance-actions">
             {(Object.keys(stanceText) as Stance[]).map((s) => (
