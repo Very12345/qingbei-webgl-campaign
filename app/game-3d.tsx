@@ -96,6 +96,7 @@ type CampaignState = {
   statuses: TimedStatus[];
   eventHistory: EventHistoryEntry[];
   battleAlerts: BattleAlert[];
+  initialThuSites: number;
 };
 type GameData = {
   timeOfDay: number;
@@ -673,6 +674,7 @@ export function makeFreshGame(): GameData {
       statuses: [],
       eventHistory: [],
       battleAlerts: [],
+      initialThuSites: sites.filter((site) => site.team === "thu").length,
     },
   };
 }
@@ -703,9 +705,17 @@ export default function Game3D() {
   const [saveOpen, setSaveOpen] = useState(false);
   const [screen, setScreen] = useState<"home" | "game">("home");
   const screenRef = useRef<"home" | "game">("home");
+  const [playerTeam, setPlayerTeam] = useState<Team>("pku");
+  const playerTeamRef = useRef<Team>("pku");
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [homeSettingsOpen, setHomeSettingsOpen] = useState(false);
+  const [lanInput, setLanInput] = useState("");
+  const [lanOutput, setLanOutput] = useState("");
+  const [lanStatus, setLanStatus] = useState("未连接");
+  const lanPeerRef = useRef<RTCPeerConnection | null>(null);
+  const lanChannelRef = useRef<RTCDataChannel | null>(null);
+  const lanHostRef = useRef(false);
   const [saveName, setSaveName] = useState("解放清华园");
   const [autoDay, setAutoDay] = useState(true);
   const autoDayRef = useRef(true);
@@ -740,13 +750,12 @@ export default function Game3D() {
     unit: null,
     site: null,
   });
-  const [activeEvent, setActiveEvent] = useState<EventCard | null>(null);
+  const [activeEvents, setActiveEvents] = useState<EventCard[]>([]);
   const [victoryBroadcast, setVictoryBroadcast] = useState<{
     winner: Team;
     title: string;
     body: string;
   } | null>(null);
-  const eventQueueRef = useRef<EventCard[]>([]);
   const pushEvent = useCallback((event: EventCard) => {
     const campaign = gameRef.current.campaign;
     campaign.eventHistory ??= [];
@@ -755,11 +764,11 @@ export default function Game3D() {
         ...event,
         atHour: campaign.elapsedHours,
       });
-    setActiveEvent((current) => {
-      if (!current) return event;
-      eventQueueRef.current.push(event);
-      return current;
-    });
+    setActiveEvents((current) =>
+      current.some((item) => item.id === event.id)
+        ? current
+        : [...current, event],
+    );
   }, []);
   const [stats, setStats] = useState({
     pku: 0,
@@ -785,6 +794,9 @@ export default function Game3D() {
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
+  useEffect(() => {
+    playerTeamRef.current = playerTeam;
+  }, [playerTeam]);
   useEffect(() => {
     regionRef.current = region;
   }, [region]);
@@ -1234,6 +1246,55 @@ export default function Game3D() {
             z <= area.maxZ &&
             pointInPolygon(x, z, area.points),
         ),
+      walkableWithClearance = (x: number, z: number, clearance = 0.11) => {
+        const samples = [
+          [0, 0],
+          [clearance, 0],
+          [-clearance, 0],
+          [0, clearance],
+          [0, -clearance],
+          [clearance * 0.72, clearance * 0.72],
+          [-clearance * 0.72, clearance * 0.72],
+          [clearance * 0.72, -clearance * 0.72],
+          [-clearance * 0.72, -clearance * 0.72],
+        ];
+        return samples.every(([offsetX, offsetZ]) => {
+          const sampleX = x + offsetX,
+            sampleZ = z + offsetZ,
+            index = navIndex(navGrid, sampleX, sampleZ);
+          return (
+            index >= 0 &&
+            !navGrid.blocked[index] &&
+            navGrid.component[index] === navGrid.mainComponent &&
+            !insideObstacle(sampleX, sampleZ)
+          );
+        });
+      },
+      nearestClearIndex = (x: number, z: number) => {
+        const centerX = THREE.MathUtils.clamp(
+            Math.floor((x - navGrid.minX) / navGrid.cell),
+            0,
+            navGrid.cols - 1,
+          ),
+          centerZ = THREE.MathUtils.clamp(
+            Math.floor((z - navGrid.minZ) / navGrid.cell),
+            0,
+            navGrid.rows - 1,
+          );
+        for (let radius = 0; radius < 32; radius++)
+          for (let dz = -radius; dz <= radius; dz++)
+            for (let dx = -radius; dx <= radius; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+              const gx = centerX + dx,
+                gz = centerZ + dz;
+              if (gx < 0 || gz < 0 || gx >= navGrid.cols || gz >= navGrid.rows)
+                continue;
+              const index = gz * navGrid.cols + gx,
+                [pointX, pointZ] = navPoint(navGrid, index);
+              if (walkableWithClearance(pointX, pointZ)) return index;
+            }
+        return nearestOpenIndex(navGrid, x, z);
+      },
       ejectTrappedUnits = () => {
         gameRef.current.units.forEach((unit) => {
           const current = navIndex(navGrid, unit.x, unit.z),
@@ -1243,7 +1304,7 @@ export default function Game3D() {
               navGrid.component[current] !== navGrid.mainComponent ||
               insideObstacle(unit.x, unit.z);
           if (!trapped) return;
-          const openIndex = nearestOpenIndex(navGrid, unit.x, unit.z);
+          const openIndex = nearestClearIndex(unit.x, unit.z);
           if (openIndex < 0) return;
           const [safeX, safeZ] = navPoint(navGrid, openIndex),
             target =
@@ -1579,16 +1640,75 @@ export default function Game3D() {
           const lastPoint = points.at(-1)!;
           addRoadCap(bucket, lastPoint[0], lastPoint[1], halfWidth);
         };
+      const pedestrianKinds = new Set([
+          "footway",
+          "path",
+          "pedestrian",
+          "steps",
+          "cycleway",
+          "corridor",
+        ]),
+        vehicleCell = 3,
+        vehicleSegments: {
+          x1: number;
+          z1: number;
+          x2: number;
+          z2: number;
+          radius: number;
+        }[] = [],
+        vehicleIndex = new Map<string, number[]>();
+      for (const road of r.roads) {
+        if (pedestrianKinds.has(road.kind)) continue;
+        const radius = Math.max(road.width, 0.24) / 2;
+        for (let index = 1; index < road.points.length; index++) {
+          const [x1, z1] = road.points[index - 1],
+            [x2, z2] = road.points[index],
+            segmentIndex = vehicleSegments.length;
+          vehicleSegments.push({ x1, z1, x2, z2, radius });
+          for (
+            let gx = Math.floor((Math.min(x1, x2) - radius) / vehicleCell);
+            gx <= Math.floor((Math.max(x1, x2) + radius) / vehicleCell);
+            gx++
+          )
+            for (
+              let gz = Math.floor((Math.min(z1, z2) - radius) / vehicleCell);
+              gz <= Math.floor((Math.max(z1, z2) + radius) / vehicleCell);
+              gz++
+            ) {
+              const key = `${gx}/${gz}`,
+                bucket = vehicleIndex.get(key);
+              if (bucket) bucket.push(segmentIndex);
+              else vehicleIndex.set(key, [segmentIndex]);
+            }
+        }
+      }
+      const onVehicleSurface = (x: number, z: number) =>
+        (
+          vehicleIndex.get(
+            `${Math.floor(x / vehicleCell)}/${Math.floor(z / vehicleCell)}`,
+          ) ?? []
+        ).some((index) => {
+          const segment = vehicleSegments[index],
+            dx = segment.x2 - segment.x1,
+            dz = segment.z2 - segment.z1,
+            lengthSquared = dx * dx + dz * dz,
+            t = lengthSquared
+              ? THREE.MathUtils.clamp(
+                  ((x - segment.x1) * dx + (z - segment.z1) * dz) /
+                    lengthSquared,
+                  0,
+                  1,
+                )
+              : 0,
+            closestX = segment.x1 + dx * t,
+            closestZ = segment.z1 + dz * t;
+          return (
+            Math.hypot(x - closestX, z - closestZ) <= segment.radius + 0.055
+          );
+        });
       for (const road of r.roads) {
         const kind = road.kind as string,
-          pedestrianRoad = [
-            "footway",
-            "path",
-            "pedestrian",
-            "steps",
-            "cycleway",
-            "corridor",
-          ].includes(kind),
+          pedestrianRoad = pedestrianKinds.has(kind),
           bucket = pedestrianRoad
             ? roadBuckets.path
             : kind === "track"
@@ -1612,7 +1732,10 @@ export default function Game3D() {
             const t = step / steps,
               sampleX = x1 + dx * t,
               sampleZ = z1 + dz * t;
-            if (inWater(sampleX, sampleZ)) {
+            if (
+              inWater(sampleX, sampleZ) ||
+              (pedestrianRoad && onVehicleSurface(sampleX, sampleZ))
+            ) {
               flushChunk();
               continue;
             }
@@ -1985,7 +2108,8 @@ export default function Game3D() {
       },
       enterDirectControl = () => {
         const selectedUnits = gameRef.current.units.filter(
-          (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+          (unit) =>
+            unit.team === playerTeamRef.current && selectedUnitIds.has(unit.id),
         );
         if (!selectedUnits.length) return false;
         cameraBeforeDirect = {
@@ -2323,7 +2447,7 @@ export default function Game3D() {
       commandAnimations.splice(0);
       commandLineMaterials.splice(0);
       gameRef.current.sites.forEach((s) => {
-        if (s.team !== "pku") return;
+        if (s.team !== playerTeamRef.current) return;
         if (s.destroyed || s.orderTarget == null) return;
         const t = gameRef.current.sites[s.orderTarget];
         if (!t || t.destroyed) return;
@@ -2549,7 +2673,10 @@ export default function Game3D() {
     const nodeTextureCache = new Map<string, THREE.CanvasTexture>(),
       haloTextureCache = new Map<string, THREE.CanvasTexture>(),
       siteNodeTexture = (team: Team, stance: Stance) => {
-        const key = `${team}/${stance}`,
+        const thuBlue = gameRef.current.campaign.thuFactionName === "中科大",
+          teamStroke =
+            team === "pku" ? "#d62b46" : thuBlue ? "#2879bd" : "#9153b9",
+          key = `${team}/${stance}/${teamStroke}`,
           cached = nodeTextureCache.get(key);
         if (cached) return cached;
         const canvas = document.createElement("canvas");
@@ -2561,7 +2688,7 @@ export default function Game3D() {
         context.fillStyle = "rgba(12,20,18,.96)";
         context.fill();
         context.lineWidth = 18;
-        context.strokeStyle = team === "pku" ? "#d62b46" : "#9153b9";
+        context.strokeStyle = teamStroke;
         context.stroke();
         const drawShield = (inset: number, width: number, opacity: number) => {
           context.beginPath();
@@ -2649,7 +2776,11 @@ export default function Game3D() {
         colors: number[] = [],
         indices: number[] = [],
         pkuColor = new THREE.Color(0xd92845),
-        thuColor = new THREE.Color(0x7a3fa2),
+        thuColor = new THREE.Color(
+          gameRef.current.campaign.thuFactionName === "中科大"
+            ? 0x2879bd
+            : 0x7a3fa2,
+        ),
         blended = new THREE.Color();
       for (let row = 0; row <= rows; row++) {
         const z = region.depth / 2 - (row / rows) * region.depth;
@@ -2866,7 +2997,12 @@ export default function Game3D() {
             beacon.userData.targetBeacon = true;
             g.add(beacon);
           }
-          const labelColor = site.team === "pku" ? "#df3b50" : "#a569d0",
+          const labelColor =
+              site.team === "pku"
+                ? "#df3b50"
+                : gameRef.current.campaign.thuFactionName === "中科大"
+                  ? "#3a8fd2"
+                  : "#a569d0",
             sprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
                 map: labelTexture(site.displayName ?? site.name, labelColor),
@@ -3638,7 +3774,8 @@ export default function Game3D() {
         activeCamps = g.sites.filter(
           (site) => site.type === "camp" && !site.destroyed,
         );
-      if (g.resources.pku < 80)
+      const campTeam = playerTeamRef.current;
+      if (g.resources[campTeam] < 80)
         return (setNotice("建立营地需要80战略资源"), false);
       if (activeCamps.length >= 4)
         return (setNotice("主战场最多同时维持4座临时营地"), false);
@@ -3661,7 +3798,7 @@ export default function Game3D() {
         return (setNotice("营地距离现有据点过近"), false);
       const nearbyPku = g.units.filter(
           (unit) =>
-            unit.team === "pku" &&
+            unit.team === campTeam &&
             Math.hypot(unit.x - point.x, unit.z - point.z) < 4.5,
         ).length,
         nearbyThu = g.units.some(
@@ -3677,7 +3814,7 @@ export default function Game3D() {
           id,
           name,
           displayName: name,
-          team: "pku",
+          team: campTeam,
           x: point.x,
           z: point.z,
           navX: point.x,
@@ -3688,7 +3825,7 @@ export default function Game3D() {
           temporary: true,
           dispatchRatio: 0.65,
         };
-      g.resources.pku -= 80;
+      g.resources[campTeam] -= 80;
       g.sites.push(camp);
       rebuildBuildings();
       setSelected(id);
@@ -3840,7 +3977,7 @@ export default function Game3D() {
           center = selectedCentroid();
         if (
           target &&
-          target.team !== "pku" &&
+          target.team !== playerTeamRef.current &&
           !gameRef.current.campaign.warUnlocked
         ) {
           setNotice("8月19日前可自由调兵，但不能向清华据点发起进攻");
@@ -3854,7 +3991,9 @@ export default function Game3D() {
           if (path.length) {
             const destination = path.at(-1)!;
             const selectedUnits = gameRef.current.units.filter(
-              (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+              (unit) =>
+                unit.team === playerTeamRef.current &&
+                selectedUnitIds.has(unit.id),
             );
             selectedUnits.forEach((unit, index) => {
               unit.targetSiteId = target?.id;
@@ -3869,8 +4008,8 @@ export default function Game3D() {
             );
             setNotice(
               target
-                ? `已命令 ${people} 名零散北大学生${target.team === "pku" ? "支援" : "进攻"}${target.displayName ?? target.name}`
-                : `已调动 ${people} 名北大学生`,
+                ? `已命令 ${people} 名学生${target.team === playerTeamRef.current ? "支援" : "进攻"}${target.displayName ?? target.name}`
+                : `已调动 ${people} 名学生`,
             );
           } else setNotice("目标位置无法到达，调兵命令未执行");
         }
@@ -3891,13 +4030,16 @@ export default function Game3D() {
       ) {
         const source = gameRef.current.sites[down.sourceSite],
           target = gameRef.current.sites[end];
-        if (source.team === "pku") {
-          if (target.team !== "pku" && !gameRef.current.campaign.warUnlocked) {
+        if (source.team === playerTeamRef.current) {
+          if (
+            target.team !== playerTeamRef.current &&
+            !gameRef.current.campaign.warUnlocked
+          ) {
             setNotice("8月19日前尚未开放交战：可以自由调兵或增援友方据点");
             down = null;
             return;
           }
-          const troops = issueOrder("pku", source, target);
+          const troops = issueOrder(playerTeamRef.current, source, target);
           setNotice(
             troops
               ? `${source.displayName ?? source.name} → ${target.displayName ?? target.name}：${troops}名学生出发`
@@ -3906,7 +4048,7 @@ export default function Game3D() {
                 : `未找到可行路径，兵线建立失败`,
           );
           setSelected(null);
-        } else setNotice("只能从北大控制的据点发出命令");
+        } else setNotice("只能从己方控制的据点发出命令");
       }
       down = null;
     });
@@ -3970,7 +4112,7 @@ export default function Game3D() {
       const nearby = point
         ? gameRef.current.units.filter(
             (unit) =>
-              unit.team === "pku" &&
+              unit.team === playerTeamRef.current &&
               Math.hypot(unit.x - point.x, unit.z - point.z) < 2.6,
           )
         : [];
@@ -4105,6 +4247,7 @@ export default function Game3D() {
       };
     let combatPulse = 0;
     const combatTimer = window.setInterval(() => {
+      if (screenRef.current === "home") return;
       const g = gameRef.current,
         now = performance.now(),
         used = new Set<number>(),
@@ -4171,13 +4314,13 @@ export default function Game3D() {
               ) > 2.3
             )
               return { attack: 1, taken: 1 };
-            if (home.type === "gate") return { attack: 1.55, taken: 0.62 };
+            if (home.type === "gate") return { attack: 1.22, taken: 0.8 };
             if (
               home.type === "teaching" ||
               home.type === "capital" ||
               home.type === "target"
             )
-              return { attack: 1.25, taken: 0.82 };
+              return { attack: 1.1, taken: 0.91 };
             return { attack: 1, taken: 1 };
           },
           unitDefense = defenseStats(unit),
@@ -4480,6 +4623,7 @@ export default function Game3D() {
       }
     }, 120);
     const campaignTimer = window.setInterval(() => {
+      if (screenRef.current === "home") return;
       const g = gameRef.current,
         campaign = g.campaign,
         qz = g.sites.find(
@@ -4511,9 +4655,21 @@ export default function Game3D() {
       const morningDay = Math.floor(campaign.elapsedHours / 24);
       if (morningDay > campaign.lastMorningEventDay) {
         campaign.lastMorningEventDay = morningDay;
-        campaign.morningPenaltyUntil = campaign.elapsedHours + 1;
-        const id = `morning_class_${morningDay}`;
-        if (!campaign.firedEvents.includes(id)) {
+        const morningDate = new Date(
+            new Date(campaign.startDateISO).getTime() + morningDay * 86_400_000,
+          ),
+          weekday = morningDate.getUTCDay(),
+          afterClassesBegin =
+            morningDate.getTime() >=
+            new Date("2026-09-07T08:00:00+08:00").getTime(),
+          id = `morning_class_${morningDay}`;
+        if (
+          afterClassesBegin &&
+          weekday >= 1 &&
+          weekday <= 5 &&
+          !campaign.firedEvents.includes(id)
+        ) {
+          campaign.morningPenaltyUntil = campaign.elapsedHours + 1;
           campaign.firedEvents.push(id);
           addTimedStatus(`${id}_pku`, "上早八", "pku", 1, 0.72, 0.68, 0.9);
           addTimedStatus(`${id}_thu`, "上早八", "thu", 1, 0.72, 0.68, 0.9);
@@ -4791,7 +4947,7 @@ export default function Game3D() {
           addTimedStatus("first_blood_pku", "伤亡震动", "pku", 12, 0.9, 1, 0.9);
           addTimedStatus("first_blood_thu", "伤亡震动", "thu", 12, 0.9, 1, 0.9);
         });
-      if (g.deaths.thu >= 180 || thuSites <= 60)
+      if (thuSites * 2 < (campaign.initialThuSites ?? 80))
         fireEvent("thu_ustc", () => {
           campaign.thuFactionName = "中科大";
           g.units
@@ -4930,19 +5086,22 @@ export default function Game3D() {
       }
     }, 1000);
     const aiTimer = window.setInterval(() => {
+      if (screenRef.current === "home") return;
       const g = gameRef.current;
       if (!g.campaign.warUnlocked) return;
-      const qz = g.sites.find(
+      const aiTeam: Team = playerTeamRef.current === "pku" ? "thu" : "pku",
+        enemyTeam = playerTeamRef.current,
+        qz = g.sites.find(
           (site) => site.name === "求真书院" && !site.destroyed,
         ),
-        activeThuRoutes = g.sites.filter(
+        activeAiRoutes = g.sites.filter(
           (site) =>
-            site.team === "thu" &&
+            site.team === aiTeam &&
             site.orderTarget != null &&
-            g.sites[site.orderTarget]?.team === "pku" &&
+            g.sites[site.orderTarget]?.team === enemyTeam &&
             !site.destroyed,
         ).length;
-      if (qz) {
+      if (qz && aiTeam === "thu") {
         const threat = g.units.filter(
           (unit) =>
             unit.team === "pku" &&
@@ -4970,16 +5129,16 @@ export default function Game3D() {
           return;
         }
       }
-      const pkuSites = g.sites.filter(
-          (site) => site.team === "pku" && !site.destroyed,
+      const enemySites = g.sites.filter(
+          (site) => site.team === enemyTeam && !site.destroyed,
         ),
-        thuSites = g.sites.filter(
-          (site) => site.team === "thu" && !site.destroyed,
+        friendlySites = g.sites.filter(
+          (site) => site.team === aiTeam && !site.destroyed,
         ),
         idleAt = (site: SiteState) =>
           g.units.filter(
             (unit) =>
-              unit.team === "thu" &&
+              unit.team === aiTeam &&
               unit.siteId === site.id &&
               unit.targetSiteId == null &&
               Math.hypot(
@@ -4990,27 +5149,27 @@ export default function Game3D() {
         threatAt = (site: SiteState) =>
           g.units.filter(
             (unit) =>
-              unit.team === "pku" &&
+              unit.team === enemyTeam &&
               (unit.targetSiteId === site.id ||
                 Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
           ).length,
-        frontier = thuSites
+        frontier = friendlySites
           .slice()
           .sort((a, b) => {
             const da = Math.min(
-                ...pkuSites.map((site) =>
+                ...enemySites.map((site) =>
                   Math.hypot(site.x - a.x, site.z - a.z),
                 ),
               ),
               db = Math.min(
-                ...pkuSites.map((site) =>
+                ...enemySites.map((site) =>
                   Math.hypot(site.x - b.x, site.z - b.z),
                 ),
               );
             return threatAt(b) * 8 - threatAt(a) * 8 + da - db;
           })
           .slice(0, 6),
-        rearSources = thuSites
+        rearSources = friendlySites
           .filter(
             (site) =>
               (site.type === "dorm" || site.type === "dining") &&
@@ -5027,15 +5186,15 @@ export default function Game3D() {
           target = frontier[i % frontier.length];
         if (source.id !== target.id)
           issueOrder(
-            "thu",
+            aiTeam,
             source,
             target,
             Math.max(1, idleAt(source) - 1),
             true,
           );
       }
-      if (activeThuRoutes >= 6) return;
-      const attackSources = thuSites
+      if (activeAiRoutes >= 6) return;
+      const attackSources = friendlySites
         .filter(
           (site) =>
             site.orderTarget == null &&
@@ -5045,8 +5204,8 @@ export default function Game3D() {
         .sort((a, b) => idleAt(b) - idleAt(a));
       let routesCreated = 0;
       for (const source of attackSources) {
-        if (activeThuRoutes + routesCreated >= 6 || routesCreated >= 2) break;
-        const target = pkuSites.slice().sort((a, b) => {
+        if (activeAiRoutes + routesCreated >= 6 || routesCreated >= 2) break;
+        const target = enemySites.slice().sort((a, b) => {
           const valueA =
               (a.type === "capital" ? -18 : 0) +
               Math.hypot(a.x - source.x, a.z - source.z),
@@ -5058,7 +5217,7 @@ export default function Game3D() {
         if (
           target &&
           issueOrder(
-            "thu",
+            aiTeam,
             source,
             target,
             Math.max(1, idleAt(source) - 1),
@@ -5116,7 +5275,8 @@ export default function Game3D() {
       }
       if (directControlActive) {
         const controlled = g.units.filter(
-          (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
+          (unit) =>
+            unit.team === playerTeamRef.current && selectedUnitIds.has(unit.id),
         );
         if (!controlled.length) exitDirectControl();
         else {
@@ -5403,11 +5563,33 @@ export default function Game3D() {
             moveLength = 1;
           }
           const nextX = u.x + (moveX / moveLength) * s,
-            nextZ = u.z + (moveZ / moveLength) * s,
-            nextIndex = navIndex(navGrid, nextX, nextZ);
-          if (nextIndex < 0 || navGrid.blocked[nextIndex]) return;
-          u.x = nextX;
-          u.z = nextZ;
+            nextZ = u.z + (moveZ / moveLength) * s;
+          let resolvedX = nextX,
+            resolvedZ = nextZ;
+          if (!walkableWithClearance(nextX, nextZ)) {
+            const slideCandidates = [
+                [nextX, u.z],
+                [u.x, nextZ],
+                [u.x + (moveZ / moveLength) * s, u.z],
+                [u.x, u.z - (moveX / moveLength) * s],
+              ].filter(([x, z]) => walkableWithClearance(x, z)),
+              bestSlide = slideCandidates.sort(
+                (a, b) =>
+                  (b[0] - u.x) * forwardX +
+                  (b[1] - u.z) * forwardZ -
+                  ((a[0] - u.x) * forwardX + (a[1] - u.z) * forwardZ),
+              )[0];
+            if (!bestSlide) {
+              if (directControlActive && u.id === directLeaderId) {
+                const safeIndex = nearestClearIndex(u.x, u.z);
+                if (safeIndex >= 0) [u.x, u.z] = navPoint(navGrid, safeIndex);
+              }
+              return;
+            }
+            [resolvedX, resolvedZ] = bestSlide;
+          }
+          u.x = resolvedX;
+          u.z = resolvedZ;
           mesh.position.set(u.x, terrainHeight(regionForX(u.x), u.x, u.z), u.z);
           mesh.rotation.y = Math.atan2(moveX, moveZ);
         }
@@ -5715,7 +5897,9 @@ export default function Game3D() {
       setNotice("存档空间不足，请删除旧存档或恢复默认材质后重试");
     }
   };
-  const loadGame = (save: Snapshot) => {
+  const loadGame = (save: Snapshot, team: Team = playerTeam) => {
+    setPlayerTeam(team);
+    playerTeamRef.current = team;
     if (save.version === 3 && save.campaign) {
       const { timeOfDay, resources, deaths, sites, units, campaign } =
         structuredClone(save);
@@ -5745,6 +5929,9 @@ export default function Game3D() {
               return card ? [{ id, ...card, atHour: 0 }] : [];
             }),
           battleAlerts: campaign.battleAlerts ?? [],
+          initialThuSites:
+            campaign.initialThuSites ??
+            sites.filter((site) => site.team === "thu").length,
         };
       sites.forEach((site) => {
         site.displayName ??= site.name;
@@ -5841,8 +6028,7 @@ export default function Game3D() {
     sceneApi.current?.clearUnitSelection();
     setSelected(null);
     setSaveOpen(false);
-    eventQueueRef.current = [];
-    setActiveEvent(null);
+    setActiveEvents([]);
     setVictoryBroadcast(null);
     setScreen("game");
   };
@@ -5851,13 +6037,14 @@ export default function Game3D() {
     localStorage.setItem(SAVE_KEY, JSON.stringify(next));
     setSaves(next);
   };
-  const newGame = () => {
+  const newGame = (team: Team = playerTeam) => {
+    setPlayerTeam(team);
+    playerTeamRef.current = team;
     gameRef.current = makeFreshGame();
     sceneApi.current?.sync();
     sceneApi.current?.clearUnitSelection();
     setSelected(null);
-    eventQueueRef.current = [];
-    setActiveEvent(null);
+    setActiveEvents([]);
     setVictoryBroadcast(null);
     setScreen("game");
   };
@@ -5882,7 +6069,7 @@ export default function Game3D() {
         .reduce((sum, unit) => sum + unit.strength, 0)
     : 0;
   const setStance = (s: Stance) => {
-    if (!selectedSite || selectedSite.team !== "pku") return;
+    if (!selectedSite || selectedSite.team !== playerTeam) return;
     selectedSite.stance = s;
     selectedSite.dispatchRatio = s === "defend" ? 0.4 : s === "guard" ? 0.7 : 1;
     sceneApi.current?.sync();
@@ -5891,7 +6078,7 @@ export default function Game3D() {
     );
   };
   const renameSelectedSite = () => {
-    if (!selectedSite || selectedSite.team !== "pku") return;
+    if (!selectedSite || selectedSite.team !== playerTeam) return;
     const nextName = renameDraft.trim().slice(0, 24);
     if (!nextName) return;
     selectedSite.displayName = nextName;
@@ -5939,6 +6126,95 @@ export default function Game3D() {
     if (kind === "unit") setUnitMaterialUrl(null);
     else setSiteMaterialUrl(null);
   };
+  const waitForIce = (peer: RTCPeerConnection) =>
+    new Promise<void>((resolve) => {
+      if (peer.iceGatheringState === "complete") return resolve();
+      const listener = () => {
+        if (peer.iceGatheringState !== "complete") return;
+        peer.removeEventListener("icegatheringstatechange", listener);
+        resolve();
+      };
+      peer.addEventListener("icegatheringstatechange", listener);
+    });
+  const bindLanChannel = (channel: RTCDataChannel, host: boolean) => {
+    lanChannelRef.current = channel;
+    lanHostRef.current = host;
+    channel.onopen = () =>
+      setLanStatus(host ? "已开放局域网战局" : "已连接主机");
+    channel.onclose = () => setLanStatus("连接已关闭");
+    channel.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          game: GameData;
+          hostTeam: Team;
+          role: "host" | "guest";
+        };
+        if (
+          (host && payload.role === "guest") ||
+          (!host && payload.role === "host")
+        ) {
+          gameRef.current = payload.game;
+          if (!host) {
+            const guestTeam: Team = payload.hostTeam === "pku" ? "thu" : "pku";
+            setPlayerTeam(guestTeam);
+            playerTeamRef.current = guestTeam;
+          }
+          sceneApi.current?.sync();
+          setScreen("game");
+        }
+      } catch {
+        setLanStatus("收到的战局数据无效");
+      }
+    };
+  };
+  const createLanHost = async () => {
+    lanPeerRef.current?.close();
+    const peer = new RTCPeerConnection({ iceServers: [] }),
+      channel = peer.createDataChannel("qingbei-campaign");
+    lanPeerRef.current = peer;
+    bindLanChannel(channel, true);
+    await peer.setLocalDescription(await peer.createOffer());
+    await waitForIce(peer);
+    setLanOutput(JSON.stringify(peer.localDescription));
+    setLanStatus("已生成主机码，发送给同一局域网玩家");
+  };
+  const joinLanHost = async () => {
+    try {
+      lanPeerRef.current?.close();
+      const peer = new RTCPeerConnection({ iceServers: [] });
+      lanPeerRef.current = peer;
+      peer.ondatachannel = (event) => bindLanChannel(event.channel, false);
+      await peer.setRemoteDescription(JSON.parse(lanInput));
+      await peer.setLocalDescription(await peer.createAnswer());
+      await waitForIce(peer);
+      setLanOutput(JSON.stringify(peer.localDescription));
+      setLanStatus("已生成回应码，请发回主机确认");
+    } catch {
+      setLanStatus("加入码无效");
+    }
+  };
+  const acceptLanAnswer = async () => {
+    try {
+      await lanPeerRef.current?.setRemoteDescription(JSON.parse(lanInput));
+      setLanStatus("正在建立连接");
+    } catch {
+      setLanStatus("回应码无效");
+    }
+  };
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const channel = lanChannelRef.current;
+      if (channel?.readyState === "open")
+        channel.send(
+          JSON.stringify({
+            game: gameRef.current,
+            hostTeam: playerTeamRef.current,
+            role: lanHostRef.current ? "host" : "guest",
+          }),
+        );
+    }, 700);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <main className="game-shell">
       <div ref={hostRef} className="webgl-stage" />
@@ -6083,15 +6359,56 @@ export default function Game3D() {
             </header>
             {homeSettingsOpen && (
               <div className="home-settings-panel">
-                <strong>主页设置</strong>
-                <button onClick={() => setAssetOpen(true)}>
-                  更换士兵与据点材质
-                </button>
+                <div className="home-setting-row">
+                  <strong>主页设置</strong>
+                  <button onClick={() => setAssetOpen(true)}>
+                    更换士兵与据点材质
+                  </button>
+                </div>
+                <div className="lan-panel">
+                  <strong>局域网联机（点对点）</strong>
+                  <small>{lanStatus}</small>
+                  <div>
+                    <button onClick={() => void createLanHost()}>
+                      开放当前战局
+                    </button>
+                    <button onClick={() => void joinLanHost()}>
+                      使用主机码加入
+                    </button>
+                    <button onClick={() => void acceptLanAnswer()}>
+                      主机确认回应码
+                    </button>
+                  </div>
+                  <textarea
+                    value={lanInput}
+                    onChange={(event) => setLanInput(event.target.value)}
+                    placeholder="粘贴对方提供的主机码或回应码"
+                  />
+                  <textarea
+                    readOnly
+                    value={lanOutput}
+                    placeholder="生成的联机码会显示在这里"
+                  />
+                  <small>
+                    同一局域网内手动交换一次连接码；主机负责同步战局。
+                  </small>
+                </div>
               </div>
             )}
-            <button className="new-game-button" onClick={newGame}>
-              新游戏
-            </button>
+            <div className="perspective-buttons">
+              <button
+                className="new-game-button"
+                onClick={() => newGame("pku")}
+              >
+                北大视角新游戏
+              </button>
+              <button
+                className="new-game-button thu"
+                onClick={() => newGame("thu")}
+              >
+                清华视角新游戏
+              </button>
+            </div>
             <div className="home-save-row">
               <input
                 value={saveName}
@@ -6113,7 +6430,12 @@ export default function Game3D() {
                       {save.units.length}人
                     </span>
                   </div>
-                  <button onClick={() => loadGame(save)}>进入</button>
+                  <button onClick={() => loadGame(save, "pku")}>
+                    北大进入
+                  </button>
+                  <button onClick={() => loadGame(save, "thu")}>
+                    清华进入
+                  </button>
                   <button
                     className="delete"
                     onClick={() => deleteSave(save.savedAt)}
@@ -6195,7 +6517,7 @@ export default function Game3D() {
           }}
         >
           <strong>在此建立临时据点？</strong>
-          <small>消耗 80 战略资源，附近需要至少 3 名北大学生</small>
+          <small>消耗 80 战略资源，附近需要至少 3 名己方学生</small>
           <div>
             <button
               onClick={() => {
@@ -6250,7 +6572,7 @@ export default function Game3D() {
           <b className="red">{gameRef.current.deaths.pku}</b>
           <b className="purple">{gameRef.current.deaths.thu}</b>
         </div>
-        <button onClick={newGame}>重新开始</button>
+        <button onClick={() => newGame(playerTeam)}>重新开始</button>
       </aside>
       {selectedSite && (
         <section
@@ -6275,7 +6597,7 @@ export default function Game3D() {
             )}
             <button
               className="rename-icon"
-              disabled={selectedSite.team !== "pku"}
+              disabled={selectedSite.team !== playerTeam}
               onClick={() =>
                 renamingSite ? renameSelectedSite() : setRenamingSite(true)
               }
@@ -6298,7 +6620,7 @@ export default function Game3D() {
                 title={`${stanceText[s].title} · 输送${s === "defend" ? 40 : s === "guard" ? 70 : 100}%`}
                 aria-label={`${stanceText[s].title}模式`}
                 className={selectedSite.stance === s ? "active" : ""}
-                disabled={selectedSite.team !== "pku"}
+                disabled={selectedSite.team !== playerTeam}
                 onClick={() => setStance(s)}
               >
                 <span className={`mode-icon ${s}`} aria-hidden="true" />
@@ -6383,6 +6705,16 @@ export default function Game3D() {
                   </article>
                 ))}
             </div>
+            <h3>尚未触发的事件</h3>
+            <div className="undiscovered-events">
+              {Object.entries(EVENT_CARDS)
+                .filter(
+                  ([id]) => !gameRef.current.campaign.firedEvents.includes(id),
+                )
+                .map(([id, event]) => (
+                  <span key={id}>{event.title}</span>
+                ))}
+            </div>
           </section>
         </div>
       )}
@@ -6396,27 +6728,28 @@ export default function Game3D() {
           </section>
         </div>
       )}
-      {activeEvent && (
+      {activeEvents.length > 0 && screen === "game" && (
         <div className="event-backdrop">
-          <article className="event-card">
+          <article className="event-card event-batch-card">
             <div
-              className={`event-photo ${activeEvent.quadrant}`}
+              className={`event-photo ${activeEvents[0].quadrant} event-${activeEvents[0].id}`}
               style={{
-                backgroundImage: `linear-gradient(#0002,#0005),url(${import.meta.env.BASE_URL}event-archive-sheet.webp)`,
+                backgroundImage: `linear-gradient(#0002,#0005),url(${import.meta.env.BASE_URL}event-archive-sheet-v2.png)`,
               }}
             />
             <div className="event-copy">
-              <small>{activeEvent.date}</small>
-              <h2>{activeEvent.title}</h2>
-              <p>{activeEvent.body}</p>
-              <div className="event-effect">机制效果：{activeEvent.effect}</div>
-              <button
-                onClick={() =>
-                  setActiveEvent(eventQueueRef.current.shift() ?? null)
-                }
-              >
-                继续战局
-              </button>
+              <small>同时发生 {activeEvents.length} 项事件</small>
+              <div className="event-batch-items">
+                {activeEvents.map((event) => (
+                  <section key={event.id}>
+                    <time>{event.date}</time>
+                    <h2>{event.title}</h2>
+                    <p>{event.body}</p>
+                    <div className="event-effect">机制效果：{event.effect}</div>
+                  </section>
+                ))}
+              </div>
+              <button onClick={() => setActiveEvents([])}>继续战局</button>
             </div>
           </article>
         </div>

@@ -145,12 +145,10 @@ input {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: radial-gradient(
-    circle at 28% 20%,
-    #263b34 0,
-    #09120f 55%,
-    #050a08 100%
-  );
+  background:
+    linear-gradient(115deg, #06100dda, #17241bc2 48%, #160a12d9),
+    repeating-linear-gradient(135deg, #ffffff08 0 1px, transparent 1px 24px);
+  backdrop-filter: blur(4px) saturate(0.72);
 }
 .home-card {
   width: min(760px, 96vw);
@@ -198,8 +196,34 @@ input {
   background: #09120f;
 }
 .home-settings-panel {
+  display: grid;
+}
+.home-setting-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.lan-panel {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid #ffffff18;
+}
+.lan-panel > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lan-panel textarea {
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid #ffffff20;
+  border-radius: 7px;
+  padding: 7px;
+  background: #050c09;
+  color: #dce5d8;
+  font: 10px/1.35 monospace;
 }
 .home-card button,
 .home-card input {
@@ -220,6 +244,14 @@ input {
   font-size: 17px;
   font-weight: 900;
 }
+.perspective-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.new-game-button.thu {
+  background: #55306d !important;
+}
 .home-save-row input {
   flex: 1;
   min-width: 0;
@@ -232,7 +264,7 @@ input {
 }
 .home-save-list article {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 8px;
   padding: 10px 0;
@@ -1106,6 +1138,18 @@ input {
   color: #d8ddd3;
   font-size: 11px;
 }
+.undiscovered-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.undiscovered-events span {
+  padding: 5px 8px;
+  border: 1px dashed #ffffff25;
+  border-radius: 99px;
+  color: #adb7ac;
+  font-size: 10px;
+}
 .victory-backdrop {
   position: fixed;
   z-index: 140;
@@ -1169,20 +1213,32 @@ input {
 }
 .event-photo {
   min-height: 390px;
-  background-size: 200% 200%;
+  background-size: 400% 200%;
   filter: grayscale(1) contrast(1.14) blur(0.25px);
 }
 .event-photo.arrival {
   background-position: 0 0;
 }
 .event-photo.march {
-  background-position: 100% 0;
+  background-position: 100% 100%;
 }
 .event-photo.lake {
-  background-position: 0 100%;
+  background-position: 66.667% 100%;
 }
 .event-photo.classroom {
-  background-position: 100% 100%;
+  background-position: 33.333% 0;
+}
+.event-photo.event-thu_morning_run {
+  background-position: 66.667% 0;
+}
+.event-photo.event-pku_librarian {
+  background-position: 100% 0;
+}
+.event-photo.event-two_bombs_one_satellite {
+  background-position: 0 100%;
+}
+.event-photo.event-chemistry_century {
+  background-position: 33.333% 100%;
 }
 .event-copy {
   position: relative;
@@ -1215,6 +1271,20 @@ input {
   font:
     16px/1.8 "SimSun",
     serif;
+}
+.event-batch-items {
+  display: grid;
+  gap: 12px;
+  max-height: 54vh;
+  overflow: auto;
+}
+.event-batch-items > section + section {
+  padding-top: 12px;
+  border-top: 1px solid #746d5d55;
+}
+.event-batch-items time {
+  color: #706b60;
+  font-size: 11px;
 }
 .event-effect {
   margin: 18px 0;
