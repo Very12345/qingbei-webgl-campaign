@@ -784,6 +784,9 @@ export default function Game3D() {
     sun.shadow.camera.right = 65;
     sun.shadow.camera.top = 55;
     sun.shadow.camera.bottom = -55;
+    sun.shadow.bias = -0.00018;
+    sun.shadow.normalBias = 0.075;
+    sun.shadow.radius = 2;
     scene.add(sun);
     const moon = new THREE.DirectionalLight(0x91b7ff, 0.25);
     scene.add(moon);
@@ -1258,7 +1261,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0x303840,
-            lift: 0.19,
+            lift: 0.18,
             renderOrder: 2,
           },
           dirt: {
@@ -1266,7 +1269,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0x9a805a,
-            lift: 0.2,
+            lift: 0.194,
             renderOrder: 3,
           },
           path: {
@@ -1274,7 +1277,7 @@ export default function Game3D() {
             indices: [],
             vertexIndex: 0,
             color: 0xb9ad91,
-            lift: 0.215,
+            lift: 0.208,
             renderOrder: 4,
           },
         },
@@ -1294,69 +1297,32 @@ export default function Game3D() {
               z <= water.maxZ &&
               pointInPolygon(x, z, water.points),
           );
-      const addRoadQuad = (
-          bucket: RoadBucket,
-          x1: number,
-          z1: number,
-          x2: number,
-          z2: number,
-          width: number,
-        ) => {
-          const dx = x2 - x1,
-            dz = z2 - z1,
-            length = Math.hypot(dx, dz);
-          if (length < 0.002) return;
-          const px = ((-dz / length) * width) / 2,
-            pz = ((dx / length) * width) / 2,
-            left1X = x1 + px,
-            left1Z = z1 + pz,
-            right1X = x1 - px,
-            right1Z = z1 - pz,
-            left2X = x2 + px,
-            left2Z = z2 + pz,
-            right2X = x2 - px,
-            right2Z = z2 - pz;
-          bucket.positions.push(
-            left1X,
-            terrainHeight(r, left1X, left1Z) + bucket.lift,
-            left1Z,
-            right1X,
-            terrainHeight(r, right1X, right1Z) + bucket.lift,
-            right1Z,
-            left2X,
-            terrainHeight(r, left2X, left2Z) + bucket.lift,
-            left2Z,
-            right2X,
-            terrainHeight(r, right2X, right2Z) + bucket.lift,
-            right2Z,
-          );
-          const vi = bucket.vertexIndex;
-          bucket.indices.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
-          bucket.vertexIndex += 4;
-        },
-        addRoundJoin = (
+      const addRoadCap = (
           bucket: RoadBucket,
           x: number,
           z: number,
           radius: number,
         ) => {
-          if (inWater(x, z)) return;
-          const centerIndex = bucket.vertexIndex;
-          bucket.positions.push(
-            x,
-            terrainHeight(r, x, z) + bucket.lift + 0.002,
-            z,
-          );
+          const ring: [number, number][] = [];
+          for (let step = 0; step <= 10; step++) {
+            const angle = (step / 10) * Math.PI * 2;
+            ring.push([
+              x + Math.cos(angle) * radius,
+              z + Math.sin(angle) * radius,
+            ]);
+          }
+          const flatY =
+              Math.max(
+                terrainHeight(r, x, z),
+                ...ring.map(([edgeX, edgeZ]) => terrainHeight(r, edgeX, edgeZ)),
+              ) +
+              bucket.lift +
+              0.004,
+            centerIndex = bucket.vertexIndex;
+          bucket.positions.push(x, flatY, z);
           bucket.vertexIndex++;
-          for (let step = 0; step <= 8; step++) {
-            const angle = (step / 8) * Math.PI * 2,
-              edgeX = x + Math.cos(angle) * radius,
-              edgeZ = z + Math.sin(angle) * radius;
-            bucket.positions.push(
-              edgeX,
-              terrainHeight(r, edgeX, edgeZ) + bucket.lift + 0.002,
-              edgeZ,
-            );
+          ring.forEach(([edgeX, edgeZ], step) => {
+            bucket.positions.push(edgeX, flatY, edgeZ);
             bucket.vertexIndex++;
             if (step > 0)
               bucket.indices.push(
@@ -1364,7 +1330,94 @@ export default function Game3D() {
                 centerIndex + step,
                 centerIndex + step + 1,
               );
-          }
+          });
+        },
+        addRoadStrip = (
+          bucket: RoadBucket,
+          points: [number, number][],
+          width: number,
+        ) => {
+          if (points.length < 2) return;
+          const firstVertex = bucket.vertexIndex,
+            halfWidth = width / 2;
+          points.forEach(([x, z], index) => {
+            const previous = points[Math.max(0, index - 1)],
+              next = points[Math.min(points.length - 1, index + 1)],
+              incomingX = x - previous[0],
+              incomingZ = z - previous[1],
+              outgoingX = next[0] - x,
+              outgoingZ = next[1] - z,
+              incomingLength = Math.hypot(incomingX, incomingZ),
+              outgoingLength = Math.hypot(outgoingX, outgoingZ);
+            let offsetX = 0,
+              offsetZ = 0;
+            if (!index || index === points.length - 1) {
+              const dx = !index ? outgoingX : incomingX,
+                dz = !index ? outgoingZ : incomingZ,
+                length = Math.max(0.0001, Math.hypot(dx, dz));
+              offsetX = (-dz / length) * halfWidth;
+              offsetZ = (dx / length) * halfWidth;
+            } else {
+              const inX = incomingX / Math.max(0.0001, incomingLength),
+                inZ = incomingZ / Math.max(0.0001, incomingLength),
+                outX = outgoingX / Math.max(0.0001, outgoingLength),
+                outZ = outgoingZ / Math.max(0.0001, outgoingLength),
+                tangentX = inX + outX,
+                tangentZ = inZ + outZ,
+                tangentLength = Math.hypot(tangentX, tangentZ);
+              if (tangentLength < 0.08) {
+                offsetX = -inZ * halfWidth;
+                offsetZ = inX * halfWidth;
+              } else {
+                const miterX = -tangentZ / tangentLength,
+                  miterZ = tangentX / tangentLength,
+                  normalX = -inZ,
+                  normalZ = inX,
+                  denominator = miterX * normalX + miterZ * normalZ,
+                  rawLength =
+                    Math.abs(denominator) < 0.2
+                      ? halfWidth
+                      : halfWidth / denominator,
+                  miterLength = THREE.MathUtils.clamp(
+                    rawLength,
+                    -halfWidth * 1.8,
+                    halfWidth * 1.8,
+                  );
+                offsetX = miterX * miterLength;
+                offsetZ = miterZ * miterLength;
+              }
+            }
+            const leftX = x + offsetX,
+              leftZ = z + offsetZ,
+              rightX = x - offsetX,
+              rightZ = z - offsetZ;
+            bucket.positions.push(
+              leftX,
+              terrainHeight(r, leftX, leftZ) + bucket.lift,
+              leftZ,
+              rightX,
+              terrainHeight(r, rightX, rightZ) + bucket.lift,
+              rightZ,
+            );
+            bucket.vertexIndex += 2;
+            if (index > 0) {
+              const previousLeft = firstVertex + (index - 1) * 2,
+                previousRight = previousLeft + 1,
+                currentLeft = firstVertex + index * 2,
+                currentRight = currentLeft + 1;
+              bucket.indices.push(
+                previousLeft,
+                currentLeft,
+                previousRight,
+                currentLeft,
+                currentRight,
+                previousRight,
+              );
+            }
+          });
+          addRoadCap(bucket, points[0][0], points[0][1], halfWidth);
+          const lastPoint = points.at(-1)!;
+          addRoadCap(bucket, lastPoint[0], lastPoint[1], halfWidth);
         };
       for (const road of r.roads) {
         const kind = road.kind as string,
@@ -1382,6 +1435,11 @@ export default function Game3D() {
               ? roadBuckets.dirt
               : roadBuckets.asphalt,
           displayWidth = Math.max(road.width, pedestrianRoad ? 0.15 : 0.24);
+        let chunk: [number, number][] = [];
+        const flushChunk = () => {
+          if (chunk.length > 1) addRoadStrip(bucket, chunk, displayWidth);
+          chunk = [];
+        };
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
             [x2, z2] = road.points[k],
@@ -1389,22 +1447,35 @@ export default function Game3D() {
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
           if (len < 0.01) continue;
-          const steps = Math.max(1, Math.ceil(len / 0.28));
-          for (let step = 0; step < steps; step++) {
-            const startT = step / steps,
-              endT = (step + 1) / steps,
-              startX = x1 + dx * startT,
-              startZ = z1 + dz * startT,
-              endX = x1 + dx * endT,
-              endZ = z1 + dz * endT,
-              midX = (startX + endX) / 2,
-              midZ = (startZ + endZ) / 2;
-            if (inWater(midX, midZ)) continue;
-            addRoadQuad(bucket, startX, startZ, endX, endZ, displayWidth);
+          const steps = Math.max(1, Math.ceil(len / 0.18));
+          for (let step = 0; step <= steps; step++) {
+            const t = step / steps,
+              sampleX = x1 + dx * t,
+              sampleZ = z1 + dz * t;
+            if (inWater(sampleX, sampleZ)) {
+              flushChunk();
+              continue;
+            }
+            const previousPoint = chunk.at(-1);
+            if (
+              previousPoint &&
+              Math.hypot(
+                sampleX - previousPoint[0],
+                sampleZ - previousPoint[1],
+              ) > 0.3
+            )
+              flushChunk();
+            if (
+              !chunk.length ||
+              Math.hypot(
+                sampleX - chunk.at(-1)![0],
+                sampleZ - chunk.at(-1)![1],
+              ) > 0.002
+            )
+              chunk.push([sampleX, sampleZ]);
           }
         }
-        for (const [x, z] of road.points)
-          addRoundJoin(bucket, x, z, displayWidth / 2);
+        flushChunk();
       }
       Object.values(roadBuckets).forEach((bucket) => {
         if (!bucket.positions.length) return;
@@ -1501,7 +1572,7 @@ export default function Game3D() {
           flatShading: true,
         }),
       );
-      buildings.receiveShadow = true;
+      buildings.receiveShadow = false;
       buildings.castShadow = true;
       mapGroup.add(buildings);
       const outline = new THREE.LineSegments(
