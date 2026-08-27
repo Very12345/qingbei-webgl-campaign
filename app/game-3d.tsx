@@ -807,6 +807,8 @@ export default function Game3D() {
       minZ: number;
       blocked: Uint8Array;
       road: Uint8Array;
+      component: Int32Array;
+      mainComponent: number;
     };
     const buildNavGrid = (r: any): NavGrid => {
       const cell = 0.42,
@@ -856,7 +858,51 @@ export default function Game3D() {
           }
         }
       }
-      return { cell, cols, rows, minX, minZ, blocked, road };
+      const component = new Int32Array(cols * rows);
+      component.fill(-1);
+      let componentId = 0,
+        mainComponent = -1,
+        mainSize = 0;
+      const queue = new Int32Array(cols * rows),
+        directions = [-1, 1, -cols, cols];
+      for (let start = 0; start < component.length; start++) {
+        if (blocked[start] || component[start] !== -1) continue;
+        let head = 0,
+          tail = 0,
+          size = 0;
+        queue[tail++] = start;
+        component[start] = componentId;
+        while (head < tail) {
+          const current = queue[head++],
+            cx = current % cols;
+          size++;
+          for (const delta of directions) {
+            const next = current + delta;
+            if (next < 0 || next >= component.length) continue;
+            if ((delta === -1 && cx === 0) || (delta === 1 && cx === cols - 1))
+              continue;
+            if (blocked[next] || component[next] !== -1) continue;
+            component[next] = componentId;
+            queue[tail++] = next;
+          }
+        }
+        if (size > mainSize) {
+          mainSize = size;
+          mainComponent = componentId;
+        }
+        componentId++;
+      }
+      return {
+        cell,
+        cols,
+        rows,
+        minX,
+        minZ,
+        blocked,
+        road,
+        component,
+        mainComponent,
+      };
     };
     const navGrid = buildNavGrid(regions.main),
       navIndex = (grid: NavGrid, x: number, z: number) => {
@@ -872,7 +918,12 @@ export default function Game3D() {
       ],
       nearestOpenIndex = (grid: NavGrid, x: number, z: number) => {
         const center = navIndex(grid, x, z);
-        if (center >= 0 && !grid.blocked[center]) return center;
+        if (
+          center >= 0 &&
+          !grid.blocked[center] &&
+          grid.component[center] === grid.mainComponent
+        )
+          return center;
         const cx = THREE.MathUtils.clamp(
             Math.floor((x - grid.minX) / grid.cell),
             0,
@@ -883,7 +934,7 @@ export default function Game3D() {
             0,
             grid.rows - 1,
           );
-        for (let radius = 1; radius < 12; radius++)
+        for (let radius = 1; radius < 32; radius++)
           for (let dz = -radius; dz <= radius; dz++)
             for (let dx = -radius; dx <= radius; dx++) {
               if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
@@ -892,9 +943,13 @@ export default function Game3D() {
               if (gx < 0 || gz < 0 || gx >= grid.cols || gz >= grid.rows)
                 continue;
               const index = gz * grid.cols + gx;
-              if (!grid.blocked[index]) return index;
+              if (
+                !grid.blocked[index] &&
+                grid.component[index] === grid.mainComponent
+              )
+                return index;
             }
-        return center;
+        return -1;
       },
       findPath = (fromX: number, fromZ: number, toX: number, toZ: number) => {
         const grid = navGrid,
@@ -2622,8 +2677,15 @@ export default function Game3D() {
         return (setNotice("建立营地需要80战略资源"), false);
       if (activeCamps.length >= 4)
         return (setNotice("主战场最多同时维持4座临时营地"), false);
-      if (index < 0 || navGrid.blocked[index])
-        return (setNotice("这里被建筑或水体占用，无法建立营地"), false);
+      if (
+        index < 0 ||
+        navGrid.blocked[index] ||
+        navGrid.component[index] !== navGrid.mainComponent
+      )
+        return (
+          setNotice("这里被建筑、水体或封闭庭院占用，无法建立营地"),
+          false
+        );
       if (
         g.sites.some(
           (site) =>
