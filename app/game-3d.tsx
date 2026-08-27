@@ -1244,9 +1244,40 @@ export default function Game3D() {
         border.visible = false;
         mapGroup.add(border);
       }
-      const rv: number[] = [],
-        ri: number[] = [],
-        rc: number[] = [],
+      type RoadBucket = {
+        positions: number[];
+        indices: number[];
+        vertexIndex: number;
+        color: number;
+        lift: number;
+        renderOrder: number;
+      };
+      const roadBuckets: Record<"asphalt" | "path" | "dirt", RoadBucket> = {
+          asphalt: {
+            positions: [],
+            indices: [],
+            vertexIndex: 0,
+            color: 0x303840,
+            lift: 0.19,
+            renderOrder: 2,
+          },
+          dirt: {
+            positions: [],
+            indices: [],
+            vertexIndex: 0,
+            color: 0x9a805a,
+            lift: 0.2,
+            renderOrder: 3,
+          },
+          path: {
+            positions: [],
+            indices: [],
+            vertexIndex: 0,
+            color: 0xb9ad91,
+            lift: 0.215,
+            renderOrder: 4,
+          },
+        },
         waterAreas = r.waters.map((water: any) => ({
           points: water.points,
           minX: Math.min(...water.points.map((point: number[]) => point[0])),
@@ -1263,18 +1294,13 @@ export default function Game3D() {
               z <= water.maxZ &&
               pointInPolygon(x, z, water.points),
           );
-      let vi = 0;
-      const pushRoadColor = (color: THREE.Color, count: number) => {
-          for (let index = 0; index < count; index++)
-            rc.push(color.r, color.g, color.b);
-        },
-        addRoadQuad = (
+      const addRoadQuad = (
+          bucket: RoadBucket,
           x1: number,
           z1: number,
           x2: number,
           z2: number,
           width: number,
-          color: THREE.Color,
         ) => {
           const dx = x2 - x1,
             dz = z2 - z1,
@@ -1289,47 +1315,55 @@ export default function Game3D() {
             left2X = x2 + px,
             left2Z = z2 + pz,
             right2X = x2 - px,
-            right2Z = z2 - pz,
-            lift = 0.205;
-          rv.push(
+            right2Z = z2 - pz;
+          bucket.positions.push(
             left1X,
-            terrainHeight(r, left1X, left1Z) + lift,
+            terrainHeight(r, left1X, left1Z) + bucket.lift,
             left1Z,
             right1X,
-            terrainHeight(r, right1X, right1Z) + lift,
+            terrainHeight(r, right1X, right1Z) + bucket.lift,
             right1Z,
             left2X,
-            terrainHeight(r, left2X, left2Z) + lift,
+            terrainHeight(r, left2X, left2Z) + bucket.lift,
             left2Z,
             right2X,
-            terrainHeight(r, right2X, right2Z) + lift,
+            terrainHeight(r, right2X, right2Z) + bucket.lift,
             right2Z,
           );
-          pushRoadColor(color, 4);
-          ri.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
-          vi += 4;
+          const vi = bucket.vertexIndex;
+          bucket.indices.push(vi, vi + 2, vi + 1, vi + 2, vi + 3, vi + 1);
+          bucket.vertexIndex += 4;
         },
         addRoundJoin = (
+          bucket: RoadBucket,
           x: number,
           z: number,
           radius: number,
-          color: THREE.Color,
         ) => {
           if (inWater(x, z)) return;
-          const centerIndex = vi,
-            lift = 0.21;
-          rv.push(x, terrainHeight(r, x, z) + lift, z);
-          pushRoadColor(color, 1);
-          vi++;
+          const centerIndex = bucket.vertexIndex;
+          bucket.positions.push(
+            x,
+            terrainHeight(r, x, z) + bucket.lift + 0.002,
+            z,
+          );
+          bucket.vertexIndex++;
           for (let step = 0; step <= 8; step++) {
             const angle = (step / 8) * Math.PI * 2,
               edgeX = x + Math.cos(angle) * radius,
               edgeZ = z + Math.sin(angle) * radius;
-            rv.push(edgeX, terrainHeight(r, edgeX, edgeZ) + lift, edgeZ);
-            pushRoadColor(color, 1);
-            vi++;
+            bucket.positions.push(
+              edgeX,
+              terrainHeight(r, edgeX, edgeZ) + bucket.lift + 0.002,
+              edgeZ,
+            );
+            bucket.vertexIndex++;
             if (step > 0)
-              ri.push(centerIndex, centerIndex + step, centerIndex + step + 1);
+              bucket.indices.push(
+                centerIndex,
+                centerIndex + step,
+                centerIndex + step + 1,
+              );
           }
         };
       for (const road of r.roads) {
@@ -1342,9 +1376,11 @@ export default function Game3D() {
             "cycleway",
             "corridor",
           ].includes(kind),
-          color = new THREE.Color(
-            pedestrianRoad ? 0xd8cfb9 : kind === "track" ? 0xa99470 : 0x343a3f,
-          ),
+          bucket = pedestrianRoad
+            ? roadBuckets.path
+            : kind === "track"
+              ? roadBuckets.dirt
+              : roadBuckets.asphalt,
           displayWidth = Math.max(road.width, pedestrianRoad ? 0.15 : 0.24);
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
@@ -1364,28 +1400,33 @@ export default function Game3D() {
               midX = (startX + endX) / 2,
               midZ = (startZ + endZ) / 2;
             if (inWater(midX, midZ)) continue;
-            addRoadQuad(startX, startZ, endX, endZ, displayWidth, color);
+            addRoadQuad(bucket, startX, startZ, endX, endZ, displayWidth);
           }
         }
         for (const [x, z] of road.points)
-          addRoundJoin(x, z, displayWidth / 2, color);
+          addRoundJoin(bucket, x, z, displayWidth / 2);
       }
-      const rg = new THREE.BufferGeometry();
-      rg.setAttribute("position", new THREE.Float32BufferAttribute(rv, 3));
-      rg.setAttribute("color", new THREE.Float32BufferAttribute(rc, 3));
-      rg.setIndex(ri);
-      const roads = new THREE.Mesh(
-        rg,
-        new THREE.MeshBasicMaterial({
-          vertexColors: true,
-          polygonOffset: true,
-          polygonOffsetFactor: -4,
-          polygonOffsetUnits: -4,
-        }),
-      );
-      roads.receiveShadow = false;
-      roads.renderOrder = 2;
-      mapGroup.add(roads);
+      Object.values(roadBuckets).forEach((bucket) => {
+        if (!bucket.positions.length) return;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(bucket.positions, 3),
+        );
+        geometry.setIndex(bucket.indices);
+        const roads = new THREE.Mesh(
+          geometry,
+          new THREE.MeshBasicMaterial({
+            color: bucket.color,
+            polygonOffset: true,
+            polygonOffsetFactor: -bucket.renderOrder,
+            polygonOffsetUnits: -bucket.renderOrder,
+          }),
+        );
+        roads.receiveShadow = false;
+        roads.renderOrder = bucket.renderOrder;
+        mapGroup.add(roads);
+      });
       const bp: number[] = [],
         bi: number[] = [],
         bc: number[] = [],
