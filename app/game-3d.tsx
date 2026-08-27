@@ -1798,6 +1798,8 @@ export default function Game3D() {
     const selectedUnitIds = new Set<number>();
     const directKeys = new Set<string>();
     let directControlActive = false,
+      directLeaderId: number | null = null,
+      nextDirectFollowerPathAt = 0,
       cameraBeforeDirect: {
         position: THREE.Vector3;
         target: THREE.Vector3;
@@ -1805,7 +1807,13 @@ export default function Game3D() {
     const exitDirectControl = () => {
         if (!directControlActive) return;
         directControlActive = false;
+        directLeaderId = null;
+        nextDirectFollowerPathAt = 0;
         directKeys.clear();
+        unitObjects.forEach((object) => {
+          const ring = object.userData.selectionRing as THREE.Mesh | undefined;
+          ring?.scale.setScalar(1);
+        });
         controls.enabled = true;
         if (cameraBeforeDirect) {
           camera.position.copy(cameraBeforeDirect.position);
@@ -1833,11 +1841,13 @@ export default function Game3D() {
           unit.tx = unit.x;
           unit.tz = unit.z;
         });
+        directLeaderId = selectedUnits[0].id;
+        nextDirectFollowerPathAt = 0;
         directControlActive = true;
         controls.enabled = false;
         setDirectControl(true);
         setSelected(null);
-        setNotice("近距离控制：WASD移动所选学生，Esc退出");
+        setNotice("近距离控制：WASD控制领队，其余学生自动寻路跟随，Esc退出");
         return true;
       };
     const onDirectKeyDown = (event: KeyboardEvent) => {
@@ -4567,29 +4577,67 @@ export default function Game3D() {
         );
         if (!controlled.length) exitDirectControl();
         else {
+          let leader = controlled.find((unit) => unit.id === directLeaderId);
+          if (!leader) {
+            leader = controlled[0];
+            directLeaderId = leader.id;
+            nextDirectFollowerPathAt = 0;
+          }
           const moveX =
               (directKeys.has("d") ? 1 : 0) - (directKeys.has("a") ? 1 : 0),
             moveZ =
               (directKeys.has("s") ? 1 : 0) - (directKeys.has("w") ? 1 : 0),
             moveLength = Math.hypot(moveX, moveZ);
+          leader.path = undefined;
+          leader.pathIndex = undefined;
+          leader.targetSiteId = undefined;
+          if (moveLength) {
+            leader.tx = leader.x + (moveX / moveLength) * 1.2;
+            leader.tz = leader.z + (moveZ / moveLength) * 1.2;
+          } else {
+            leader.tx = leader.x;
+            leader.tz = leader.z;
+          }
+          const followers = controlled.filter((unit) => unit.id !== leader.id);
+          followers.forEach((unit) => (unit.targetSiteId = undefined));
+          if (now >= nextDirectFollowerPathAt) {
+            nextDirectFollowerPathAt = now + 420;
+            followers.forEach((unit, index) => {
+              const ring = Math.floor(index / 6),
+                angle = ((index % 6) / 6) * Math.PI * 2 + leader.id * 0.37,
+                radius = 0.32 + ring * 0.22,
+                targetX = leader.x + Math.cos(angle) * radius,
+                targetZ = leader.z + Math.sin(angle) * radius,
+                distance = Math.hypot(unit.x - targetX, unit.z - targetZ);
+              if (distance < 0.2) {
+                unit.path = undefined;
+                unit.pathIndex = undefined;
+                unit.tx = unit.x;
+                unit.tz = unit.z;
+                return;
+              }
+              const path = findPath(unit.x, unit.z, targetX, targetZ);
+              if (!path.length) return;
+              const destination = path.at(-1)!;
+              unit.path = path;
+              unit.pathIndex = 0;
+              unit.tx = destination[0];
+              unit.tz = destination[1];
+            });
+          }
           controlled.forEach((unit) => {
-            unit.path = undefined;
-            unit.pathIndex = undefined;
-            unit.targetSiteId = undefined;
-            if (moveLength) {
-              unit.tx = unit.x + (moveX / moveLength) * 1.2;
-              unit.tz = unit.z + (moveZ / moveLength) * 1.2;
-            } else {
-              unit.tx = unit.x;
-              unit.tz = unit.z;
-            }
+            const object = unitObjects.get(unit.id),
+              ring = object?.userData.selectionRing as THREE.Mesh | undefined;
+            ring?.scale.setScalar(unit.id === leader.id ? 1.6 : 1);
           });
-          const centerX =
+          const averageX =
               controlled.reduce((sum, unit) => sum + unit.x, 0) /
               controlled.length,
-            centerZ =
+            averageZ =
               controlled.reduce((sum, unit) => sum + unit.z, 0) /
               controlled.length,
+            centerX = THREE.MathUtils.lerp(leader.x, averageX, 0.3),
+            centerZ = THREE.MathUtils.lerp(leader.z, averageZ, 0.3),
             centerY = terrainHeight(regionForX(centerX), centerX, centerZ);
           directCenter.set(centerX, centerY + 0.15, centerZ);
           directCameraGoal.set(centerX, centerY + 5.4, centerZ + 4.4);
@@ -4619,15 +4667,19 @@ export default function Game3D() {
                 context.fill();
               });
             context.fillStyle = "#72edff";
-            controlled.forEach((unit) => {
+            followers.forEach((unit) => {
               context.beginPath();
               context.arc(mapX(unit.x), mapY(unit.z), 2.5, 0, Math.PI * 2);
               context.fill();
             });
+            context.fillStyle = "#fff2a6";
+            context.beginPath();
+            context.arc(mapX(leader.x), mapY(leader.z), 3.5, 0, Math.PI * 2);
+            context.fill();
             context.strokeStyle = "#fff2a6";
             context.lineWidth = 2;
             context.beginPath();
-            context.arc(mapX(centerX), mapY(centerZ), 7, 0, Math.PI * 2);
+            context.arc(mapX(leader.x), mapY(leader.z), 7, 0, Math.PI * 2);
             context.stroke();
           }
         }
@@ -5301,9 +5353,9 @@ export default function Game3D() {
       {directControl && (
         <aside className="direct-control-hud">
           <strong>近距离控制</strong>
-          <span>WASD 移动 · Esc 退出</span>
+          <span>WASD 控制领队 · 队员自动寻路跟随 · Esc 退出</span>
           <canvas ref={minimapRef} width={240} height={160} />
-          <small>青色标记为当前控制的学生在全图中的位置</small>
+          <small>黄色为领队，青色为自动跟随的队员</small>
         </aside>
       )}
       <div className="command-notice">{notice}</div>
