@@ -5559,7 +5559,7 @@ export default function Game3D() {
             siteMenu.style.display = "none";
           else {
             const rect = renderer.domElement.getBoundingClientRect(),
-              menuWidth = siteMenu.offsetWidth || 300,
+              menuWidth = siteMenu.offsetWidth || 220,
               menuHeight = siteMenu.offsetHeight || 110,
               screenX =
                 rect.left + ((siteMenuProjection.x + 1) * rect.width) / 2,

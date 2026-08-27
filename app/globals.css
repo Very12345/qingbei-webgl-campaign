@@ -608,7 +608,9 @@ input {
   position: fixed;
   z-index: 70;
   bottom: auto;
-  width: min(300px, calc(100vw - 16px));
+  width: max-content;
+  min-width: 220px;
+  max-width: min(410px, calc(100vw - 16px));
   padding: 8px;
   transform: translate(-50%, -100%);
   border-width: 1px;
@@ -635,8 +637,9 @@ input {
 }
 .site-heading-row strong,
 .site-heading-row input {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 245px;
   overflow: hidden;
   color: #ffe396;
   font-size: 13px;
@@ -645,6 +648,7 @@ input {
   white-space: nowrap;
 }
 .site-heading-row input {
+  width: 190px;
   border: 1px solid #ffffff2d;
   border-radius: 6px;
   padding: 5px 6px;
