@@ -69,6 +69,11 @@ input {
   background: #704b34;
   color: #ffe89a;
 }
+.battle-nav .direct-entry {
+  width: 52px;
+  font-size: 11px;
+  font-weight: 900;
+}
 .battle-drawer {
   position: absolute;
   z-index: 84;
@@ -148,6 +153,8 @@ input {
   background:
     linear-gradient(115deg, #06100dda, #17241bc2 48%, #160a12d9),
     repeating-linear-gradient(135deg, #ffffff08 0 1px, transparent 1px 24px);
+  background-position: center;
+  background-size: cover;
   backdrop-filter: blur(4px) saturate(0.72);
 }
 .home-card {
@@ -184,6 +191,55 @@ input {
   color: #ffe49b;
   cursor: pointer;
   font-size: 20px;
+  display: none;
+}
+.home-page-hidden,
+.legacy-lan-panel {
+  display: none !important;
+}
+.world-settings {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #ffffff18;
+  border-radius: 10px;
+  background: #09120f;
+}
+.world-settings h2,
+.home-server-page h2 {
+  margin: 0 0 4px;
+  color: #f0d77e;
+  font-size: 17px;
+}
+.world-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.world-settings input[type="text"],
+.world-settings input:not([type]) {
+  flex: 1;
+}
+.home-server-page {
+  margin-bottom: 16px;
+}
+.home-bottom-nav {
+  position: sticky;
+  bottom: -24px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin: 20px -24px -24px;
+  padding: 12px 24px 18px;
+  border-top: 1px solid #ffffff1b;
+  background: #0b1411f5;
+}
+.home-bottom-nav button.active {
+  border-color: #e3c869;
+  background: #6d3547;
+  color: #ffe69a;
 }
 .home-settings-panel,
 .home-save-row {
@@ -213,6 +269,18 @@ input {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.discovered-servers {
+  display: grid !important;
+  gap: 4px !important;
+  padding: 7px;
+  border: 1px solid #ffffff14;
+  border-radius: 7px;
+  background: #050d0a;
+}
+.discovered-servers span {
+  color: #aebbad;
+  font-size: 10px;
 }
 .lan-panel textarea {
   width: 100%;

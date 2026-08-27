@@ -697,6 +697,7 @@ export default function Game3D() {
     applyMaterials: (unitUrl: string | null, siteUrl: string | null) => void;
     clearUnitSelection: () => void;
     setLayers: (sites: boolean, control: boolean) => void;
+    setPerspective: (team: Team) => void;
     buildCampAt: (x: number, z: number) => boolean;
     enterDirectControl: () => boolean;
     exitDirectControl: () => void;
@@ -710,9 +711,14 @@ export default function Game3D() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [homeSettingsOpen, setHomeSettingsOpen] = useState(false);
+  const [homePage, setHomePage] = useState<"new" | "servers" | "settings">(
+    "new",
+  );
+  const [openToLan, setOpenToLan] = useState(false);
   const [lanInput, setLanInput] = useState("");
   const [lanOutput, setLanOutput] = useState("");
   const [lanStatus, setLanStatus] = useState("未连接");
+  const [discoveredServers, setDiscoveredServers] = useState<string[]>([]);
   const lanPeerRef = useRef<RTCPeerConnection | null>(null);
   const lanChannelRef = useRef<RTCDataChannel | null>(null);
   const lanHostRef = useRef(false);
@@ -816,6 +822,27 @@ export default function Game3D() {
     if (site) setSiteMaterialUrl(site);
   }, []);
   useEffect(() => {
+    if (!("BroadcastChannel" in window)) return;
+    const discovery = new BroadcastChannel("qingbei-lan-discovery"),
+      roomId = crypto.randomUUID().slice(0, 8);
+    discovery.onmessage = (event) => {
+      if (event.data?.type !== "host" || event.data.roomId === roomId) return;
+      setDiscoveredServers((current) =>
+        current.includes(event.data.roomId)
+          ? current
+          : [...current, event.data.roomId].slice(-8),
+      );
+    };
+    const timer = window.setInterval(() => {
+      if (lanHostRef.current) discovery.postMessage({ type: "host", roomId });
+      else discovery.postMessage({ type: "scan" });
+    }, 1500);
+    return () => {
+      clearInterval(timer);
+      discovery.close();
+    };
+  }, []);
+  useEffect(() => {
     customMaterialsRef.current = {
       unit: unitMaterialUrl,
       site: siteMaterialUrl,
@@ -824,6 +851,10 @@ export default function Game3D() {
   }, [unitMaterialUrl, siteMaterialUrl]);
 
   useEffect(() => {
+    if (screen !== "game") {
+      sceneApi.current = null;
+      return;
+    }
     const host = hostRef.current;
     if (!host) return;
     const renderer = new THREE.WebGLRenderer({
@@ -5842,6 +5873,14 @@ export default function Game3D() {
         buildingGroup.visible = sites;
         territoryGroup.visible = control;
       },
+      setPerspective: (team) => {
+        const target = controls.target.clone(),
+          height = 24,
+          depth = team === "thu" ? -22 : 22;
+        camera.position.set(target.x, height, target.z + depth);
+        camera.lookAt(target);
+        controls.update();
+      },
       buildCampAt: (x, z) =>
         buildCampAt(
           new THREE.Vector3(x, terrainHeight(regionForX(x), x, z), z),
@@ -5850,6 +5889,7 @@ export default function Game3D() {
       exitDirectControl,
     };
     sceneApi.current.setLayers(showSites, showControl);
+    sceneApi.current.setPerspective(playerTeamRef.current);
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,
@@ -5865,10 +5905,11 @@ export default function Game3D() {
       controls.removeEventListener("start", hideSitePanel);
       controls.dispose();
       renderer.dispose();
+      sceneApi.current = null;
       if (renderer.domElement.parentNode === host)
         host.removeChild(renderer.domElement);
     };
-  }, []);
+  }, [screen]);
 
   const saveGame = () => {
     const name =
@@ -6217,7 +6258,7 @@ export default function Game3D() {
   }, []);
   return (
     <main className="game-shell">
-      <div ref={hostRef} className="webgl-stage" />
+      {screen === "game" && <div ref={hostRef} className="webgl-stage" />}
       {screen === "game" && (
         <>
           <nav className="battle-nav" aria-label="战场菜单">
@@ -6255,6 +6296,20 @@ export default function Game3D() {
             >
               ⚙︎
             </button>
+            {(selectedUnitCount > 0 || directControl) && (
+              <button
+                className={`direct-entry ${directControl ? "active" : ""}`}
+                aria-label={directControl ? "退出近距离控制" : "进入近距离控制"}
+                title={directControl ? "退出近距离控制" : "近距离控制（F）"}
+                onClick={() =>
+                  directControl
+                    ? sceneApi.current?.exitDirectControl()
+                    : sceneApi.current?.enterDirectControl()
+                }
+              >
+                近距
+              </button>
+            )}
           </nav>
           {moreOpen && (
             <aside className="battle-drawer more-drawer">
@@ -6342,7 +6397,12 @@ export default function Game3D() {
         </>
       )}
       {screen === "home" && (
-        <section className="home-screen">
+        <section
+          className="home-screen"
+          style={{
+            backgroundImage: `linear-gradient(115deg,#06100dcc,#17241ba8 48%,#160a12d4),url(${import.meta.env.BASE_URL}event-archive-sheet-v2.webp)`,
+          }}
+        >
           <div className="home-card">
             <header>
               <div>
@@ -6357,7 +6417,7 @@ export default function Game3D() {
                 ⚙︎
               </button>
             </header>
-            {homeSettingsOpen && (
+            {homePage === "settings" && (
               <div className="home-settings-panel">
                 <div className="home-setting-row">
                   <strong>主页设置</strong>
@@ -6365,7 +6425,7 @@ export default function Game3D() {
                     更换士兵与据点材质
                   </button>
                 </div>
-                <div className="lan-panel">
+                <div className="lan-panel legacy-lan-panel">
                   <strong>局域网联机（点对点）</strong>
                   <small>{lanStatus}</small>
                   <div>
@@ -6395,21 +6455,86 @@ export default function Game3D() {
                 </div>
               </div>
             )}
-            <div className="perspective-buttons">
+            {homePage === "servers" && (
+              <div className="lan-panel home-server-page">
+                <h2>服务器</h2>
+                <strong>局域网服务器</strong>
+                <small>{lanStatus}</small>
+                <div className="discovered-servers">
+                  {discoveredServers.length ? (
+                    discoveredServers.map((room) => (
+                      <span key={room}>已发现房间 {room}</span>
+                    ))
+                  ) : (
+                    <span>正在自动搜索局域网房间…</span>
+                  )}
+                </div>
+                <div>
+                  <button onClick={() => void createLanHost()}>
+                    添加 / 开放服务器
+                  </button>
+                  <button onClick={() => void joinLanHost()}>加入服务器</button>
+                  <button onClick={() => void acceptLanAnswer()}>
+                    主机确认回应码
+                  </button>
+                </div>
+                <textarea
+                  value={lanInput}
+                  onChange={(event) => setLanInput(event.target.value)}
+                  placeholder="粘贴主机码或回应码"
+                />
+                <textarea readOnly value={lanOutput} placeholder="本机联机码" />
+                <small>
+                  自动搜索浏览器可发现的同源房间；跨设备使用连接码。
+                </small>
+              </div>
+            )}
+            {homePage === "new" && (
+              <div className="world-settings">
+                <h2>新建游戏</h2>
+                <label>
+                  <span>战局名称</span>
+                  <input
+                    value={saveName}
+                    maxLength={24}
+                    onChange={(event) => setSaveName(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>对局域网开放</span>
+                  <input
+                    type="checkbox"
+                    checked={openToLan}
+                    onChange={(event) => setOpenToLan(event.target.checked)}
+                  />
+                </label>
+              </div>
+            )}
+            <div
+              className={`perspective-buttons ${homePage !== "new" ? "home-page-hidden" : ""}`}
+            >
               <button
                 className="new-game-button"
-                onClick={() => newGame("pku")}
+                onClick={() => {
+                  newGame("pku");
+                  if (openToLan) void createLanHost();
+                }}
               >
                 北大视角新游戏
               </button>
               <button
                 className="new-game-button thu"
-                onClick={() => newGame("thu")}
+                onClick={() => {
+                  newGame("thu");
+                  if (openToLan) void createLanHost();
+                }}
               >
                 清华视角新游戏
               </button>
             </div>
-            <div className="home-save-row">
+            <div
+              className={`home-save-row ${homePage !== "new" ? "home-page-hidden" : ""}`}
+            >
               <input
                 value={saveName}
                 maxLength={24}
@@ -6418,7 +6543,9 @@ export default function Game3D() {
               />
               <button onClick={saveGame}>保存当前战局</button>
             </div>
-            <div className="home-save-list">
+            <div
+              className={`home-save-list ${homePage !== "new" ? "home-page-hidden" : ""}`}
+            >
               <h2>选择存档</h2>
               {!saves.length && <p>暂无存档，可直接开始新游戏。</p>}
               {saves.map((save) => (
@@ -6445,6 +6572,26 @@ export default function Game3D() {
                 </article>
               ))}
             </div>
+            <nav className="home-bottom-nav">
+              <button
+                className={homePage === "new" ? "active" : ""}
+                onClick={() => setHomePage("new")}
+              >
+                新建游戏
+              </button>
+              <button
+                className={homePage === "servers" ? "active" : ""}
+                onClick={() => setHomePage("servers")}
+              >
+                服务器
+              </button>
+              <button
+                className={homePage === "settings" ? "active" : ""}
+                onClick={() => setHomePage("settings")}
+              >
+                设置
+              </button>
+            </nav>
           </div>
         </section>
       )}
@@ -6734,7 +6881,7 @@ export default function Game3D() {
             <div
               className={`event-photo ${activeEvents[0].quadrant} event-${activeEvents[0].id}`}
               style={{
-                backgroundImage: `linear-gradient(#0002,#0005),url(${import.meta.env.BASE_URL}event-archive-sheet-v2.png)`,
+                backgroundImage: `linear-gradient(#0002,#0005),url(${import.meta.env.BASE_URL}event-archive-sheet-v2.webp)`,
               }}
             />
             <div className="event-copy">
