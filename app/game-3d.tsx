@@ -2434,7 +2434,9 @@ export default function Game3D() {
         ustc: makeBallTexture(null, "科", "#174f78", "#174f78"),
         zju: makeBallTexture(null, "浙", "#175b9b", "#175b9b"),
       };
-    const hpGeometry = new THREE.PlaneGeometry(1, 0.1),
+    const UNIT_RENDER_SCALE = 0.56 / 3,
+      UNIT_SEPARATION_DISTANCE = 0.48 / 3,
+      hpGeometry = new THREE.PlaneGeometry(1, 0.1),
       hpBackMaterial = new THREE.MeshBasicMaterial({
         color: 0x17201c,
         transparent: true,
@@ -2626,7 +2628,7 @@ export default function Game3D() {
         hpFill.visible = false;
         g.add(hpBack, hpFill);
         g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
-        g.scale.setScalar(0.56);
+        g.scale.setScalar(UNIT_RENDER_SCALE);
         g.userData = {
           unitId: u.id,
           arms,
@@ -4072,7 +4074,7 @@ export default function Game3D() {
         effect.sprite.scale.setScalar(1 + progress * 1.3);
         (effect.sprite.material as THREE.SpriteMaterial).opacity = 1 - progress;
       }
-      const separationCell = 0.7,
+      const separationCell = 0.24,
         separationGrid = new Map<string, UnitState[]>(),
         separationKey = (x: number, z: number) =>
           `${Math.floor(x / separationCell)}/${Math.floor(z / separationCell)}`;
@@ -4149,8 +4151,11 @@ export default function Game3D() {
                 const awayX = u.x - neighbor.x,
                   awayZ = u.z - neighbor.z,
                   distance = Math.hypot(awayX, awayZ);
-                if (distance <= 0.001 || distance >= 0.48) continue;
-                const pressure = (0.48 - distance) / 0.48;
+                if (distance <= 0.001 || distance >= UNIT_SEPARATION_DISTANCE)
+                  continue;
+                const pressure =
+                  (UNIT_SEPARATION_DISTANCE - distance) /
+                  UNIT_SEPARATION_DISTANCE;
                 separateX += (awayX / distance) * pressure;
                 separateZ += (awayZ / distance) * pressure;
               }
