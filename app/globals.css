@@ -69,6 +69,22 @@ input {
   background: #704b34;
   color: #ffe89a;
 }
+.battle-clock {
+  position: absolute;
+  z-index: 84;
+  top: 14px;
+  right: 14px;
+  padding: 8px 13px;
+  border: 1px solid #d9c36d70;
+  border-radius: 9px;
+  background: #101b18e8;
+  color: #ffe49b;
+  box-shadow: 0 8px 24px #0007;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
 .battle-nav .direct-entry {
   width: 52px;
   font-size: 11px;
@@ -938,6 +954,11 @@ input {
 }
 .world-settings select {
   cursor: pointer;
+}
+.world-settings select option {
+  background: #5f5f5f;
+  color: #fff;
+  text-shadow: none;
 }
 .new-game-button {
   width: 100%;

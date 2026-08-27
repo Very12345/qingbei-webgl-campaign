@@ -123,6 +123,8 @@ type EventCard = {
 
 const SAVE_KEY = "qingbei-webgl-saves-v1";
 const TEAM_COLOR: Record<Team, number> = { pku: 0xa20d27, thu: 0x6f3291 };
+const productionSlots = (siteCount: number, ratio: number) =>
+  siteCount > 0 ? Math.max(1, Math.ceil(siteCount * ratio)) : 0;
 const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
   thu_arrival: {
     title: "八月十六日：清华报到",
@@ -245,12 +247,12 @@ const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
     date: "清华战时委员会",
   },
   thu_morning_run: {
-    title: "八月三十一日：清华晨跑",
-    body: "清晨的清华园突然响起整齐脚步声。队伍沿校园边缘据点循环行进，速度惊人，但进攻动作明显变形。",
+    title: "八月三十日：清华夜跑",
+    body: "午夜的清华园突然响起整齐脚步声。队伍在凌晨沿校园边缘据点循环行进，速度惊人，但进攻动作明显变形。",
     effect:
-      "当日上午：清华移速+50%、攻击-10%、意志+20%；北大攻击+20%、意志+5%。仅影响当前单位。",
+      "8月30日00:00—05:00：清华移速+50%、攻击-10%、意志+20%；北大攻击+20%、意志+5%。仅影响当前单位。",
     quadrant: "march",
-    date: "2026年8月31日 08:00",
+    date: "2026年8月30日 00:00",
   },
   pku_librarian: {
     title: "图书管理员",
@@ -702,6 +704,7 @@ export default function Game3D() {
     buildCampAt: (x: number, z: number) => boolean;
     enterDirectControl: () => boolean;
     exitDirectControl: () => void;
+    refreshSiteStance: (siteId: number) => void;
   } | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -1225,8 +1228,8 @@ export default function Game3D() {
           [1, 1],
         ],
           pathBlocked = (index: number) =>
-            grid.water[index] ||
-            (!allowBuildingFallback && grid.building[index]);
+            !allowBuildingFallback &&
+            grid.building[index];
         while (heap.length) {
           const current = pop();
           if (!current || closed[current.index]) continue;
@@ -1250,7 +1253,9 @@ export default function Game3D() {
               continue;
             const stepCost =
                 Math.hypot(dx, dz) *
-                (grid.building[next]
+                (grid.water[next]
+                  ? 7.2
+                  : grid.building[next]
                   ? 5.8
                   : grid.road[next]
                     ? 0.68
@@ -1354,7 +1359,7 @@ export default function Game3D() {
         ),
       pointWalkable = (x: number, z: number, team?: Team) => {
         const index = navIndex(navGrid, x, z);
-        if (index < 0 || insideWater(x, z)) return false;
+        if (index < 0) return false;
         const building = buildingAt(x, z);
         return !building || (!!team && !enemyInsideBuilding(building, team));
       },
@@ -1395,7 +1400,7 @@ export default function Game3D() {
       ejectTrappedUnits = () => {
         gameRef.current.units.forEach((unit) => {
           const current = navIndex(navGrid, unit.x, unit.z),
-            trapped = current < 0 || insideWater(unit.x, unit.z);
+            trapped = current < 0;
           if (!trapped) return;
           const openIndex = nearestClearIndex(unit.x, unit.z);
           if (openIndex < 0) return;
@@ -2382,7 +2387,24 @@ export default function Game3D() {
         phase: number;
       }[] = [],
       commandTangent = new THREE.Vector3(),
+      commandScreenA = new THREE.Vector3(),
+      commandScreenB = new THREE.Vector3(),
       commandLineMaterials: LineMaterial[] = [];
+    const orientCommandArrow = (
+      sprite: THREE.Sprite,
+      point: THREE.Vector3,
+      tangent: THREE.Vector3,
+    ) => {
+      camera.updateMatrixWorld();
+      commandScreenA.copy(point).project(camera);
+      commandScreenB.copy(point).addScaledVector(tangent, 0.45).project(camera);
+      (sprite.material as THREE.SpriteMaterial).rotation =
+        Math.atan2(
+          commandScreenB.y - commandScreenA.y,
+          commandScreenB.x - commandScreenA.x,
+        ) -
+        Math.PI / 2;
+    };
     const commandLabelTexture = (text: string, color: string) => {
       const c = document.createElement("canvas");
       c.width = 384;
@@ -2463,19 +2485,18 @@ export default function Game3D() {
           end = b.clone(),
           curve = new THREE.LineCurve3(start, end),
           group = new THREE.Group(),
-          line = makeLine(curve, 0xffffff, 3.5, 0.92, 40, false),
-          head = makeArrowSprite(0xffffff, 0.72);
+          line = makeLine(curve, 0xdffaff, 2.1, 0.72, 40, false),
+          head = makeArrowSprite(0xffffff, 0.34);
         group.add(line);
         head.position.copy(end);
         const previewTangent = curve.getTangent(1);
-        (head.material as THREE.SpriteMaterial).rotation =
-          Math.atan2(previewTangent.x, previewTangent.z) + Math.PI;
+        orientCommandArrow(head, end, previewTangent);
         head.renderOrder = 41;
         group.add(head);
         commandGroup.add(group);
         return group;
       }
-      const color = attack ? 0xff684d : 0x79dcff,
+      const color = 0xb9eaf4,
         pathPoints = path?.length
           ? [
               a.clone(),
@@ -2497,18 +2518,11 @@ export default function Game3D() {
           0.3,
         ),
         group = new THREE.Group(),
-        line = makeLine(curve, color, 5, 0.86, 32),
-        head = makeArrowSprite(color, 0.78);
+        line = makeLine(curve, color, 2.2, 0.48, 32);
       group.add(line);
-      head.position.copy(curve.getPoint(0.94));
-      const headTangent = curve.getTangent(0.94);
-      (head.material as THREE.SpriteMaterial).rotation =
-        Math.atan2(headTangent.x, headTangent.z) + Math.PI;
-      head.renderOrder = 35;
-      group.add(head);
       const movers: THREE.Sprite[] = [];
-      for (let i = 0; i < 5; i++) {
-        const mover = makeArrowSprite(0xfff5cf, 0.5);
+      for (let i = 0; i < 4; i++) {
+        const mover = makeArrowSprite(0xffffff, 0.23);
         mover.renderOrder = 36;
         group.add(mover);
         movers.push(mover);
@@ -3212,6 +3226,16 @@ export default function Game3D() {
           siteObjects.set(site.id, g);
         });
       rebuildTerritory();
+    };
+    const refreshSiteStance = (siteId: number) => {
+      const site = gameRef.current.sites[siteId],
+        object = siteObjects.get(siteId),
+        nodeSprite = object?.userData.nodeSprite as THREE.Sprite | undefined;
+      if (!site || !nodeSprite) return;
+      const material = nodeSprite.material as THREE.SpriteMaterial;
+      material.map = siteNodeTexture(site.team, site.stance);
+      material.needsUpdate = true;
+      if (site.orderTarget != null) rebuildCommandLines();
     };
     const refreshRouteHighlights = () => {
       siteObjects.forEach((object, id) => {
@@ -4352,6 +4376,12 @@ export default function Game3D() {
       setOutcome = (winner: Team, reason: string) => {
         const campaign = gameRef.current.campaign;
         if (campaign.outcome) return;
+        if (winner === "pku" && reason.includes("求真书院")) {
+          const qz = gameRef.current.sites.find(
+            (site) => site.name === "求真书院" && !site.destroyed,
+          );
+          if (!qz || qz.team !== "pku") return;
+        }
         campaign.outcome = {
           winner,
           reason,
@@ -4457,6 +4487,8 @@ export default function Game3D() {
               : 1,
           unitStatus = unitStatusModifiers(unit),
           enemyStatus = unitStatusModifiers(enemy),
+          unitWaterPenalty = insideWater(unit.x, unit.z) ? 0.5 : 1,
+          enemyWaterPenalty = insideWater(enemy.x, enemy.z) ? 0.5 : 1,
           unitMorale = Math.min(150, (unit.morale ?? 100) * unitStatus.morale),
           enemyMorale = Math.min(
             150,
@@ -4464,6 +4496,7 @@ export default function Game3D() {
           ),
           unitPower =
             (unit.attackModifier ?? 1) *
+            unitWaterPenalty *
             unitStatus.attack *
             (0.62 + unitMorale / 250) *
             g.campaign.attackBonus[unit.team] *
@@ -4472,6 +4505,7 @@ export default function Game3D() {
             unitDefense.attack,
           enemyPower =
             (enemy.attackModifier ?? 1) *
+            enemyWaterPenalty *
             enemyStatus.attack *
             (0.62 + enemyMorale / 250) *
             g.campaign.attackBonus[enemy.team] *
@@ -4715,6 +4749,8 @@ export default function Game3D() {
         site.orderTarget = undefined;
         site.orderPath = undefined;
         if (site.type === "target" && newTeam === "pku") {
+          rebuildBuildings();
+          rebuildCommandLines();
           setOutcome("pku", "攻克求真书院");
           fireEvent("qz_captured", () => {
             g.units
@@ -4737,8 +4773,10 @@ export default function Game3D() {
           setOutcome("thu", "元培学院失守");
           fireEvent("yuanpei_fallen");
         }
-        rebuildBuildings();
-        rebuildCommandLines();
+        if (!(site.type === "target" && newTeam === "pku")) {
+          rebuildBuildings();
+          rebuildCommandLines();
+        }
         setNotice(
           site.type === "target" && newTeam === "pku"
             ? `胜利：北京大学已攻克求真书院（战局仍可继续）`
@@ -4828,10 +4866,10 @@ export default function Game3D() {
         fireEvent("war_begins", () => {
           campaign.warUnlocked = true;
         });
-      if (campaign.elapsedHours >= 360)
+      if (campaign.elapsedHours >= 328)
         fireEvent("thu_morning_run", () => {
-          addTimedStatus("thu_run_thu", "清华晨跑", "thu", 12, 0.9, 1.5, 1.2);
-          addTimedStatus("thu_run_pku", "晨跑对峙", "pku", 12, 1.2, 1, 1.05);
+          addTimedStatus("thu_run_thu", "清华夜跑", "thu", 5, 0.9, 1.5, 1.2);
+          addTimedStatus("thu_run_pku", "夜跑对峙", "pku", 5, 1.2, 1, 1.05);
           const edgeSites = g.sites
             .filter(
               (site) =>
@@ -5130,8 +5168,9 @@ export default function Game3D() {
           const dorms = g.sites.filter(
             (site) =>
               site.team === team && site.type === "dorm" && !site.destroyed,
-          );
-          for (let i = 0; i < 5 && dorms.length; i++) {
+          ),
+            activeDorms = productionSlots(dorms.length, 0.35);
+          for (let i = 0; i < activeDorms; i++) {
             const site = dorms[(productionCycle + i * 3) % dorms.length];
             spawnUnitsAt(site, team, 1, 1, false);
             produced = true;
@@ -5162,8 +5201,9 @@ export default function Game3D() {
           const diningSites = g.sites.filter(
             (site) =>
               site.team === team && site.type === "dining" && !site.destroyed,
-          );
-          for (let i = 0; i < 2 && diningSites.length; i++) {
+          ),
+            activeDining = productionSlots(diningSites.length, 0.4);
+          for (let i = 0; i < activeDining; i++) {
             const site =
               diningSites[(diningCycle + i * 2) % diningSites.length];
             spawnUnitsAt(site, team, 1, 1, false, 145);
@@ -5573,11 +5613,10 @@ export default function Game3D() {
       renderer.toneMappingExposure = 0.72 + day * 0.38;
       commandAnimations.forEach((animation) => {
         animation.movers.forEach((mover, index) => {
-          const t = (now * 0.00016 + animation.phase + index / 5) % 1;
+          const t = (now * 0.00016 + animation.phase + index / 4) % 1;
           animation.curve.getPoint(t, mover.position);
           animation.curve.getTangent(t, commandTangent).normalize();
-          (mover.material as THREE.SpriteMaterial).rotation =
-            Math.atan2(commandTangent.x, commandTangent.z) + Math.PI;
+          orientCommandArrow(mover, mover.position, commandTangent);
         });
       });
       for (let i = combatEffects.length - 1; i >= 0; i--) {
@@ -5660,7 +5699,9 @@ export default function Game3D() {
           if (g.campaign.freezeUntil[u.team] > g.campaign.elapsedHours) return;
           const gridIndex = navIndex(navGrid, u.x, u.z),
             roadSpeed = gridIndex >= 0 && navGrid.road[gridIndex] ? 0.78 : 0.5,
-            buildingSpeed = buildingAt(u.x, u.z) ? 0.34 : 1,
+            terrainSpeed =
+              (buildingAt(u.x, u.z) ? 0.34 : 1) *
+              (insideWater(u.x, u.z) ? 0.5 : 1),
             morningMove =
               (g.campaign.morningPenaltyUntil ?? 0) > g.campaign.elapsedHours
                 ? 0.68
@@ -5668,7 +5709,7 @@ export default function Game3D() {
             statusMovement = unitStatusModifiers(u).movement,
             s =
               roadSpeed *
-              buildingSpeed *
+              terrainSpeed *
               (u.moveModifier ?? 1) *
               morningMove *
               statusMovement *
@@ -5735,7 +5776,12 @@ export default function Game3D() {
           }
           u.x = resolvedX;
           u.z = resolvedZ;
-          mesh.position.set(u.x, terrainHeight(regionForX(u.x), u.x, u.z), u.z);
+          mesh.position.set(
+            u.x,
+            terrainHeight(regionForX(u.x), u.x, u.z) +
+              (insideWater(u.x, u.z) ? 0.1 : 0),
+            u.z,
+          );
           mesh.rotation.y = Math.atan2(moveX, moveZ);
         }
       });
@@ -5753,48 +5799,48 @@ export default function Game3D() {
           thuSites: g.sites.filter((s) => s.team === "thu" && !s.destroyed)
             .length,
           pkuGrowth:
-            (Math.min(
-              5,
+            (productionSlots(
               g.sites.filter(
                 (site) =>
                   site.team === "pku" &&
                   site.type === "dorm" &&
                   !site.destroyed,
               ).length,
+              0.35,
             ) *
               5) /
               6 +
-            (Math.min(
-              2,
+            (productionSlots(
               g.sites.filter(
                 (site) =>
                   site.team === "pku" &&
                   site.type === "dining" &&
                   !site.destroyed,
               ).length,
+              0.4,
             ) *
               5) /
               12,
           thuGrowth:
-            (Math.min(
-              5,
+            (productionSlots(
               g.sites.filter(
                 (site) =>
                   site.team === "thu" &&
                   site.type === "dorm" &&
                   !site.destroyed,
               ).length,
+              0.35,
             ) *
               5) /
               6 +
-            (Math.min(
-              2,
+            (productionSlots(
               g.sites.filter(
                 (site) =>
                   site.team === "thu" &&
                   site.type === "dining" &&
                   !site.destroyed,
               ).length,
+              0.4,
             ) *
               5) /
               12,
@@ -6001,6 +6047,7 @@ export default function Game3D() {
         ),
       enterDirectControl,
       exitDirectControl,
+      refreshSiteStance,
     };
     sceneApi.current.setLayers(showSites, showControl);
     sceneApi.current.setPerspective(playerTeamRef.current);
@@ -6244,7 +6291,7 @@ export default function Game3D() {
     if (!selectedSite || selectedSite.team !== playerTeam) return;
     selectedSite.stance = s;
     selectedSite.dispatchRatio = s === "defend" ? 0.4 : s === "guard" ? 0.7 : 1;
-    sceneApi.current?.sync();
+    sceneApi.current?.refreshSiteStance(selectedSite.id);
     setNotice(
       `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}，输送${Math.round(selectedSite.dispatchRatio * 100)}%`,
     );
@@ -6461,6 +6508,9 @@ export default function Game3D() {
               </button>
             )}
           </nav>
+          <div className="battle-clock" aria-label="当前游戏时间">
+            {clock}
+          </div>
           {moreOpen && (
             <aside className="battle-drawer more-drawer">
               <header>
@@ -6657,7 +6707,7 @@ export default function Game3D() {
                     }
                   >
                     <option value="pku">北京大学</option>
-                    <option value="thu">清华大学（视角旋转180°）</option>
+                    <option value="thu">清华大学</option>
                   </select>
                 </label>
                 <label>
