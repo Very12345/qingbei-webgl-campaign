@@ -2189,7 +2189,6 @@ export default function Game3D() {
           nodeSprite.scale.set(1.15, 1.15, 1);
           nodeSprite.position.y = 1.75;
           nodeSprite.renderOrder = 22;
-          nodeSprite.userData.siteHit = true;
           routeHighlight.scale.set(1.5, 1.5, 1);
           routeHighlight.position.y = 1.75;
           routeHighlight.visible = isRouteTarget;
@@ -2217,7 +2216,6 @@ export default function Game3D() {
           countSprite.scale.set(1.65, 0.46, 1);
           countSprite.position.y = 0.92;
           countSprite.renderOrder = 22;
-          countSprite.userData.siteHit = true;
           g.add(routeHighlight, hoverHighlight, nodeSprite, countSprite);
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
@@ -2269,7 +2267,6 @@ export default function Game3D() {
           sprite.scale.set(isTarget ? 4.6 : 3.7, isTarget ? 0.82 : 0.68, 1);
           sprite.position.y = 2.75 + (site.id % 3) * 0.42;
           sprite.renderOrder = 20;
-          sprite.userData.siteHit = true;
           g.add(sprite);
           const stanceSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
@@ -2282,7 +2279,6 @@ export default function Game3D() {
           stanceSprite.scale.set(0.5, 0.5, 1);
           stanceSprite.position.set(-0.76, 1.75, 0);
           stanceSprite.renderOrder = 26;
-          stanceSprite.userData.siteHit = true;
           g.add(stanceSprite);
           const typeSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
@@ -2295,7 +2291,6 @@ export default function Game3D() {
           typeSprite.scale.set(0.56, 0.56, 1);
           typeSprite.position.set(0, 1.75, 0);
           typeSprite.renderOrder = 26;
-          typeSprite.userData.siteHit = true;
           g.add(typeSprite);
           g.userData.fixedMarkerIcons = [
             {
@@ -2361,7 +2356,7 @@ export default function Game3D() {
             }),
           );
           hit.position.y = 1.75;
-          hit.userData.siteHit = true;
+          hit.userData.siteHitProxy = true;
           g.add(hit);
           g.traverse((o) => {
             o.userData.siteId = site.id;
@@ -2834,7 +2829,14 @@ export default function Game3D() {
         lights.push(l);
       });
     const ray = new THREE.Raycaster(),
-      mouse = new THREE.Vector2();
+      mouse = new THREE.Vector2(),
+      projectedSiteNode = new THREE.Vector3(),
+      siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
+        target.set(
+          site.x,
+          terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
+          site.z,
+        );
     let down: {
         x: number;
         y: number;
@@ -2849,21 +2851,32 @@ export default function Game3D() {
       ray.setFromCamera(mouse, camera);
     };
     const hitSite = (ev: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect(),
+        pointerX = ev.clientX - rect.left,
+        pointerY = ev.clientY - rect.top;
+      camera.updateMatrixWorld();
+      const screenHit = gameRef.current.sites
+        .filter((site) => !site.destroyed)
+        .map((site) => {
+          siteNodeWorldPosition(site, projectedSiteNode).project(camera);
+          return {
+            id: site.id,
+            visible: projectedSiteNode.z >= -1 && projectedSiteNode.z <= 1,
+            distance: Math.hypot(
+              pointerX - ((projectedSiteNode.x + 1) * rect.width) / 2,
+              pointerY - ((1 - projectedSiteNode.y) * rect.height) / 2,
+            ),
+          };
+        })
+        .filter((candidate) => candidate.visible && candidate.distance <= 34)
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (screenHit) return screenHit.id;
       setRay(ev);
       const hit = ray
         .intersectObjects(buildingGroup.children, true)
-        .find((item) => item.object.userData.siteHit);
+        .find((item) => item.object.userData.siteHitProxy);
       if (hit) return hit.object.userData.siteId as number;
-      const ground = ray.intersectObjects(terrainMeshes, false)[0]?.point;
-      if (!ground) return undefined;
-      return gameRef.current.sites
-        .filter((site) => !site.destroyed)
-        .map((site) => ({
-          id: site.id,
-          distance: Math.hypot(site.x - ground.x, site.z - ground.z),
-        }))
-        .filter((site) => site.distance < 1.7)
-        .sort((a, b) => a.distance - b.distance)[0]?.id;
+      return undefined;
     };
     const groundAt = (ev: MouseEvent) => {
       setRay(ev);
@@ -2947,12 +2960,6 @@ export default function Game3D() {
         z = units.reduce((sum, unit) => sum + unit.z, 0) / units.length;
       return new THREE.Vector3(x, terrainHeight(regionForX(x), x, z) + 1.35, z);
     };
-    const siteNodeWorldPosition = (site: SiteState) =>
-      new THREE.Vector3(
-        site.x,
-        terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
-        site.z,
-      );
     let hoveredSiteId: number | null = null;
     const setHoveredSite = (siteId: number | null) => {
       if (hoveredSiteId != null) {
