@@ -125,6 +125,8 @@ const SAVE_KEY = "qingbei-webgl-saves-v1";
 const TEAM_COLOR: Record<Team, number> = { pku: 0xa20d27, thu: 0x6f3291 };
 const productionSlots = (siteCount: number, ratio: number) =>
   siteCount > 0 ? Math.max(1, Math.ceil(siteCount * ratio)) : 0;
+const LOCAL_PRODUCTION_CAP = 36;
+const TEAM_UNIT_CAP = 850;
 const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
   thu_arrival: {
     title: "八月十六日：清华报到",
@@ -4373,6 +4375,54 @@ export default function Game3D() {
         }
         if (refresh) rebuildUnits();
       },
+      teamPopulation = (team: Team) =>
+        gameRef.current.units
+          .filter((unit) => unit.team === team)
+          .reduce((sum, unit) => sum + unit.strength, 0),
+      localFriendlyPopulation = (site: SiteState, radius = 4.2) =>
+        gameRef.current.units
+          .filter(
+            (unit) =>
+              unit.team === site.team &&
+              Math.hypot(
+                unit.x - (site.navX ?? site.x),
+                unit.z - (site.navZ ?? site.z),
+              ) < radius,
+          )
+          .reduce((sum, unit) => sum + unit.strength, 0),
+      hasProductionCapacity = (
+        site: SiteState,
+        knownTeamPopulation = teamPopulation(site.team),
+      ) =>
+        knownTeamPopulation < TEAM_UNIT_CAP &&
+        localFriendlyPopulation(site) < LOCAL_PRODUCTION_CAP,
+      productionGrowthPerHour = (team: Team) => {
+        const population = teamPopulation(team);
+        if (population > TEAM_UNIT_CAP - 5) return 0;
+        const dorms = gameRef.current.sites.filter(
+            (site) =>
+              site.team === team && site.type === "dorm" && !site.destroyed,
+          ),
+          dining = gameRef.current.sites.filter(
+            (site) =>
+              site.team === team && site.type === "dining" && !site.destroyed,
+          ),
+          availableDorms = dorms.filter((site) =>
+            hasProductionCapacity(site, population),
+          ).length,
+          availableDining = dining.filter((site) =>
+            hasProductionCapacity(site, population),
+          ).length,
+          activeDorms = Math.min(
+            productionSlots(dorms.length, 0.35),
+            availableDorms,
+          ),
+          activeDining = Math.min(
+            productionSlots(dining.length, 0.4),
+            availableDining,
+          );
+        return (activeDorms * 5) / 6 + (activeDining * 5) / 12;
+      },
       setOutcome = (winner: Team, reason: string) => {
         const campaign = gameRef.current.campaign;
         if (campaign.outcome) return;
@@ -5165,11 +5215,19 @@ export default function Game3D() {
         campaign.lastProductionCycle = productionCycle;
         let produced = false;
         for (const team of ["pku", "thu"] as Team[]) {
-          const dorms = g.sites.filter(
+          const population = teamPopulation(team),
+            allDorms = g.sites.filter(
             (site) =>
               site.team === team && site.type === "dorm" && !site.destroyed,
-          ),
-            activeDorms = productionSlots(dorms.length, 0.35);
+            ),
+            dorms = allDorms.filter((site) =>
+              hasProductionCapacity(site, population),
+            ),
+            activeDorms = Math.min(
+              productionSlots(allDorms.length, 0.35),
+              dorms.length,
+              Math.max(0, Math.floor((TEAM_UNIT_CAP - population) / 5)),
+            );
           for (let i = 0; i < activeDorms; i++) {
             const site = dorms[(productionCycle + i * 3) % dorms.length];
             spawnUnitsAt(site, team, 1, 1, false);
@@ -5198,11 +5256,19 @@ export default function Game3D() {
         campaign.lastDiningCycle = diningCycle;
         const producingDining: SiteState[] = [];
         for (const team of ["pku", "thu"] as Team[]) {
-          const diningSites = g.sites.filter(
+          const population = teamPopulation(team),
+            allDiningSites = g.sites.filter(
             (site) =>
               site.team === team && site.type === "dining" && !site.destroyed,
-          ),
-            activeDining = productionSlots(diningSites.length, 0.4);
+            ),
+            diningSites = allDiningSites.filter((site) =>
+              hasProductionCapacity(site, population),
+            ),
+            activeDining = Math.min(
+              productionSlots(allDiningSites.length, 0.4),
+              diningSites.length,
+              Math.max(0, Math.floor((TEAM_UNIT_CAP - population) / 5)),
+            );
           for (let i = 0; i < activeDining; i++) {
             const site =
               diningSites[(diningCycle + i * 2) % diningSites.length];
@@ -5798,52 +5864,8 @@ export default function Game3D() {
             .length,
           thuSites: g.sites.filter((s) => s.team === "thu" && !s.destroyed)
             .length,
-          pkuGrowth:
-            (productionSlots(
-              g.sites.filter(
-                (site) =>
-                  site.team === "pku" &&
-                  site.type === "dorm" &&
-                  !site.destroyed,
-              ).length,
-              0.35,
-            ) *
-              5) /
-              6 +
-            (productionSlots(
-              g.sites.filter(
-                (site) =>
-                  site.team === "pku" &&
-                  site.type === "dining" &&
-                  !site.destroyed,
-              ).length,
-              0.4,
-            ) *
-              5) /
-              12,
-          thuGrowth:
-            (productionSlots(
-              g.sites.filter(
-                (site) =>
-                  site.team === "thu" &&
-                  site.type === "dorm" &&
-                  !site.destroyed,
-              ).length,
-              0.35,
-            ) *
-              5) /
-              6 +
-            (productionSlots(
-              g.sites.filter(
-                (site) =>
-                  site.team === "thu" &&
-                  site.type === "dining" &&
-                  !site.destroyed,
-              ).length,
-              0.4,
-            ) *
-              5) /
-              12,
+          pkuGrowth: productionGrowthPerHour("pku"),
+          thuGrowth: productionGrowthPerHour("thu"),
         });
         const campaignDate = new Date(
           new Date(g.campaign.startDateISO).getTime() +
@@ -7050,16 +7072,6 @@ export default function Game3D() {
                     <strong>{entry.title}</strong>
                     <p>{entry.effect}</p>
                   </article>
-                ))}
-            </div>
-            <h3>尚未触发的事件</h3>
-            <div className="undiscovered-events">
-              {Object.entries(EVENT_CARDS)
-                .filter(
-                  ([id]) => !gameRef.current.campaign.firedEvents.includes(id),
-                )
-                .map(([id, event]) => (
-                  <span key={id}>{event.title}</span>
                 ))}
             </div>
           </section>
