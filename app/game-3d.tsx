@@ -630,6 +630,7 @@ function readSaves(): Snapshot[] {
 export default function Game3D() {
   const hostRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
+  const siteMenuRef = useRef<HTMLElement>(null);
   const gameRef = useRef<GameData>(makeFreshGame());
   const sceneApi = useRef<{
     sync: () => void;
@@ -650,6 +651,7 @@ export default function Game3D() {
   const timeScaleRef = useRef(1);
   const [clock, setClock] = useState("8月16日 08:00");
   const [selected, setSelected] = useState<number | null>(null);
+  const selectedRef = useRef<number | null>(null);
   const [selectedUnitCount, setSelectedUnitCount] = useState(0);
   const [region, setRegion] = useState<RegionId>("main");
   const regionRef = useRef<RegionId>("main");
@@ -711,6 +713,9 @@ export default function Game3D() {
   useEffect(() => {
     regionRef.current = region;
   }, [region]);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
   useEffect(() => {
     viewModeRef.current = viewMode;
     if (viewMode === "control") sceneApi.current?.exitDirectControl();
@@ -4548,7 +4553,8 @@ export default function Game3D() {
       last = performance.now(),
       statAt = 0;
     const directCenter = new THREE.Vector3(),
-      directCameraGoal = new THREE.Vector3();
+      directCameraGoal = new THREE.Vector3(),
+      siteMenuProjection = new THREE.Vector3();
     const animate = (now: number) => {
       raf = requestAnimationFrame(animate);
       const dt = Math.min(0.05, (now - last) / 1000);
@@ -4877,6 +4883,43 @@ export default function Game3D() {
         camera.position.x += shiftX;
         camera.position.z += shiftZ;
       }
+      const siteMenu = siteMenuRef.current,
+        selectedSiteId = selectedRef.current;
+      if (siteMenu && selectedSiteId != null) {
+        const selectedSite = g.sites[selectedSiteId];
+        if (!selectedSite || selectedSite.destroyed)
+          siteMenu.style.display = "none";
+        else {
+          camera.updateMatrixWorld();
+          siteNodeWorldPosition(selectedSite, siteMenuProjection).project(
+            camera,
+          );
+          if (siteMenuProjection.z < -1 || siteMenuProjection.z > 1)
+            siteMenu.style.display = "none";
+          else {
+            const rect = renderer.domElement.getBoundingClientRect(),
+              menuWidth = siteMenu.offsetWidth || 340,
+              menuHeight = siteMenu.offsetHeight || 230,
+              screenX =
+                rect.left + ((siteMenuProjection.x + 1) * rect.width) / 2,
+              screenY =
+                rect.top + ((1 - siteMenuProjection.y) * rect.height) / 2,
+              left = THREE.MathUtils.clamp(
+                screenX,
+                menuWidth / 2 + 8,
+                innerWidth - menuWidth / 2 - 8,
+              ),
+              top = THREE.MathUtils.clamp(
+                screenY - 34,
+                menuHeight + 8,
+                innerHeight - 8,
+              );
+            siteMenu.style.display = "block";
+            siteMenu.style.left = `${left}px`;
+            siteMenu.style.top = `${top}px`;
+          }
+        }
+      }
       renderer.render(scene, camera);
     };
     raf = requestAnimationFrame(animate);
@@ -5145,16 +5188,33 @@ export default function Game3D() {
     }),
     [],
   );
+  const selectedNearbyFriendly = selectedSite
+    ? gameRef.current.units
+        .filter(
+          (unit) =>
+            unit.team === selectedSite.team &&
+            Math.hypot(
+              unit.x - (selectedSite.navX ?? selectedSite.x),
+              unit.z - (selectedSite.navZ ?? selectedSite.z),
+            ) < 3.4,
+        )
+        .reduce((sum, unit) => sum + unit.strength, 0)
+    : 0;
   const setStance = (s: Stance) => {
     if (!selectedSite || selectedSite.team !== "pku") return;
     selectedSite.stance = s;
-    selectedSite.dispatchRatio =
-      s === "defend" ? 0.45 : s === "guard" ? 0.72 : 1;
     sceneApi.current?.sync();
     setNotice(
       `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}`,
     );
-    setSelected(null);
+  };
+  const setDispatchLevel = (ratio: number) => {
+    if (!selectedSite || selectedSite.team !== "pku") return;
+    selectedSite.dispatchRatio = ratio;
+    setUiRevision((value) => value + 1);
+    setNotice(
+      `${selectedSite.displayName ?? selectedSite.name}输送比例设为${Math.round(ratio * 100)}%`,
+    );
   };
   const renameSelectedSite = () => {
     if (!selectedSite || selectedSite.team !== "pku") return;
@@ -5331,39 +5391,40 @@ export default function Game3D() {
         <button onClick={newGame}>重新开始</button>
       </aside>
       {selectedSite && (
-        <section className="site-menu">
-          <strong>{selectedSite.displayName ?? selectedSite.name}</strong>
-          <p className={selectedSite.team === "pku" ? "red" : "purple"}>
+        <section ref={siteMenuRef} className="site-menu floating-site-menu">
+          <div className="site-heading-row">
+            <div className="rename-row compact">
+              <input
+                value={renameDraft}
+                maxLength={24}
+                disabled={selectedSite.team !== "pku"}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") renameSelectedSite();
+                }}
+                aria-label="据点名称"
+              />
+              {selectedSite.team === "pku" && (
+                <button onClick={renameSelectedSite} aria-label="保存名称">
+                  ✓
+                </button>
+              )}
+            </div>
+            <span className="site-bonus">
+              {siteTypeInfo[selectedSite.type].icon}{" "}
+              {siteTypeInfo[selectedSite.type].text.replace(/^.+?：/, "")}
+            </span>
+          </div>
+          <p
+            className={`site-summary ${selectedSite.team === "pku" ? "red" : "purple"}`}
+          >
             {selectedSite.team === "pku"
               ? "北大控制"
               : `${gameRef.current.campaign.thuFactionName}控制`}{" "}
-            · 补给 {Math.round(selectedSite.supply)}
+            · 补给 {Math.round(selectedSite.supply)}· 附近友军{" "}
+            {selectedNearbyFriendly} 人
+            {selectedSite.hasPortal ? " · ◎道路接入" : ""}
           </p>
-          <div className="site-mechanic">
-            <span>{siteTypeInfo[selectedSite.type].icon}</span>
-            <small>{siteTypeInfo[selectedSite.type].text}</small>
-          </div>
-          {selectedSite.hasPortal && (
-            <div className="portal-note">◎ 已连接最近道路的传送通道</div>
-          )}
-          <div className="rename-row">
-            <input
-              value={renameDraft}
-              maxLength={24}
-              disabled={selectedSite.team !== "pku"}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") renameSelectedSite();
-              }}
-              aria-label="据点名称"
-            />
-            <button
-              disabled={selectedSite.team !== "pku"}
-              onClick={renameSelectedSite}
-            >
-              改名
-            </button>
-          </div>
           <div className="stance-actions">
             {(Object.keys(stanceText) as Stance[]).map((s) => (
               <button
@@ -5374,32 +5435,32 @@ export default function Game3D() {
               >
                 <span>{stanceText[s].icon}</span>
                 <b>{stanceText[s].title}</b>
-                <small>{stanceText[s].detail}</small>
               </button>
             ))}
           </div>
-          <label className="dispatch-control">
-            <span>持续输送比例</span>
-            <b>{Math.round((selectedSite.dispatchRatio ?? 0.6) * 100)}%</b>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={selectedSite.dispatchRatio ?? 0.6}
-              disabled={selectedSite.team !== "pku"}
-              onChange={(event) => {
-                selectedSite.dispatchRatio = Number(event.target.value);
-                setUiRevision((value) => value + 1);
-                setNotice(
-                  `${selectedSite.displayName ?? selectedSite.name}持续输送比例已调整`,
-                );
-              }}
-            />
-          </label>
-          <small>
-            拖向友方建立持续增援线，拖向敌方建立持续进攻线；右键兵线取消。
-          </small>
+          <div className="dispatch-presets">
+            <span>输送</span>
+            {[
+              [0.4, "40%"],
+              [0.7, "70%"],
+              [1, "100%"],
+            ].map(([ratio, label]) => (
+              <button
+                key={ratio}
+                className={
+                  Math.abs(
+                    (selectedSite.dispatchRatio ?? 0.7) - Number(ratio),
+                  ) < 0.02
+                    ? "active"
+                    : ""
+                }
+                disabled={selectedSite.team !== "pku"}
+                onClick={() => setDispatchLevel(Number(ratio))}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </section>
       )}
       <div className="day-slider">

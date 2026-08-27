@@ -604,6 +604,92 @@ input {
   width: 100%;
   accent-color: #e7c55e;
 }
+.floating-site-menu {
+  position: fixed;
+  z-index: 70;
+  bottom: auto;
+  width: min(360px, calc(100vw - 16px));
+  padding: 10px;
+  transform: translate(-50%, -100%);
+  border-width: 1px;
+  border-radius: 12px;
+  pointer-events: auto;
+}
+.floating-site-menu::after {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 16px;
+  height: 16px;
+  transform: translateX(-50%) rotate(45deg);
+  border-right: 1px solid #e5cb75;
+  border-bottom: 1px solid #e5cb75;
+  background: #17221e;
+  content: "";
+}
+.site-heading-row {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 7px !important;
+}
+.rename-row.compact {
+  display: flex !important;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.rename-row.compact input {
+  padding: 6px 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.rename-row.compact button {
+  flex: 0 0 30px;
+  padding: 5px !important;
+}
+.site-bonus {
+  max-width: 148px;
+  color: #f1dfa6;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: right;
+}
+.site-summary {
+  margin: 6px 1px 8px !important;
+  font-size: 11px !important;
+}
+.floating-site-menu .stance-actions {
+  gap: 5px !important;
+}
+.floating-site-menu .stance-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 42px;
+  padding: 6px;
+}
+.floating-site-menu .stance-actions button > span {
+  font-size: 17px;
+}
+.dispatch-presets {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 5px !important;
+  margin-top: 7px;
+}
+.dispatch-presets > span {
+  margin-right: 2px;
+  color: #d5dccf;
+  font-size: 10px;
+}
+.dispatch-presets button {
+  flex: 1;
+  padding: 6px !important;
+  font-size: 11px;
+}
 .event-backdrop {
   position: fixed;
   z-index: 120;
