@@ -2543,13 +2543,7 @@ export default function Game3D() {
         .forEach((site) => {
           const g = new THREE.Group(),
             region = regionForX(site.x),
-            isTarget = false,
-            isRouteTarget = gameRef.current.sites.some(
-              (source) =>
-                source.team === "pku" &&
-                !source.destroyed &&
-                source.orderTarget === site.id,
-            );
+            isTarget = false;
           g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
           if (site.hasPortal && site.navX != null && site.navZ != null) {
             const portalX = site.navX - site.x,
@@ -2615,7 +2609,7 @@ export default function Game3D() {
           nodeSprite.renderOrder = 22;
           routeHighlight.scale.set(1.5, 1.5, 1);
           routeHighlight.position.y = 1.75;
-          routeHighlight.visible = isRouteTarget;
+          routeHighlight.visible = selectedRef.current === site.id;
           routeHighlight.renderOrder = 23;
           hoverHighlight.scale.set(1.78, 1.78, 1);
           hoverHighlight.position.y = 1.75;
@@ -2782,20 +2776,10 @@ export default function Game3D() {
       rebuildTerritory();
     };
     const refreshRouteHighlights = () => {
-      const targets = new Set(
-        gameRef.current.sites
-          .filter(
-            (source) =>
-              source.team === "pku" &&
-              !source.destroyed &&
-              source.orderTarget != null,
-          )
-          .map((source) => source.orderTarget as number),
-      );
       siteObjects.forEach((object, id) => {
         const highlight = object.userData.routeHighlight as
           THREE.Object3D | undefined;
-        if (highlight) highlight.visible = targets.has(id);
+        if (highlight) highlight.visible = selectedRef.current === id;
       });
     };
     const textureLoader = new THREE.TextureLoader(),
@@ -4949,7 +4933,11 @@ export default function Game3D() {
         0.45,
         1.9,
       );
-      siteObjects.forEach((object) => {
+      siteObjects.forEach((object, id) => {
+        const selectionHighlight = object.userData.routeHighlight as
+          THREE.Object3D | undefined;
+        if (selectionHighlight)
+          selectionHighlight.visible = selectedRef.current === id;
         const icons = object.userData.fixedMarkerIcons as
           | {
               object: THREE.Sprite;
