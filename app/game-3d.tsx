@@ -1746,8 +1746,8 @@ export default function Game3D() {
           line = makeLine(curve, 0xffffff, 3.5, 0.92, 40, false),
           head = makeArrowSprite(0xffffff, 0.72);
         group.add(line);
-        head.position.copy(curve.getPoint(0.94));
-        const previewTangent = curve.getTangent(0.94);
+        head.position.copy(end);
+        const previewTangent = curve.getTangent(1);
         (head.material as THREE.SpriteMaterial).rotation =
           Math.atan2(previewTangent.x, previewTangent.z) + Math.PI;
         head.renderOrder = 41;
@@ -2189,6 +2189,7 @@ export default function Game3D() {
           nodeSprite.scale.set(1.15, 1.15, 1);
           nodeSprite.position.y = 1.75;
           nodeSprite.renderOrder = 22;
+          nodeSprite.userData.siteHit = true;
           routeHighlight.scale.set(1.5, 1.5, 1);
           routeHighlight.position.y = 1.75;
           routeHighlight.visible = isRouteTarget;
@@ -2216,6 +2217,7 @@ export default function Game3D() {
           countSprite.scale.set(1.65, 0.46, 1);
           countSprite.position.y = 0.92;
           countSprite.renderOrder = 22;
+          countSprite.userData.siteHit = true;
           g.add(routeHighlight, hoverHighlight, nodeSprite, countSprite);
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
@@ -2267,6 +2269,7 @@ export default function Game3D() {
           sprite.scale.set(isTarget ? 4.6 : 3.7, isTarget ? 0.82 : 0.68, 1);
           sprite.position.y = 2.75 + (site.id % 3) * 0.42;
           sprite.renderOrder = 20;
+          sprite.userData.siteHit = true;
           g.add(sprite);
           const stanceSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
@@ -2279,6 +2282,7 @@ export default function Game3D() {
           stanceSprite.scale.set(0.5, 0.5, 1);
           stanceSprite.position.set(-0.76, 1.75, 0);
           stanceSprite.renderOrder = 26;
+          stanceSprite.userData.siteHit = true;
           g.add(stanceSprite);
           const typeSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
@@ -2291,6 +2295,7 @@ export default function Game3D() {
           typeSprite.scale.set(0.56, 0.56, 1);
           typeSprite.position.set(0, 1.75, 0);
           typeSprite.renderOrder = 26;
+          typeSprite.userData.siteHit = true;
           g.add(typeSprite);
           g.userData.fixedMarkerIcons = [
             {
@@ -2998,13 +3003,7 @@ export default function Game3D() {
         const target = hovered != null ? gameRef.current.sites[hovered] : null;
         previewLine = addCommandLine(
           center,
-          target
-            ? siteNodeWorldPosition(target)
-            : new THREE.Vector3(
-                p.x,
-                terrainHeight(regionForX(p.x), p.x, p.z) + 1.35,
-                p.z,
-              ),
+          target ? siteNodeWorldPosition(target) : p.clone(),
           true,
         );
         return;
@@ -3018,11 +3017,7 @@ export default function Game3D() {
         siteNodeWorldPosition(s),
         hovered != null && hovered !== down.site
           ? siteNodeWorldPosition(gameRef.current.sites[hovered])
-          : new THREE.Vector3(
-              p.x,
-              terrainHeight(regionForX(p.x), p.x, p.z) + 1.35,
-              p.z,
-            ),
+          : p.clone(),
         true,
       );
     });
