@@ -12,13 +12,7 @@ type Team = "pku" | "thu";
 type Stance = "defend" | "guard" | "standby";
 type RegionId = "main";
 type SiteKind =
-  | "dorm"
-  | "dining"
-  | "teaching"
-  | "gate"
-  | "target"
-  | "capital"
-  | "camp";
+  "dorm" | "dining" | "teaching" | "gate" | "target" | "capital" | "camp";
 type SiteState = {
   id: number;
   name: string;
@@ -1745,8 +1739,8 @@ export default function Game3D() {
           return sprite;
         };
       if (preview) {
-        const start = a.clone().setY(1.9),
-          end = b.clone().setY(1.9),
+        const start = a.clone(),
+          end = b.clone(),
           curve = new THREE.LineCurve3(start, end),
           group = new THREE.Group(),
           line = makeLine(curve, 0xffffff, 3.5, 0.92, 40, false),
@@ -1764,10 +1758,18 @@ export default function Game3D() {
       const color = attack ? 0xff684d : 0x79dcff,
         pathPoints = path?.length
           ? [
-              a.clone().setY(1.9),
-              ...path.map(([x, z]) => new THREE.Vector3(x, 1.9, z)),
+              a.clone(),
+              ...path.map(
+                ([x, z]) =>
+                  new THREE.Vector3(
+                    x,
+                    terrainHeight(regionForX(x), x, z) + 1.45,
+                    z,
+                  ),
+              ),
+              b.clone(),
             ]
-          : [a.clone().setY(1.9), b.clone().setY(1.9)],
+          : [a.clone(), b.clone()],
         curve = new THREE.CatmullRomCurve3(
           pathPoints,
           false,
@@ -1824,8 +1826,16 @@ export default function Game3D() {
           .filter((u) => u.siteId === s.id && u.targetSiteId === t.id)
           .reduce((sum, unit) => sum + unit.strength, 0);
         const route = addCommandLine(
-          new THREE.Vector3(s.x, 1.55, s.z),
-          new THREE.Vector3(t.x, 1.55, t.z),
+          new THREE.Vector3(
+            s.x,
+            terrainHeight(regionForX(s.x), s.x, s.z) + 1.75,
+            s.z,
+          ),
+          new THREE.Vector3(
+            t.x,
+            terrainHeight(regionForX(t.x), t.x, t.z) + 1.75,
+            t.z,
+          ),
           false,
           s.team !== t.team,
           troops,
@@ -2029,6 +2039,75 @@ export default function Game3D() {
         siteTypeTextureCache.set(kind, texture);
         return texture;
       };
+    const nodeTextureCache = new Map<Team, THREE.CanvasTexture>(),
+      haloTextureCache = new Map<string, THREE.CanvasTexture>(),
+      siteNodeTexture = (team: Team) => {
+        const cached = nodeTextureCache.get(team);
+        if (cached) return cached;
+        const canvas = document.createElement("canvas");
+        canvas.width = 192;
+        canvas.height = 192;
+        const context = canvas.getContext("2d")!;
+        context.beginPath();
+        context.arc(96, 96, 78, 0, Math.PI * 2);
+        context.fillStyle = "rgba(12,20,18,.96)";
+        context.fill();
+        context.lineWidth = 18;
+        context.strokeStyle = team === "pku" ? "#d62b46" : "#9153b9";
+        context.stroke();
+        context.beginPath();
+        context.arc(96, 96, 56, 0, Math.PI * 2);
+        context.strokeStyle = "rgba(255,243,196,.55)";
+        context.lineWidth = 5;
+        context.stroke();
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        nodeTextureCache.set(team, texture);
+        return texture;
+      },
+      haloTexture = (color: string) => {
+        const cached = haloTextureCache.get(color);
+        if (cached) return cached;
+        const canvas = document.createElement("canvas");
+        canvas.width = 192;
+        canvas.height = 192;
+        const context = canvas.getContext("2d")!;
+        context.beginPath();
+        context.arc(96, 96, 76, 0, Math.PI * 2);
+        context.lineWidth = 16;
+        context.strokeStyle = color;
+        context.shadowColor = color;
+        context.shadowBlur = 22;
+        context.stroke();
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        haloTextureCache.set(color, texture);
+        return texture;
+      },
+      nearbyFriendlyPeople = (site: SiteState) =>
+        gameRef.current.units
+          .filter(
+            (unit) =>
+              unit.team === site.team &&
+              Math.hypot(
+                unit.x - (site.navX ?? site.x),
+                unit.z - (site.navZ ?? site.z),
+              ) < 3.4,
+          )
+          .reduce((sum, unit) => sum + unit.strength, 0),
+      drawCountBadge = (context: CanvasRenderingContext2D, count: number) => {
+        context.clearRect(0, 0, 256, 72);
+        context.fillStyle = "rgba(9,16,14,.94)";
+        context.roundRect(3, 3, 250, 66, 18);
+        context.fill();
+        context.strokeStyle = "#f2d478";
+        context.lineWidth = 4;
+        context.stroke();
+        context.fillStyle = "#fff4c4";
+        context.font = "800 30px Microsoft YaHei";
+        context.textAlign = "center";
+        context.fillText(`友军 ${count}人`, 128, 47);
+      };
     const rebuildBuildings = () => {
       buildingGroup.children.slice().forEach((child) => {
         buildingGroup.remove(child);
@@ -2046,8 +2125,7 @@ export default function Game3D() {
                 source.team === "pku" &&
                 !source.destroyed &&
                 source.orderTarget === site.id,
-            ),
-            teamColor = TEAM_COLOR[site.team];
+            );
           g.position.set(site.x, terrainHeight(region, site.x, site.z), site.z);
           if (site.hasPortal && site.navX != null && site.navZ != null) {
             const portalX = site.navX - site.x,
@@ -2084,95 +2162,84 @@ export default function Game3D() {
             portalRing.renderOrder = 27;
             g.add(portalLine, portalRing);
           }
-          const outer = new THREE.Mesh(
-            new THREE.RingGeometry(
-              isTarget ? 1.02 : 0.68,
-              isTarget ? 1.34 : 0.92,
-              44,
-            ),
-            new THREE.MeshBasicMaterial({
-              color: isTarget ? 0xffc84b : teamColor,
-              transparent: true,
-              opacity: 0.94,
-              side: THREE.DoubleSide,
-              depthTest: false,
-            }),
-          );
-          outer.rotation.x = -Math.PI / 2;
-          outer.position.y = 0.18;
-          outer.renderOrder = 8;
-          g.add(outer);
-          const routeHighlight = new THREE.Mesh(
-              new THREE.RingGeometry(1.12, 1.32, 44),
-              new THREE.MeshBasicMaterial({
-                color: 0xffe16d,
-                transparent: true,
-                opacity: 0.9,
-                side: THREE.DoubleSide,
-                depthTest: false,
-              }),
-            ),
-            hoverHighlight = new THREE.Mesh(
-              new THREE.RingGeometry(1.38, 1.55, 44),
-              new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                transparent: true,
-                opacity: 0.95,
-                side: THREE.DoubleSide,
-                depthTest: false,
-              }),
-            );
-          routeHighlight.rotation.x = -Math.PI / 2;
-          routeHighlight.position.y = 0.21;
-          routeHighlight.visible = isRouteTarget;
-          routeHighlight.renderOrder = 23;
-          hoverHighlight.rotation.x = -Math.PI / 2;
-          hoverHighlight.position.y = 0.23;
-          hoverHighlight.visible = false;
-          hoverHighlight.renderOrder = 24;
-          g.add(routeHighlight, hoverHighlight);
-          g.userData.routeHighlight = routeHighlight;
-          g.userData.hoverHighlight = hoverHighlight;
-          g.userData.fixedScaleRings = [outer, routeHighlight, hoverHighlight];
-          const core = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.18, 0.25, 0.9, 12),
-            new THREE.MeshStandardMaterial({
-              color: isTarget ? 0xffb52e : teamColor,
-              emissive: isTarget ? 0xff9d00 : teamColor,
-              emissiveIntensity: isTarget ? 1.4 : 0.35,
-              roughness: 0.4,
-            }),
-          );
-          core.position.y = 0.65;
-          core.castShadow = true;
-          g.add(core);
-          if (customSiteTexture) {
-            const materialBadge = new THREE.Sprite(
+          const nodeSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
-                map: customSiteTexture,
+                map: siteNodeTexture(site.team),
                 transparent: true,
-                depthTest: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            ),
+            routeHighlight = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: haloTexture("#ffe16d"),
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            ),
+            hoverHighlight = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: haloTexture("#ffffff"),
+                transparent: true,
+                depthTest: false,
                 depthWrite: false,
               }),
             );
-            materialBadge.scale.set(0.9, 0.9, 1);
-            materialBadge.position.y = 1.2;
+          nodeSprite.scale.set(1.15, 1.15, 1);
+          nodeSprite.position.y = 1.75;
+          nodeSprite.renderOrder = 22;
+          routeHighlight.scale.set(1.5, 1.5, 1);
+          routeHighlight.position.y = 1.75;
+          routeHighlight.visible = isRouteTarget;
+          routeHighlight.renderOrder = 23;
+          hoverHighlight.scale.set(1.78, 1.78, 1);
+          hoverHighlight.position.y = 1.75;
+          hoverHighlight.visible = false;
+          hoverHighlight.renderOrder = 24;
+          const countCanvas = document.createElement("canvas");
+          countCanvas.width = 256;
+          countCanvas.height = 72;
+          const countContext = countCanvas.getContext("2d")!,
+            initialCount = nearbyFriendlyPeople(site);
+          drawCountBadge(countContext, initialCount);
+          const countTexture = new THREE.CanvasTexture(countCanvas),
+            countSprite = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: countTexture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            );
+          countTexture.colorSpace = THREE.SRGBColorSpace;
+          countSprite.scale.set(1.65, 0.46, 1);
+          countSprite.position.y = 0.92;
+          countSprite.renderOrder = 22;
+          g.add(routeHighlight, hoverHighlight, nodeSprite, countSprite);
+          g.userData.routeHighlight = routeHighlight;
+          g.userData.hoverHighlight = hoverHighlight;
+          g.userData.nodeSprite = nodeSprite;
+          g.userData.countBadge = {
+            context: countContext,
+            texture: countTexture,
+            last: initialCount,
+          };
+          let materialBadge: THREE.Sprite | null = null;
+          if (customSiteTexture) {
+            materialBadge = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: customSiteTexture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            );
+            materialBadge.scale.set(0.72, 0.72, 1);
+            materialBadge.position.y = 1.75;
+            materialBadge.renderOrder = 25;
             g.add(materialBadge);
           }
-          const icon = new THREE.Mesh(
-            site.type === "gate"
-              ? new THREE.TorusGeometry(0.36, 0.09, 8, 18, Math.PI)
-              : new THREE.OctahedronGeometry(isTarget ? 0.48 : 0.32),
-            new THREE.MeshStandardMaterial({
-              color: 0xffedba,
-              emissive: isTarget ? 0xffb52e : 0x000000,
-              emissiveIntensity: isTarget ? 1.6 : 0,
-              roughness: 0.35,
-            }),
-          );
-          icon.position.y = site.type === "gate" ? 1.25 : 1.22;
-          if (site.type === "gate") icon.rotation.z = Math.PI;
-          g.add(icon);
           if (isTarget) {
             const beacon = new THREE.Mesh(
               new THREE.RingGeometry(1.48, 1.62, 48),
@@ -2198,7 +2265,7 @@ export default function Game3D() {
               }),
             );
           sprite.scale.set(isTarget ? 4.6 : 3.7, isTarget ? 0.82 : 0.68, 1);
-          sprite.position.y = (isTarget ? 4.1 : 2.65) + (site.id % 3) * 0.42;
+          sprite.position.y = 2.75 + (site.id % 3) * 0.42;
           sprite.renderOrder = 20;
           g.add(sprite);
           const stanceSprite = new THREE.Sprite(
@@ -2209,9 +2276,9 @@ export default function Game3D() {
               depthWrite: false,
             }),
           );
-          stanceSprite.scale.set(0.72, 0.72, 1);
-          stanceSprite.position.set(-0.88, 1.35, 0);
-          stanceSprite.renderOrder = 21;
+          stanceSprite.scale.set(0.5, 0.5, 1);
+          stanceSprite.position.set(-0.76, 1.75, 0);
+          stanceSprite.renderOrder = 26;
           g.add(stanceSprite);
           const typeSprite = new THREE.Sprite(
             new THREE.SpriteMaterial({
@@ -2221,13 +2288,64 @@ export default function Game3D() {
               depthWrite: false,
             }),
           );
-          typeSprite.scale.set(0.72, 0.72, 1);
-          typeSprite.position.set(0.88, 1.35, 0);
-          typeSprite.renderOrder = 21;
+          typeSprite.scale.set(0.56, 0.56, 1);
+          typeSprite.position.set(0, 1.75, 0);
+          typeSprite.renderOrder = 26;
           g.add(typeSprite);
           g.userData.fixedMarkerIcons = [
-            { object: stanceSprite, x: -0.88, y: 1.35, scale: 0.72 },
-            { object: typeSprite, x: 0.88, y: 1.35, scale: 0.72 },
+            {
+              object: routeHighlight,
+              x: 0,
+              y: 1.75,
+              scaleX: 1.5,
+              scaleY: 1.5,
+            },
+            {
+              object: hoverHighlight,
+              x: 0,
+              y: 1.75,
+              scaleX: 1.78,
+              scaleY: 1.78,
+            },
+            {
+              object: nodeSprite,
+              x: 0,
+              y: 1.75,
+              scaleX: 1.15,
+              scaleY: 1.15,
+            },
+            {
+              object: stanceSprite,
+              x: -0.76,
+              y: 1.75,
+              scaleX: 0.5,
+              scaleY: 0.5,
+            },
+            {
+              object: typeSprite,
+              x: 0,
+              y: 1.75,
+              scaleX: 0.56,
+              scaleY: 0.56,
+            },
+            {
+              object: countSprite,
+              x: 0,
+              y: 0.92,
+              scaleX: 1.65,
+              scaleY: 0.46,
+            },
+            ...(materialBadge
+              ? [
+                  {
+                    object: materialBadge,
+                    x: 0,
+                    y: 1.75,
+                    scaleX: 0.72,
+                    scaleY: 0.72,
+                  },
+                ]
+              : []),
           ];
           const hit = new THREE.Mesh(
             new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
@@ -2237,7 +2355,7 @@ export default function Game3D() {
               depthWrite: false,
             }),
           );
-          hit.position.y = 1.35;
+          hit.position.y = 1.75;
           hit.userData.siteHit = true;
           g.add(hit);
           g.traverse((o) => {
@@ -2260,8 +2378,7 @@ export default function Game3D() {
       );
       siteObjects.forEach((object, id) => {
         const highlight = object.userData.routeHighlight as
-          | THREE.Mesh
-          | undefined;
+          THREE.Object3D | undefined;
         if (highlight) highlight.visible = targets.has(id);
       });
     };
@@ -2819,24 +2936,27 @@ export default function Game3D() {
         selectedUnitIds.has(unit.id),
       );
       if (!units.length) return null;
-      return new THREE.Vector3(
-        units.reduce((sum, unit) => sum + unit.x, 0) / units.length,
-        1.35,
-        units.reduce((sum, unit) => sum + unit.z, 0) / units.length,
-      );
+      const x = units.reduce((sum, unit) => sum + unit.x, 0) / units.length,
+        z = units.reduce((sum, unit) => sum + unit.z, 0) / units.length;
+      return new THREE.Vector3(x, terrainHeight(regionForX(x), x, z) + 1.35, z);
     };
+    const siteNodeWorldPosition = (site: SiteState) =>
+      new THREE.Vector3(
+        site.x,
+        terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
+        site.z,
+      );
     let hoveredSiteId: number | null = null;
     const setHoveredSite = (siteId: number | null) => {
       if (hoveredSiteId != null) {
         const previous = siteObjects.get(hoveredSiteId)?.userData
-          .hoverHighlight as THREE.Mesh | undefined;
+          .hoverHighlight as THREE.Object3D | undefined;
         if (previous) previous.visible = false;
       }
       hoveredSiteId = siteId;
       if (siteId != null) {
         const next = siteObjects.get(siteId)?.userData.hoverHighlight as
-          | THREE.Mesh
-          | undefined;
+          THREE.Object3D | undefined;
         if (next) next.visible = true;
       }
     };
@@ -2873,9 +2993,16 @@ export default function Game3D() {
         setHoveredSite(hovered ?? null);
         const center = selectedCentroid();
         if (!center) return;
+        const target = hovered != null ? gameRef.current.sites[hovered] : null;
         previewLine = addCommandLine(
           center,
-          new THREE.Vector3(p.x, 1.35, p.z),
+          target
+            ? siteNodeWorldPosition(target)
+            : new THREE.Vector3(
+                p.x,
+                terrainHeight(regionForX(p.x), p.x, p.z) + 1.35,
+                p.z,
+              ),
           true,
         );
         return;
@@ -2886,8 +3013,14 @@ export default function Game3D() {
       const hovered = hitSite(e);
       setHoveredSite(hovered != null && hovered !== down.site ? hovered : null);
       previewLine = addCommandLine(
-        new THREE.Vector3(s.x, 1.2, s.z),
-        new THREE.Vector3(p.x, 1.2, p.z),
+        siteNodeWorldPosition(s),
+        hovered != null && hovered !== down.site
+          ? siteNodeWorldPosition(gameRef.current.sites[hovered])
+          : new THREE.Vector3(
+              p.x,
+              terrainHeight(regionForX(p.x), p.x, p.z) + 1.35,
+              p.z,
+            ),
         true,
       );
     });
@@ -4070,6 +4203,22 @@ export default function Game3D() {
             hour12: false,
           }),
         );
+        siteObjects.forEach((object, id) => {
+          const site = g.sites[id],
+            badge = object.userData.countBadge as
+              | {
+                  context: CanvasRenderingContext2D;
+                  texture: THREE.CanvasTexture;
+                  last: number;
+                }
+              | undefined;
+          if (!site || !badge) return;
+          const count = nearbyFriendlyPeople(site);
+          if (count === badge.last) return;
+          drawCountBadge(badge.context, count);
+          badge.texture.needsUpdate = true;
+          badge.last = count;
+        });
       }
       controls.update();
       const fixedRingScale = THREE.MathUtils.clamp(
@@ -4078,22 +4227,23 @@ export default function Game3D() {
         1.9,
       );
       siteObjects.forEach((object) => {
-        const rings = object.userData.fixedScaleRings as
-          | THREE.Object3D[]
-          | undefined;
-        rings?.forEach((ring) => ring.scale.setScalar(fixedRingScale));
         const icons = object.userData.fixedMarkerIcons as
           | {
               object: THREE.Sprite;
               x: number;
               y: number;
-              scale: number;
+              scaleX: number;
+              scaleY: number;
             }[]
           | undefined;
         icons?.forEach((icon) => {
           icon.object.position.x = icon.x * fixedRingScale;
-          icon.object.position.y = icon.y * fixedRingScale;
-          icon.object.scale.setScalar(icon.scale * fixedRingScale);
+          icon.object.position.y = 1.75 + (icon.y - 1.75) * fixedRingScale;
+          icon.object.scale.set(
+            icon.scaleX * fixedRingScale,
+            icon.scaleY * fixedRingScale,
+            1,
+          );
         });
       });
       const active = regions[regionRef.current],
