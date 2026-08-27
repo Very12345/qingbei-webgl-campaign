@@ -1186,6 +1186,83 @@ export default function Game3D() {
           simplified.push(goalPoint);
         return simplified;
       };
+    const collisionAreas = [
+      ...regions.main.buildings,
+      ...regions.main.waters,
+    ].map((area: any) => ({
+      points: area.points,
+      minX: Math.min(...area.points.map((point: number[]) => point[0])),
+      maxX: Math.max(...area.points.map((point: number[]) => point[0])),
+      minZ: Math.min(...area.points.map((point: number[]) => point[1])),
+      maxZ: Math.max(...area.points.map((point: number[]) => point[1])),
+    }));
+    const collisionCell = 4,
+      collisionIndex = new Map<string, typeof collisionAreas>();
+    collisionAreas.forEach((area) => {
+      for (
+        let gx = Math.floor(area.minX / collisionCell);
+        gx <= Math.floor(area.maxX / collisionCell);
+        gx++
+      )
+        for (
+          let gz = Math.floor(area.minZ / collisionCell);
+          gz <= Math.floor(area.maxZ / collisionCell);
+          gz++
+        ) {
+          const key = `${gx}/${gz}`,
+            bucket = collisionIndex.get(key);
+          if (bucket) bucket.push(area);
+          else collisionIndex.set(key, [area]);
+        }
+    });
+    const insideObstacle = (x: number, z: number) =>
+        (
+          collisionIndex.get(
+            `${Math.floor(x / collisionCell)}/${Math.floor(z / collisionCell)}`,
+          ) ?? []
+        ).some(
+          (area) =>
+            x >= area.minX &&
+            x <= area.maxX &&
+            z >= area.minZ &&
+            z <= area.maxZ &&
+            pointInPolygon(x, z, area.points),
+        ),
+      ejectTrappedUnits = () => {
+        gameRef.current.units.forEach((unit) => {
+          const current = navIndex(navGrid, unit.x, unit.z),
+            trapped =
+              current < 0 ||
+              navGrid.blocked[current] ||
+              navGrid.component[current] !== navGrid.mainComponent ||
+              insideObstacle(unit.x, unit.z);
+          if (!trapped) return;
+          const openIndex = nearestOpenIndex(navGrid, unit.x, unit.z);
+          if (openIndex < 0) return;
+          const [safeX, safeZ] = navPoint(navGrid, openIndex),
+            target =
+              unit.targetSiteId == null
+                ? undefined
+                : gameRef.current.sites[unit.targetSiteId];
+          unit.x = safeX;
+          unit.z = safeZ;
+          unit.tx = safeX;
+          unit.tz = safeZ;
+          unit.path = undefined;
+          unit.pathIndex = undefined;
+          if (target && !target.destroyed) {
+            unit.path = findPath(
+              safeX,
+              safeZ,
+              target.navX ?? target.x,
+              target.navZ ?? target.z,
+            );
+            unit.pathIndex = 0;
+            const destination = unit.path.at(-1);
+            if (destination) [unit.tx, unit.tz] = destination;
+          }
+        });
+      };
     const refreshNavAnchors = () => {
       gameRef.current.sites.forEach((site) => {
         if (site.destroyed) return;
@@ -4985,7 +5062,8 @@ export default function Game3D() {
       performanceWindowAt = last,
       performanceFrameTime = 0,
       performanceFrameCount = 0,
-      lastShadowUpdateAt = 0;
+      lastShadowUpdateAt = 0,
+      nextStuckCheckAt = 0;
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
@@ -5015,6 +5093,10 @@ export default function Game3D() {
         performanceFrameCount = 0;
       }
       const g = gameRef.current;
+      if (now >= nextStuckCheckAt) {
+        nextStuckCheckAt = now + 280;
+        ejectTrappedUnits();
+      }
       if (directControlActive) {
         const controlled = g.units.filter(
           (unit) => unit.team === "pku" && selectedUnitIds.has(unit.id),
