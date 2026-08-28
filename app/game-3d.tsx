@@ -445,7 +445,7 @@ const EVENT_CARDS = defineEventCatalog({
     title: "八月三十日：清华夜跑",
     body: "午夜的清华园突然响起整齐脚步声。队伍在凌晨沿校园边缘据点循环行进，速度惊人，但进攻动作明显变形。",
     effect:
-      "8月30日00:00—05:00：清华移速+50%、攻击-10%、意志+20%；北大攻击+20%、意志+5%。仅影响当前单位。",
+      "8月30日00:00—04:00：清华移速+50%、攻击-10%、意志+20%；北大攻击+20%、意志+5%。仅影响当前单位。",
     quadrant: "march",
     date: "2026年8月30日 00:00",
   },
@@ -6117,8 +6117,8 @@ export default function Game3D() {
         });
       if (campaign.elapsedHours >= 328)
         fireEvent("thu_morning_run", () => {
-          addTimedStatus("thu_run_thu", "清华夜跑", "thu", 5, 0.9, 1.5, 1.2);
-          addTimedStatus("thu_run_pku", "夜跑对峙", "pku", 5, 1.2, 1, 1.05);
+          addTimedStatus("thu_run_thu", "清华夜跑", "thu", 4, 0.9, 1.5, 1.2);
+          addTimedStatus("thu_run_pku", "夜跑对峙", "pku", 4, 1.2, 1, 1.05);
           const edgeSites = g.sites
             .filter(
               (site) =>
