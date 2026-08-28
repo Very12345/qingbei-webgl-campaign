@@ -47,6 +47,29 @@ npm run build
 
 北大东门、北大图书馆、清华西门等易混淆地标通过 OSM 对象 ID 锁定。车站和公交站不会被当作实体校门。
 
+## 事件模组 API
+
+事件系统位于 `src/event-api.ts`。模组可通过浏览器全局对象注册一次性事件：
+
+```js
+const remove = window.QingbeiEventAPI.register({
+  id: "mod_example",
+  card: {
+    title: "模组事件",
+    body: "事件说明",
+    effect: "机制说明",
+    quadrant: "classroom",
+    date: "模组时间",
+  },
+  when: ({ elapsedHours, game }) => elapsedHours >= 96,
+  apply: ({ game }) => {
+    game.resources.pku += 10;
+  },
+});
+```
+
+每个 Hook 包含 `id`、事件卡、`when(context)` 和可选的 `apply(context)`；主循环统一轮询，触发记录会自动进入存档与事件档案。调用返回函数或 `window.QingbeiEventAPI.unregister(id)` 可卸载事件。
+
 ## 部署
 
 推送 `main` 后，`.github/workflows/pages.yml` 自动构建并发布到 GitHub Pages。

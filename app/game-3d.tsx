@@ -8,6 +8,11 @@ import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { osmRegions } from "../src/osm-map-data";
+import {
+  defineEventCatalog,
+  runCampaignEventHooks,
+  type CampaignEventCardSpec,
+} from "../src/event-api";
 
 type Team = "pku" | "thu";
 type Stance = "defend" | "guard" | "standby";
@@ -98,6 +103,8 @@ type CampaignState = {
   eventHistory: EventHistoryEntry[];
   battleAlerts: BattleAlert[];
   initialThuSites: number;
+  initialPkuSites: number;
+  initialProductionSites: Record<Team, number>;
 };
 type GameData = {
   timeOfDay: number;
@@ -112,22 +119,18 @@ type Snapshot = GameData & {
   name: string;
   savedAt: number;
 };
-type EventCard = {
+type EventCard = CampaignEventCardSpec & {
   id: string;
-  title: string;
-  body: string;
-  effect: string;
-  quadrant: "arrival" | "march" | "lake" | "classroom";
-  date: string;
 };
 
 const SAVE_KEY = "qingbei-webgl-saves-v1";
+const AUTOSAVE_KEY = "qingbei-webgl-unfinished-v1";
 const TEAM_COLOR: Record<Team, number> = { pku: 0xa20d27, thu: 0x6f3291 };
 const productionSlots = (siteCount: number, ratio: number) =>
   siteCount > 0 ? Math.max(1, Math.ceil(siteCount * ratio)) : 0;
-const LOCAL_PRODUCTION_CAP = 36;
-const TEAM_UNIT_CAP = 850;
-const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
+const INITIAL_PRODUCTION_POPULATION_BUDGET = 720;
+const BASE_TEAM_UNIT_CAP = 1500;
+const EVENT_CARDS = defineEventCatalog({
   thu_arrival: {
     title: "八月十六日：清华报到",
     body: "清华园率先迎来新生。紫荆宿舍区灯火通明，防务委员会宣布维持校园秩序。",
@@ -278,7 +281,7 @@ const EVENT_CARDS: Record<string, Omit<EventCard, "id">> = {
     quadrant: "classroom",
     date: "化学学院战线",
   },
-};
+});
 
 const seeds: Omit<SiteState, "id" | "stance" | "supply">[] = [
   { name: "北大西门", team: "pku", x: -43, z: 26, type: "gate" },
@@ -680,6 +683,19 @@ export function makeFreshGame(): GameData {
       eventHistory: [],
       battleAlerts: [],
       initialThuSites: sites.filter((site) => site.team === "thu").length,
+      initialPkuSites: sites.filter((site) => site.team === "pku").length,
+      initialProductionSites: {
+        pku: sites.filter(
+          (site) =>
+            site.team === "pku" &&
+            (site.type === "dorm" || site.type === "dining"),
+        ).length,
+        thu: sites.filter(
+          (site) =>
+            site.team === "thu" &&
+            (site.type === "dorm" || site.type === "dining"),
+        ).length,
+      },
     },
   };
 }
@@ -688,6 +704,13 @@ function readSaves(): Snapshot[] {
     return JSON.parse(localStorage.getItem(SAVE_KEY) || "[]") as Snapshot[];
   } catch {
     return [];
+  }
+}
+function readAutosave(): Snapshot | null {
+  try {
+    return JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null") as Snapshot | null;
+  } catch {
+    return null;
   }
 }
 
@@ -709,6 +732,7 @@ export default function Game3D() {
     refreshSiteStance: (siteId: number) => void;
   } | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
+  const [autosave, setAutosave] = useState<Snapshot | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [screen, setScreen] = useState<"home" | "game">("home");
   const screenRef = useRef<"home" | "game">("home");
@@ -716,6 +740,9 @@ export default function Game3D() {
   const playerTeamRef = useRef<Team>("pku");
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const pauseOpenRef = useRef(false);
+  const [pauseSettingsOpen, setPauseSettingsOpen] = useState(false);
   const [homePage, setHomePage] = useState<
     "menu" | "new" | "servers" | "settings"
   >(
@@ -726,9 +753,13 @@ export default function Game3D() {
   const [lanInput, setLanInput] = useState("");
   const [lanOutput, setLanOutput] = useState("");
   const [lanStatus, setLanStatus] = useState("未连接");
-  const [discoveredServers, setDiscoveredServers] = useState<string[]>([]);
+  const [lanMode, setLanMode] = useState<"host" | "join">("host");
+  const [lanTeam, setLanTeam] = useState<Team>("pku");
+  const lanTeamRef = useRef<Team>("pku");
+  const [connectedPlayers, setConnectedPlayers] = useState(0);
   const lanPeerRef = useRef<RTCPeerConnection | null>(null);
-  const lanChannelRef = useRef<RTCDataChannel | null>(null);
+  const lanPeersRef = useRef(new Set<RTCPeerConnection>());
+  const lanChannelsRef = useRef(new Set<RTCDataChannel>());
   const lanHostRef = useRef(false);
   const [saveName, setSaveName] = useState("解放清华园");
   const [autoDay, setAutoDay] = useState(true);
@@ -798,7 +829,10 @@ export default function Game3D() {
   const selectedSite =
     selected == null ? null : gameRef.current.sites[selected];
   const refreshSaves = useCallback(
-    () => setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt)),
+    () => {
+      setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt));
+      setAutosave(readAutosave());
+    },
     [],
   );
   useEffect(() => refreshSaves(), [refreshSaves]);
@@ -812,8 +846,14 @@ export default function Game3D() {
     screenRef.current = screen;
   }, [screen]);
   useEffect(() => {
+    pauseOpenRef.current = pauseOpen;
+  }, [pauseOpen]);
+  useEffect(() => {
     playerTeamRef.current = playerTeam;
   }, [playerTeam]);
+  useEffect(() => {
+    lanTeamRef.current = lanTeam;
+  }, [lanTeam]);
   useEffect(() => {
     regionRef.current = region;
   }, [region]);
@@ -831,27 +871,6 @@ export default function Game3D() {
       site = localStorage.getItem("qingbei-custom-site-material");
     if (unit) setUnitMaterialUrl(unit);
     if (site) setSiteMaterialUrl(site);
-  }, []);
-  useEffect(() => {
-    if (!("BroadcastChannel" in window)) return;
-    const discovery = new BroadcastChannel("qingbei-lan-discovery"),
-      roomId = crypto.randomUUID().slice(0, 8);
-    discovery.onmessage = (event) => {
-      if (event.data?.type !== "host" || event.data.roomId === roomId) return;
-      setDiscoveredServers((current) =>
-        current.includes(event.data.roomId)
-          ? current
-          : [...current, event.data.roomId].slice(-8),
-      );
-    };
-    const timer = window.setInterval(() => {
-      if (lanHostRef.current) discovery.postMessage({ type: "host", roomId });
-      else discovery.postMessage({ type: "scan" });
-    }, 1500);
-    return () => {
-      clearInterval(timer);
-      discovery.close();
-    };
   }, []);
   useEffect(() => {
     customMaterialsRef.current = {
@@ -4285,12 +4304,19 @@ export default function Game3D() {
             : `附近没有可选中的${playerTeamRef.current === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}学生`,
       );
     });
-    const fireEvent = (id: keyof typeof EVENT_CARDS, apply?: () => void) => {
+    const fireEvent = (
+      id: string,
+      apply?: () => void,
+      cardOverride?: CampaignEventCardSpec,
+    ) => {
         const campaign = gameRef.current.campaign;
         if (campaign.firedEvents.includes(id)) return false;
+        const card =
+          cardOverride ?? EVENT_CARDS[id as keyof typeof EVENT_CARDS];
+        if (!card) return false;
         campaign.firedEvents.push(id);
         apply?.();
-        pushEvent({ id, ...EVENT_CARDS[id] });
+        pushEvent({ id, ...card });
         return true;
       },
       addTimedStatus = (
@@ -4379,26 +4405,61 @@ export default function Game3D() {
         gameRef.current.units
           .filter((unit) => unit.team === team)
           .reduce((sum, unit) => sum + unit.strength, 0),
-      localFriendlyPopulation = (site: SiteState, radius = 4.2) =>
+      boundProductionPopulation = (site: SiteState) =>
         gameRef.current.units
           .filter(
             (unit) =>
               unit.team === site.team &&
-              Math.hypot(
-                unit.x - (site.navX ?? site.x),
-                unit.z - (site.navZ ?? site.z),
-              ) < radius,
+              unit.siteId === site.id &&
+              unit.targetSiteId == null,
           )
           .reduce((sum, unit) => sum + unit.strength, 0),
+      productionSitePopulationCap = (site: SiteState) => {
+        const initialCount = Math.max(
+            1,
+            gameRef.current.campaign.initialProductionSites[site.team],
+          ),
+          teamProductionSites = gameRef.current.sites
+            .filter(
+              (candidate) =>
+                candidate.team === site.team &&
+                !candidate.destroyed &&
+                (candidate.type === "dorm" || candidate.type === "dining"),
+            )
+            .sort((a, b) => a.id - b.id),
+          rank = Math.max(
+            0,
+            teamProductionSites.findIndex((candidate) => candidate.id === site.id),
+          ),
+          base = Math.floor(
+            INITIAL_PRODUCTION_POPULATION_BUDGET / initialCount,
+          ),
+          remainder = INITIAL_PRODUCTION_POPULATION_BUDGET % initialCount;
+        return base + (rank < remainder ? 1 : 0);
+      },
+      teamUnitCap = (team: Team) => {
+        const campaign = gameRef.current.campaign,
+          initialSites = Math.max(
+            1,
+            team === "pku" ? campaign.initialPkuSites : campaign.initialThuSites,
+          ),
+          currentSites = gameRef.current.sites.filter(
+            (site) => site.team === team && !site.destroyed,
+          ).length;
+        return Math.max(
+          100,
+          Math.floor((BASE_TEAM_UNIT_CAP * currentSites) / initialSites),
+        );
+      },
       hasProductionCapacity = (
         site: SiteState,
         knownTeamPopulation = teamPopulation(site.team),
       ) =>
-        knownTeamPopulation < TEAM_UNIT_CAP &&
-        localFriendlyPopulation(site) < LOCAL_PRODUCTION_CAP,
+        knownTeamPopulation < teamUnitCap(site.team) &&
+        boundProductionPopulation(site) < productionSitePopulationCap(site),
       productionGrowthPerHour = (team: Team) => {
         const population = teamPopulation(team);
-        if (population > TEAM_UNIT_CAP - 5) return 0;
+        if (population > teamUnitCap(team) - 5) return 0;
         const dorms = gameRef.current.sites.filter(
             (site) =>
               site.team === team && site.type === "dorm" && !site.destroyed,
@@ -4451,7 +4512,7 @@ export default function Game3D() {
       };
     let combatPulse = 0;
     const combatTimer = window.setInterval(() => {
-      if (screenRef.current === "home") return;
+      if (screenRef.current === "home" || pauseOpenRef.current) return;
       const g = gameRef.current,
         now = performance.now(),
         used = new Set<number>(),
@@ -4835,7 +4896,7 @@ export default function Game3D() {
       }
     }, 120);
     const campaignTimer = window.setInterval(() => {
-      if (screenRef.current === "home") return;
+      if (screenRef.current === "home" || pauseOpenRef.current) return;
       const g = gameRef.current,
         campaign = g.campaign,
         qz = g.sites.find(
@@ -5226,7 +5287,7 @@ export default function Game3D() {
             activeDorms = Math.min(
               productionSlots(allDorms.length, 0.35),
               dorms.length,
-              Math.max(0, Math.floor((TEAM_UNIT_CAP - population) / 5)),
+              Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
             );
           for (let i = 0; i < activeDorms; i++) {
             const site = dorms[(productionCycle + i * 3) % dorms.length];
@@ -5267,7 +5328,7 @@ export default function Game3D() {
             activeDining = Math.min(
               productionSlots(allDiningSites.length, 0.4),
               diningSites.length,
-              Math.max(0, Math.floor((TEAM_UNIT_CAP - population) / 5)),
+              Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
             );
           for (let i = 0; i < activeDining; i++) {
             const site =
@@ -5300,6 +5361,12 @@ export default function Game3D() {
               (unit) => (unit.supply = Math.min(100, unit.supply + 1.2)),
             );
         });
+      runCampaignEventHooks<GameData>({
+        game: g,
+        elapsedHours: campaign.elapsedHours,
+        hasFired: (id) => campaign.firedEvents.includes(id),
+        trigger: (id, card, apply) => fireEvent(id, apply, card),
+      });
       if (campaign.outcome) {
         const pkuAlive = g.sites.some(
             (site) => site.team === "pku" && !site.destroyed,
@@ -5316,7 +5383,7 @@ export default function Game3D() {
       }
     }, 1000);
     const aiTimer = window.setInterval(() => {
-      if (screenRef.current === "home") return;
+      if (screenRef.current === "home" || pauseOpenRef.current) return;
       const g = gameRef.current;
       if (!g.campaign.warUnlocked) return;
       const aiTeam: Team = playerTeamRef.current === "pku" ? "thu" : "pku",
@@ -5510,6 +5577,10 @@ export default function Game3D() {
       const g = gameRef.current;
       if (screenRef.current === "home") {
         controls.update();
+        renderer.render(scene, camera);
+        return;
+      }
+      if (pauseOpenRef.current) {
         renderer.render(scene, camera);
         return;
       }
@@ -6111,34 +6182,69 @@ export default function Game3D() {
     };
   }, [screen]);
 
-  const saveGame = () => {
-    const name =
-        saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
-      data = structuredClone(gameRef.current);
+  const snapshotCurrentGame = (name: string): Snapshot => {
+    const data = structuredClone(gameRef.current);
     data.units.forEach((unit) => {
       unit.path = undefined;
       unit.pathIndex = undefined;
     });
     data.sites.forEach((site) => (site.orderPath = undefined));
-    const snapshot: Snapshot = {
-        version: 3,
-        name,
-        savedAt: Date.now(),
-        ...data,
-      },
+    return {
+      version: 3,
+      name,
+      savedAt: Date.now(),
+      ...data,
+    };
+  };
+  const saveUnfinishedGame = () => {
+    if (screenRef.current !== "game") return;
+    try {
+      const snapshot = snapshotCurrentGame("未完成战局");
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // The manual save flow reports storage errors; autosave fails silently.
+    }
+  };
+  const clearUnfinishedGame = () => {
+    localStorage.removeItem(AUTOSAVE_KEY);
+    setAutosave(null);
+  };
+  const saveGame = () => {
+    const name =
+        saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
+      snapshot = snapshotCurrentGame(name),
       next = [snapshot, ...readSaves().filter((s) => s.name !== name)].slice(
         0,
         6,
       );
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+      clearUnfinishedGame();
       refreshSaves();
       setNotice(`已保存“${name}”`);
+      return true;
     } catch {
       setNotice("存档空间不足，请删除旧存档或恢复默认材质后重试");
+      return false;
     }
   };
+  useEffect(() => {
+    if (screen !== "game") return;
+    const timer = window.setInterval(saveUnfinishedGame, 5000),
+      onVisibility = () => {
+        if (document.visibilityState === "hidden") saveUnfinishedGame();
+      },
+      onBeforeUnload = () => saveUnfinishedGame();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [screen, saveName]);
   const loadGame = (save: Snapshot, team: Team = playerTeam) => {
+    clearUnfinishedGame();
     setPlayerTeam(team);
     playerTeamRef.current = team;
     if (save.version === 3 && save.campaign) {
@@ -6173,6 +6279,21 @@ export default function Game3D() {
           initialThuSites:
             campaign.initialThuSites ??
             sites.filter((site) => site.team === "thu").length,
+          initialPkuSites:
+            campaign.initialPkuSites ??
+            sites.filter((site) => site.team === "pku").length,
+          initialProductionSites: campaign.initialProductionSites ?? {
+            pku: sites.filter(
+              (site) =>
+                site.team === "pku" &&
+                (site.type === "dorm" || site.type === "dining"),
+            ).length,
+            thu: sites.filter(
+              (site) =>
+                site.team === "thu" &&
+                (site.type === "dorm" || site.type === "dining"),
+            ).length,
+          },
         };
       sites.forEach((site) => {
         site.displayName ??= site.name;
@@ -6271,6 +6392,7 @@ export default function Game3D() {
     setSaveOpen(false);
     setActiveEvents([]);
     setVictoryBroadcast(null);
+    setPauseOpen(false);
     setScreen("game");
   };
   const deleteSave = (savedAt: number) => {
@@ -6279,6 +6401,7 @@ export default function Game3D() {
     setSaves(next);
   };
   const newGame = (team: Team = playerTeam) => {
+    clearUnfinishedGame();
     setPlayerTeam(team);
     playerTeamRef.current = team;
     gameRef.current = makeFreshGame();
@@ -6287,6 +6410,7 @@ export default function Game3D() {
     setSelected(null);
     setActiveEvents([]);
     setVictoryBroadcast(null);
+    setPauseOpen(false);
     setScreen("game");
   };
   const stanceText = useMemo(
@@ -6378,16 +6502,35 @@ export default function Game3D() {
       peer.addEventListener("icegatheringstatechange", listener);
     });
   const bindLanChannel = (channel: RTCDataChannel, host: boolean) => {
-    lanChannelRef.current = channel;
+    lanChannelsRef.current.add(channel);
     lanHostRef.current = host;
-    channel.onopen = () =>
-      setLanStatus(host ? "已开放局域网战局" : "已连接主机");
-    channel.onclose = () => setLanStatus("连接已关闭");
+    const refreshConnectionCount = () =>
+      setConnectedPlayers(
+        [...lanChannelsRef.current].filter(
+          (candidate) => candidate.readyState === "open",
+        ).length,
+      );
+    channel.onopen = () => {
+      if (!host) {
+        setPlayerTeam(lanTeamRef.current);
+        playerTeamRef.current = lanTeamRef.current;
+      }
+      refreshConnectionCount();
+      setLanStatus(host ? "玩家已加入，可继续生成邀请" : "已加入战局");
+    };
+    channel.onclose = () => {
+      lanChannelsRef.current.delete(channel);
+      refreshConnectionCount();
+      setLanStatus(
+        lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭",
+      );
+    };
     channel.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as {
           game: GameData;
           hostTeam: Team;
+          playerTeam?: Team;
           role: "host" | "guest";
         };
         if (
@@ -6396,9 +6539,8 @@ export default function Game3D() {
         ) {
           gameRef.current = payload.game;
           if (!host) {
-            const guestTeam: Team = payload.hostTeam === "pku" ? "thu" : "pku";
-            setPlayerTeam(guestTeam);
-            playerTeamRef.current = guestTeam;
+            setPlayerTeam(lanTeamRef.current);
+            playerTeamRef.current = lanTeamRef.current;
           }
           sceneApi.current?.sync();
           setScreen("game");
@@ -6409,27 +6551,27 @@ export default function Game3D() {
     };
   };
   const createLanHost = async () => {
-    lanPeerRef.current?.close();
     const peer = new RTCPeerConnection({ iceServers: [] }),
       channel = peer.createDataChannel("qingbei-campaign");
     lanPeerRef.current = peer;
+    lanPeersRef.current.add(peer);
     bindLanChannel(channel, true);
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
     setLanOutput(JSON.stringify(peer.localDescription));
-    setLanStatus("已生成主机码，发送给同一局域网玩家");
+    setLanStatus("邀请已生成：复制下方代码给一名玩家");
   };
   const joinLanHost = async () => {
     try {
-      lanPeerRef.current?.close();
       const peer = new RTCPeerConnection({ iceServers: [] });
       lanPeerRef.current = peer;
+      lanPeersRef.current.add(peer);
       peer.ondatachannel = (event) => bindLanChannel(event.channel, false);
       await peer.setRemoteDescription(JSON.parse(lanInput));
       await peer.setLocalDescription(await peer.createAnswer());
       await waitForIce(peer);
       setLanOutput(JSON.stringify(peer.localDescription));
-      setLanStatus("已生成回应码，请发回主机确认");
+      setLanStatus("回应已生成：复制下方代码发回主机");
     } catch {
       setLanStatus("加入码无效");
     }
@@ -6437,22 +6579,24 @@ export default function Game3D() {
   const acceptLanAnswer = async () => {
     try {
       await lanPeerRef.current?.setRemoteDescription(JSON.parse(lanInput));
-      setLanStatus("正在建立连接");
+      setLanStatus("正在接纳玩家；成功后可继续生成下一份邀请");
     } catch {
       setLanStatus("回应码无效");
     }
   };
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const channel = lanChannelRef.current;
-      if (channel?.readyState === "open")
+      lanChannelsRef.current.forEach((channel) => {
+        if (channel.readyState !== "open") return;
         channel.send(
           JSON.stringify({
             game: gameRef.current,
             hostTeam: playerTeamRef.current,
+            playerTeam: lanTeamRef.current,
             role: lanHostRef.current ? "host" : "guest",
           }),
         );
+      });
     }, 700);
     return () => clearInterval(timer);
   }, []);
@@ -6484,11 +6628,9 @@ export default function Game3D() {
               aria-label="返回主页面"
               title="返回主页面"
               onClick={() => {
-                refreshSaves();
-                setMoreOpen(false);
-                setSettingsOpen(false);
-                setHomePage("menu");
-                setScreen("home");
+                saveUnfinishedGame();
+                setPauseSettingsOpen(false);
+                setPauseOpen(true);
               }}
             >
               ‹
@@ -6616,6 +6758,71 @@ export default function Game3D() {
               </label>
             </aside>
           )}
+          {pauseOpen && (
+            <div className="pause-backdrop">
+              <section className="pause-card" aria-label="游戏菜单">
+                <h2>游戏菜单</h2>
+                {pauseSettingsOpen ? (
+                  <div className="pause-settings">
+                    <label>
+                      <span>显示据点</span>
+                      <input
+                        type="checkbox"
+                        checked={showSites}
+                        onChange={(event) => setShowSites(event.target.checked)}
+                      />
+                    </label>
+                    <label>
+                      <span>显示控制范围</span>
+                      <input
+                        type="checkbox"
+                        checked={showControl}
+                        onChange={(event) => setShowControl(event.target.checked)}
+                      />
+                    </label>
+                    <label>
+                      <span>时间倍率</span>
+                      <input
+                        type="number"
+                        min="0.5"
+                        step="0.1"
+                        value={timeScale}
+                        onChange={(event) =>
+                          setTimeScale(
+                            Math.max(0.5, Number(event.target.value) || 0.5),
+                          )
+                        }
+                      />
+                    </label>
+                    <button onClick={() => setPauseSettingsOpen(false)}>
+                      完成
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        if (!saveGame()) return;
+                        refreshSaves();
+                        setMoreOpen(false);
+                        setSettingsOpen(false);
+                        setPauseOpen(false);
+                        setHomePage("menu");
+                        setScreen("home");
+                      }}
+                    >
+                      保存并退出
+                    </button>
+                    <button onClick={() => setPauseSettingsOpen(true)}>
+                      设置
+                    </button>
+                    <button onClick={() => setPauseOpen(false)}>取消</button>
+                  </>
+                )}
+                <small>未手动保存时，系统仍会保留“未完成战局”。</small>
+              </section>
+            </div>
+          )}
         </>
       )}
       {screen === "home" && (
@@ -6677,36 +6884,82 @@ export default function Game3D() {
             )}
             {homePage === "servers" && (
               <div className="lan-panel home-server-page">
-                <h2>服务器</h2>
-                <strong>局域网服务器</strong>
-                <small>{lanStatus}</small>
-                <div className="discovered-servers">
-                  {discoveredServers.length ? (
-                    discoveredServers.map((room) => (
-                      <span key={room}>已发现房间 {room}</span>
-                    ))
-                  ) : (
-                    <span>正在自动搜索局域网房间…</span>
-                  )}
-                </div>
-                <div>
-                  <button onClick={() => void createLanHost()}>
-                    添加 / 开放服务器
+                <h2>多人联机</h2>
+                <div className="lan-mode-switch">
+                  <button
+                    className={lanMode === "host" ? "active" : ""}
+                    onClick={() => {
+                      setLanMode("host");
+                      setLanInput("");
+                      setLanOutput("");
+                    }}
+                  >
+                    创建房间
                   </button>
-                  <button onClick={() => void joinLanHost()}>加入服务器</button>
-                  <button onClick={() => void acceptLanAnswer()}>
-                    主机确认回应码
+                  <button
+                    className={lanMode === "join" ? "active" : ""}
+                    onClick={() => {
+                      setLanMode("join");
+                      setLanInput("");
+                      setLanOutput("");
+                    }}
+                  >
+                    加入房间
                   </button>
                 </div>
-                <textarea
-                  value={lanInput}
-                  onChange={(event) => setLanInput(event.target.value)}
-                  placeholder="粘贴主机码或回应码"
-                />
-                <textarea readOnly value={lanOutput} placeholder="本机联机码" />
-                <small>
-                  自动搜索浏览器可发现的同源房间；跨设备使用连接码。
-                </small>
+                <p className="lan-status">
+                  {lanStatus} · 已连接 {connectedPlayers} 名玩家
+                </p>
+                {lanMode === "host" ? (
+                  <>
+                    <button onClick={() => void createLanHost()}>
+                      1. 生成一份玩家邀请
+                    </button>
+                    <textarea
+                      readOnly
+                      value={lanOutput}
+                      placeholder="邀请代码会显示在这里，复制给玩家"
+                    />
+                    <textarea
+                      value={lanInput}
+                      onChange={(event) => setLanInput(event.target.value)}
+                      placeholder="2. 粘贴玩家发回的回应代码"
+                    />
+                    <button onClick={() => void acceptLanAnswer()}>
+                      3. 接纳这名玩家
+                    </button>
+                    <small>需要更多玩家时，再生成一份新邀请即可。</small>
+                  </>
+                ) : (
+                  <>
+                    <label className="lan-team-select">
+                      <span>控制阵营</span>
+                      <select
+                        value={lanTeam}
+                        onChange={(event) =>
+                          setLanTeam(event.target.value as Team)
+                        }
+                      >
+                        <option value="pku">北京大学</option>
+                        <option value="thu">清华大学</option>
+                      </select>
+                    </label>
+                    <textarea
+                      value={lanInput}
+                      onChange={(event) => setLanInput(event.target.value)}
+                      placeholder="1. 粘贴主机发来的邀请代码"
+                    />
+                    <button onClick={() => void joinLanHost()}>
+                      2. 生成回应代码
+                    </button>
+                    <textarea
+                      readOnly
+                      value={lanOutput}
+                      placeholder="3. 将这里的回应代码发回主机"
+                    />
+                    <small>多名玩家可以选择同一个阵营并共同控制。</small>
+                  </>
+                )}
               </div>
             )}
             {homePage === "new" && (
@@ -6759,7 +7012,24 @@ export default function Game3D() {
               className={`home-save-list ${homePage !== "new" ? "home-page-hidden" : ""}`}
             >
               <h2>选择存档</h2>
-              {!saves.length && <p>暂无存档，可直接开始新游戏。</p>}
+              {autosave && (
+                <article className="unfinished-save">
+                  <div>
+                    <strong>未完成战局</strong>
+                    <span>
+                      {new Date(autosave.savedAt).toLocaleString("zh-CN")} ·{" "}
+                      {autosave.units.length}人 · 自动保存
+                    </span>
+                  </div>
+                  <button onClick={() => loadGame(autosave, newGameTeam)}>
+                    继续
+                  </button>
+                  <button onClick={clearUnfinishedGame}>放弃</button>
+                </article>
+              )}
+              {!autosave && !saves.length && (
+                <p>暂无存档，可直接开始新游戏。</p>
+              )}
               {saves.map((save) => (
                 <article key={save.savedAt}>
                   <div>

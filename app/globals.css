@@ -85,6 +85,69 @@ input {
   letter-spacing: 0.5px;
   pointer-events: none;
 }
+.pause-backdrop {
+  position: fixed;
+  z-index: 150;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #0009;
+  backdrop-filter: blur(3px);
+}
+.pause-card {
+  display: grid;
+  gap: 9px;
+  width: min(430px, 92vw);
+  padding: 22px;
+  border: 2px solid #111;
+  background: #161616ee;
+  box-shadow: inset 0 0 0 2px #3f3f3f, 0 28px 90px #000d;
+  text-align: center;
+}
+.pause-card h2 {
+  margin: 0 0 16px;
+  color: #fff;
+  text-shadow: 3px 3px 0 #111;
+}
+.pause-card button,
+.pause-card input {
+  min-height: 42px;
+  border: 2px solid #111;
+  border-radius: 0;
+  background: linear-gradient(#777, #575757);
+  color: #fff;
+  box-shadow: inset 2px 2px 0 #aaa, inset -2px -2px 0 #363636;
+  text-shadow: 2px 2px 0 #222;
+}
+.pause-card button:hover,
+.pause-card button:focus-visible {
+  border-color: #fff;
+  background: linear-gradient(#7386a7, #526484);
+}
+.pause-card small {
+  margin-top: 8px;
+  color: #bbb;
+}
+.pause-settings {
+  display: grid;
+  gap: 9px;
+}
+.pause-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #eee;
+}
+.pause-settings input[type="number"] {
+  width: 100px;
+  padding: 6px;
+}
+.unfinished-save {
+  border-left: 4px solid #f0ca63 !important;
+  background: #42391fcc;
+}
 .battle-nav .direct-entry {
   width: 52px;
   font-size: 11px;
@@ -285,6 +348,32 @@ input {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.lan-mode-switch {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+}
+.lan-mode-switch button.active {
+  border-color: #fff;
+  background: linear-gradient(#7386a7, #526484);
+}
+.lan-status {
+  margin: 0;
+  padding: 8px;
+  background: #090909cc;
+  color: #d9e1da;
+  text-align: center;
+}
+.lan-team-select {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: #eee;
+}
+.lan-team-select select {
+  min-height: 38px;
+  padding: 6px 9px;
 }
 .discovered-servers {
   display: grid !important;
