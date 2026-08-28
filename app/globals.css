@@ -85,6 +85,27 @@ input {
   letter-spacing: 0.5px;
   pointer-events: none;
 }
+.performance-hud {
+  position: absolute;
+  z-index: 83;
+  top: 55px;
+  right: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 3px 10px;
+  padding: 7px 10px;
+  border: 1px solid #72edff66;
+  border-radius: 8px;
+  background: #071311df;
+  color: #dffcff;
+  box-shadow: 0 8px 24px #0007;
+  font: 700 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  pointer-events: none;
+}
+.performance-hud strong {
+  color: #ffe49b;
+  font-weight: 800;
+}
 .pause-backdrop {
   position: fixed;
   z-index: 150;

@@ -25,6 +25,11 @@ import {
   TACTICAL_EVENTS,
   type TacticalEventDefinition,
 } from "../src/tactical-events";
+import {
+  PerformanceController,
+  type PerformanceMetrics,
+  type QualityMode,
+} from "../src/performance-controller";
 
 type Team = "pku" | "thu";
 type Stance = "defend" | "guard" | "standby";
@@ -150,8 +155,20 @@ type DecisionVote = {
   deadline: number;
   votes: Record<string, boolean>;
 };
+type UnitNetworkState = Omit<UnitState, "path" | "pathIndex">;
 type MultiplayerEnvelope =
   | { type: "state"; game: GameData; role: "host" | "guest" }
+  | {
+      type: "state_delta";
+      revision: number;
+      role: "host" | "guest";
+      units: UnitNetworkState[];
+      removedUnitIds: number[];
+      timeOfDay: number;
+      elapsedHours: number;
+      resources: Record<Team, number>;
+      deaths: Record<Team, number>;
+    }
   | { type: "hello"; identity: PlayerIdentity }
   | { type: "chat_send"; channel: ChatChannel; text: string }
   | { type: "chat_message"; message: ChatMessage }
@@ -193,7 +210,7 @@ type GameData = {
   campaign: CampaignState;
 };
 type Snapshot = GameData & {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   name: string;
   savedAt: number;
 };
@@ -203,6 +220,49 @@ type EventCard = CampaignEventCardSpec & {
 
 const SAVE_KEY = "qingbei-webgl-saves-v1";
 const AUTOSAVE_KEY = "qingbei-webgl-unfinished-v1";
+const SAVE_DATABASE_NAME = "qingbei-campaign-saves";
+const SAVE_DATABASE_VERSION = 1;
+const SAVE_STORE_NAME = "snapshots";
+const openSaveDatabase = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(SAVE_DATABASE_NAME, SAVE_DATABASE_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(SAVE_STORE_NAME))
+        request.result.createObjectStore(SAVE_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+const readIndexedSnapshot = async (key: string) => {
+  try {
+    const database = await openSaveDatabase(),
+      transaction = database.transaction(SAVE_STORE_NAME, "readonly"),
+      request = transaction.objectStore(SAVE_STORE_NAME).get(key),
+      value = await new Promise<Snapshot | null>((resolve, reject) => {
+        request.onsuccess = () => resolve((request.result as Snapshot) ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    database.close();
+    return value;
+  } catch {
+    return null;
+  }
+};
+const deleteIndexedSnapshot = async (key: string) => {
+  try {
+    const database = await openSaveDatabase(),
+      transaction = database.transaction(SAVE_STORE_NAME, "readwrite");
+    transaction.objectStore(SAVE_STORE_NAME).delete(key);
+    await new Promise<void>((resolve) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => resolve();
+      transaction.onabort = () => resolve();
+    });
+    database.close();
+  } catch {
+    // localStorage cleanup still prevents a stale save from being offered.
+  }
+};
 const TEAM_COLOR: Record<Team, number> = { pku: 0xa20d27, thu: 0x6f3291 };
 const productionSlots = (siteCount: number, ratio: number) =>
   siteCount > 0 ? Math.max(1, Math.ceil(siteCount * ratio)) : 0;
@@ -863,6 +923,10 @@ function readAutosave(): Snapshot | null {
 
 export default function Game3D() {
   const hostRef = useRef<HTMLDivElement>(null);
+  const performanceControllerRef = useRef(new PerformanceController());
+  const autosaveTaskRef = useRef<number | null>(null);
+  const saveWorkerRef = useRef<Worker | null>(null);
+  const saveWorkerRequestRef = useRef(0);
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const siteMenuRef = useRef<HTMLElement>(null);
   const gameRef = useRef<GameData>(makeFreshGame());
@@ -909,6 +973,12 @@ export default function Game3D() {
   const lanChannelsRef = useRef(new Set<RTCDataChannel>());
   const lanChannelIdentityRef = useRef(new Map<RTCDataChannel, PlayerIdentity>());
   const lanHostRef = useRef(false);
+  const networkRevisionRef = useRef(0);
+  const networkLastFullAtRef = useRef(0);
+  const networkUnitSignaturesRef = useRef(new Map<number, string>());
+  const networkReceivedRevisionRef = useRef(
+    new WeakMap<RTCDataChannel, number>(),
+  );
   const [playerNickname, setPlayerNickname] = useState(() =>
     sessionStorage.getItem("qingbei-player-name") ||
     `玩家${Math.floor(100 + Math.random() * 900)}`,
@@ -965,6 +1035,12 @@ export default function Game3D() {
     top: number;
   } | null>(null);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("standard");
+  const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
+    (localStorage.getItem("qingbei-quality-mode") as QualityMode) || "auto",
+  );
+  const [showPerformance, setShowPerformance] = useState(false);
+  const [performanceMetrics, setPerformanceMetrics] =
+    useState<PerformanceMetrics>(performanceControllerRef.current.metrics);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
   const [siteMaterialUrl, setSiteMaterialUrl] = useState<string | null>(null);
   const customMaterialsRef = useRef<{
@@ -1045,7 +1121,15 @@ export default function Game3D() {
   const refreshSaves = useCallback(
     () => {
       setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt));
-      setAutosave(readAutosave());
+      const legacyAutosave = readAutosave();
+      setAutosave(legacyAutosave);
+      void readIndexedSnapshot(AUTOSAVE_KEY).then((indexedAutosave) => {
+        if (
+          indexedAutosave &&
+          (!legacyAutosave || indexedAutosave.savedAt >= legacyAutosave.savedAt)
+        )
+          setAutosave(indexedAutosave);
+      });
     },
     [],
   );
@@ -1084,6 +1168,34 @@ export default function Game3D() {
   useEffect(() => {
     decisionVoteRef.current = decisionVote;
   }, [decisionVote]);
+  useEffect(() => {
+    const controller = performanceControllerRef.current;
+    controller.setMode(qualityMode);
+    localStorage.setItem("qingbei-quality-mode", qualityMode);
+    return controller.subscribe(setPerformanceMetrics);
+  }, [qualityMode]);
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(new URL("../src/save-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    saveWorkerRef.current = worker;
+    worker.onmessage = (
+      event: MessageEvent<{
+        requestId: number;
+        ok: boolean;
+        durationMs: number;
+      }>,
+    ) => {
+      if (!event.data.ok) return;
+      localStorage.removeItem(AUTOSAVE_KEY);
+      if (screenRef.current === "home") refreshSaves();
+    };
+    return () => {
+      worker.terminate();
+      saveWorkerRef.current = null;
+    };
+  }, [refreshSaves]);
   useEffect(() => {
     if (!decisionOpen) return;
     const close = (event: KeyboardEvent) => {
@@ -1129,8 +1241,13 @@ export default function Game3D() {
       antialias: true,
       powerPreference: "high-performance",
     });
-    const maximumPixelRatio = Math.min(devicePixelRatio, 1.4);
-    let renderPixelRatio = maximumPixelRatio;
+    const performanceController = performanceControllerRef.current,
+      maximumPixelRatio = Math.min(devicePixelRatio, 1.4);
+    let activeQualityProfile = performanceController.profile,
+      renderPixelRatio = Math.min(
+        maximumPixelRatio,
+        activeQualityProfile.pixelRatio,
+      );
     renderer.setPixelRatio(renderPixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
     renderer.shadowMap.enabled = true;
@@ -1167,13 +1284,30 @@ export default function Game3D() {
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     controls.touches.ONE = THREE.TOUCH.PAN;
     controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
-    const hideSitePanel = () => setSelected(null);
-    controls.addEventListener("start", hideSitePanel);
+    let cameraInteractionEndTimer = 0;
+    const hideSitePanel = () => setSelected(null),
+      beginCameraInteraction = () => {
+        hideSitePanel();
+        clearTimeout(cameraInteractionEndTimer);
+        performanceController.beginCameraInteraction();
+      },
+      endCameraInteraction = () => {
+        clearTimeout(cameraInteractionEndTimer);
+        cameraInteractionEndTimer = window.setTimeout(
+          () => performanceController.endCameraInteraction(),
+          300,
+        );
+      };
+    controls.addEventListener("start", beginCameraInteraction);
+    controls.addEventListener("end", endCameraInteraction);
     const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x324226, 1.9);
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d0, 3.4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(
+      activeQualityProfile.shadowSize,
+      activeQualityProfile.shadowSize,
+    );
     sun.shadow.camera.left = -65;
     sun.shadow.camera.right = 65;
     sun.shadow.camera.top = 55;
@@ -1187,7 +1321,9 @@ export default function Game3D() {
     const mapGroup = new THREE.Group();
     scene.add(mapGroup);
     const regions = osmRegions as unknown as Record<string, any>;
-    const windowMaterials: THREE.MeshStandardMaterial[] = [];
+    const windowMaterials: THREE.MeshStandardMaterial[] = [],
+      windowDetailMeshes: THREE.InstancedMesh[] = [],
+      roofDetailMeshes: THREE.InstancedMesh[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main;
     const footprintArea = (points: readonly (readonly number[])[]) =>
@@ -1345,6 +1481,21 @@ export default function Game3D() {
         mainComponent,
       };
     };
+    let pathfindingSpentMs = 0,
+      pathfindingSamples = 0;
+    const pathCache = new Map<string, [number, number][]>(),
+      PATH_CACHE_LIMIT = 384,
+      clonePath = (path: readonly [number, number][]) =>
+        path.map(([x, z]) => [x, z] as [number, number]),
+      rememberPath = (key: string, path: [number, number][]) => {
+        pathCache.delete(key);
+        pathCache.set(key, clonePath(path));
+        while (pathCache.size > PATH_CACHE_LIMIT) {
+          const oldest = pathCache.keys().next().value;
+          if (oldest === undefined) break;
+          pathCache.delete(oldest);
+        }
+      };
     const navGrid = buildNavGrid(regions.main),
       navIndex = (grid: NavGrid, x: number, z: number) => {
         const gx = Math.floor((x - grid.minX) / grid.cell),
@@ -1427,12 +1578,30 @@ export default function Game3D() {
         toX: number,
         toZ: number,
         allowBuildingFallback = false,
-      ) => {
+      ): [number, number][] => {
+        const pathfindingStartedAt = performance.now();
         const grid = navGrid,
           start = nearestOpenIndex(grid, fromX, fromZ),
           goal = nearestOpenIndex(grid, toX, toZ);
-        if (start < 0 || goal < 0) return [];
-        if (start === goal) return [navPoint(grid, goal)];
+        if (start < 0 || goal < 0) {
+          pathfindingSpentMs += performance.now() - pathfindingStartedAt;
+          pathfindingSamples++;
+          return [];
+        }
+        const cacheKey = `${start}:${goal}:${allowBuildingFallback ? 1 : 0}`,
+          cached = pathCache.get(cacheKey);
+        if (cached) {
+          pathCache.delete(cacheKey);
+          pathCache.set(cacheKey, cached);
+          return clonePath(cached);
+        }
+        if (start === goal) {
+          const sameCellPath = [navPoint(grid, goal)];
+          rememberPath(cacheKey, sameCellPath);
+          pathfindingSpentMs += performance.now() - pathfindingStartedAt;
+          pathfindingSamples++;
+          return clonePath(sameCellPath);
+        }
         const total = grid.cols * grid.rows,
           cost = new Float32Array(total),
           came = new Int32Array(total),
@@ -1527,10 +1696,15 @@ export default function Game3D() {
             push({ index: next, score: nextCost + heuristic });
           }
         }
-        if (came[goal] < 0)
-          return allowBuildingFallback
+        if (came[goal] < 0) {
+          const fallbackPath: [number, number][] = allowBuildingFallback
             ? []
             : findPath(fromX, fromZ, toX, toZ, true);
+          rememberPath(cacheKey, fallbackPath);
+          pathfindingSpentMs += performance.now() - pathfindingStartedAt;
+          pathfindingSamples++;
+          return clonePath(fallbackPath);
+        }
         const reversed: [number, number][] = [];
         let cursor = goal;
         while (cursor !== start && cursor >= 0) {
@@ -1547,7 +1721,10 @@ export default function Game3D() {
             0.05
         )
           simplified.push(goalPoint);
-        return simplified;
+        rememberPath(cacheKey, simplified);
+        pathfindingSpentMs += performance.now() - pathfindingStartedAt;
+        pathfindingSamples++;
+        return clonePath(simplified);
       };
     const collisionAreas = [
       ...gameplayBuildings(regions.main).map((area: any) => ({
@@ -1585,6 +1762,32 @@ export default function Game3D() {
           else collisionIndex.set(key, [area]);
         }
     });
+    const dynamicUnitCell = 3,
+      dynamicUnitIndex = new Map<string, UnitState[]>(),
+      dynamicUnitKey = (x: number, z: number) =>
+        `${Math.floor(x / dynamicUnitCell)}/${Math.floor(z / dynamicUnitCell)}`,
+      refreshDynamicUnitIndex = () => {
+        dynamicUnitIndex.clear();
+        for (const unit of gameRef.current.units) {
+          const key = dynamicUnitKey(unit.x, unit.z),
+            bucket = dynamicUnitIndex.get(key);
+          if (bucket) bucket.push(unit);
+          else dynamicUnitIndex.set(key, [unit]);
+        }
+      },
+      unitsNearPoint = (x: number, z: number, radius: number) => {
+        const minX = Math.floor((x - radius) / dynamicUnitCell),
+          maxX = Math.floor((x + radius) / dynamicUnitCell),
+          minZ = Math.floor((z - radius) / dynamicUnitCell),
+          maxZ = Math.floor((z + radius) / dynamicUnitCell),
+          result: UnitState[] = [];
+        for (let gridX = minX; gridX <= maxX; gridX++)
+          for (let gridZ = minZ; gridZ <= maxZ; gridZ++)
+            for (const unit of dynamicUnitIndex.get(`${gridX}/${gridZ}`) ?? [])
+              if (Math.hypot(unit.x - x, unit.z - z) <= radius)
+                result.push(unit);
+        return result;
+      };
     const obstaclesAt = (x: number, z: number) =>
         (
           collisionIndex.get(
@@ -1606,16 +1809,25 @@ export default function Game3D() {
       enemyInsideBuilding = (
         building: (typeof collisionAreas)[number],
         team: Team,
-      ) =>
-        gameRef.current.units.some(
+      ) => {
+        const centerX = (building.minX + building.maxX) / 2,
+          centerZ = (building.minZ + building.maxZ) / 2,
+          radius =
+            Math.hypot(
+              building.maxX - building.minX,
+              building.maxZ - building.minZ,
+            ) / 2;
+        return unitsNearPoint(centerX, centerZ, radius).some(
           (unit) =>
             unit.team !== team &&
+            unit.hp > 0 &&
             unit.x >= building.minX &&
             unit.x <= building.maxX &&
             unit.z >= building.minZ &&
             unit.z <= building.maxZ &&
             pointInPolygon(unit.x, unit.z, building.points),
-        ),
+        );
+      },
       pointWalkable = (x: number, z: number, team?: Team) => {
         const index = navIndex(navGrid, x, z);
         if (index < 0) return false;
@@ -1675,14 +1887,15 @@ export default function Game3D() {
           unit.path = undefined;
           unit.pathIndex = undefined;
           if (target && !target.destroyed) {
-            unit.path = findPath(
+            const safePath = findPath(
               safeX,
               safeZ,
               target.navX ?? target.x,
               target.navZ ?? target.z,
             );
+            unit.path = safePath;
             unit.pathIndex = 0;
-            const destination = unit.path.at(-1);
+            const destination = safePath.at(-1);
             if (destination) [unit.tx, unit.tz] = destination;
           }
         });
@@ -2357,6 +2570,7 @@ export default function Game3D() {
       windowMatrices.forEach((m, i) => windows.setMatrixAt(i, m));
       windows.instanceMatrix.needsUpdate = true;
       windows.renderOrder = 6;
+      windowDetailMeshes.push(windows);
       mapGroup.add(windows);
       const doors = new THREE.InstancedMesh(
         new THREE.PlaneGeometry(1, 1),
@@ -2387,6 +2601,7 @@ export default function Game3D() {
       roofFixtures.instanceMatrix.needsUpdate = true;
       roofFixtures.castShadow = true;
       roofFixtures.receiveShadow = true;
+      roofDetailMeshes.push(roofFixtures);
       mapGroup.add(roofFixtures);
       const waterMat = new THREE.MeshStandardMaterial({
         color: 0x478ca5,
@@ -2419,8 +2634,13 @@ export default function Game3D() {
       apron.receiveShadow = true;
       mapGroup.add(apron);
     }
-    const buildingGroup = new THREE.Group();
+    const buildingGroup = new THREE.Group(),
+      siteHitProxies: THREE.Mesh[] = [],
+      siteHitGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
+      siteHitMaterial = new THREE.MeshBasicMaterial({ visible: false });
     scene.add(buildingGroup);
+    const siteNodeBatchGroup = new THREE.Group();
+    scene.add(siteNodeBatchGroup);
     const unitGroup = new THREE.Group();
     scene.add(unitGroup);
     const commandGroup = new THREE.Group();
@@ -2780,7 +3000,7 @@ export default function Game3D() {
         line = makeLine(curve, color, 2.2, 0.48, 32);
       group.add(line);
       const movers: THREE.Sprite[] = [];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 2; i++) {
         const mover = makeArrowSprite(0xffffff, 0.23);
         mover.renderOrder = 36;
         group.add(mover);
@@ -2947,6 +3167,7 @@ export default function Game3D() {
       t.colorSpace = THREE.SRGBColorSpace;
       return t;
     };
+    const nearbyPopulationCache = new Map<number, number>();
     const stanceTextureCache = new Map<string, THREE.CanvasTexture>(),
       stanceIconTexture = (stance: Stance, color: string) => {
         const key = `${stance}/${color}`;
@@ -3059,11 +3280,11 @@ export default function Game3D() {
       };
     const nodeTextureCache = new Map<string, THREE.CanvasTexture>(),
       haloTextureCache = new Map<string, THREE.CanvasTexture>(),
-      siteNodeTexture = (team: Team, stance: Stance) => {
+      siteNodeTexture = (team: Team, stance: Stance, kind: SiteKind) => {
         const thuBlue = gameRef.current.campaign.thuFactionName === "中科大",
           teamStroke =
             team === "pku" ? "#d62b46" : thuBlue ? "#2879bd" : "#9153b9",
-          key = `${team}/${stance}/${teamStroke}`,
+          key = `${team}/${stance}/${kind}/${teamStroke}`,
           cached = nodeTextureCache.get(key);
         if (cached) return cached;
         const canvas = document.createElement("canvas");
@@ -3096,6 +3317,13 @@ export default function Game3D() {
           context.stroke();
           context.globalAlpha = 1;
         };
+        context.drawImage(
+          siteTypeIconTexture(kind).image as CanvasImageSource,
+          58,
+          58,
+          76,
+          76,
+        );
         if (stance === "guard" || stance === "defend") drawShield(0, 8, 0.92);
         if (stance === "defend") drawShield(13, 5, 0.74);
         const texture = new THREE.CanvasTexture(canvas);
@@ -3123,20 +3351,39 @@ export default function Game3D() {
         return texture;
       },
       nearbyFriendlyPeople = (site: SiteState) =>
-        gameRef.current.units
-          .filter(
-            (unit) =>
-              unit.team === site.team &&
-              Math.hypot(
-                unit.x - (site.navX ?? site.x),
-                unit.z - (site.navZ ?? site.z),
-              ) < 3.4,
-          )
-          .reduce((sum, unit) => sum + unit.strength, 0),
-      drawCountBadge = (context: CanvasRenderingContext2D, count: number) => {
-        context.clearRect(0, 0, 256, 72);
+        nearbyPopulationCache.get(site.id) ??
+        gameRef.current.units.reduce(
+          (sum, unit) =>
+            unit.team === site.team &&
+            Math.hypot(
+              unit.x - (site.navX ?? site.x),
+              unit.z - (site.navZ ?? site.z),
+            ) < 3.4
+              ? sum + unit.strength
+              : sum,
+          0,
+        ),
+      drawSiteInfo = (
+        context: CanvasRenderingContext2D,
+        site: SiteState,
+        count: number,
+        labelColor: string,
+      ) => {
+        context.clearRect(0, 0, 512, 256);
+        context.fillStyle = "rgba(21,30,25,.86)";
+        context.roundRect(4, 4, 504, 88, 16);
+        context.fill();
+        context.strokeStyle = labelColor;
+        context.lineWidth = 5;
+        context.stroke();
+        context.fillStyle = "#fff6dc";
+        const title = site.displayName ?? site.name,
+          titleSize = Math.max(21, Math.min(34, 42 - title.length * 0.6));
+        context.font = `700 ${titleSize}px Microsoft YaHei`;
+        context.textAlign = "center";
+        context.fillText(title, 256, 61, 474);
         context.fillStyle = "rgba(9,16,14,.94)";
-        context.roundRect(3, 3, 250, 66, 18);
+        context.roundRect(128, 181, 256, 70, 18);
         context.fill();
         context.strokeStyle = "#f2d478";
         context.lineWidth = 4;
@@ -3144,7 +3391,68 @@ export default function Game3D() {
         context.fillStyle = "#fff4c4";
         context.font = "800 30px Microsoft YaHei";
         context.textAlign = "center";
-        context.fillText(`友军 ${count}人`, 128, 47);
+        context.fillText(`友军 ${count}人`, 256, 228);
+      };
+    const siteNodeGeometry = new THREE.PlaneGeometry(1, 1),
+      siteNodeBatches: {
+        mesh: THREE.InstancedMesh;
+        sites: SiteState[];
+      }[] = [],
+      siteNodeDummy = new THREE.Object3D(),
+      updateSiteNodeBatches = (markerScale = 1) => {
+        for (const batch of siteNodeBatches) {
+          batch.sites.forEach((site, index) => {
+            siteNodeDummy.position.set(
+              site.x,
+              terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
+              site.z,
+            );
+            siteNodeDummy.quaternion.copy(camera.quaternion);
+            siteNodeDummy.scale.setScalar(1.15 * markerScale);
+            siteNodeDummy.updateMatrix();
+            batch.mesh.setMatrixAt(index, siteNodeDummy.matrix);
+          });
+          batch.mesh.instanceMatrix.needsUpdate = true;
+        }
+      },
+      rebuildSiteNodeBatches = () => {
+        siteNodeBatchGroup.children.slice().forEach((child) => {
+          siteNodeBatchGroup.remove(child);
+          const mesh = child as THREE.InstancedMesh;
+          const material = mesh.material as THREE.Material;
+          material.dispose();
+        });
+        siteNodeBatches.length = 0;
+        const buckets = new Map<string, SiteState[]>();
+        for (const site of gameRef.current.sites) {
+          if (site.destroyed) continue;
+          const key = `${site.team}/${site.stance}/${site.type}`,
+            bucket = buckets.get(key);
+          if (bucket) bucket.push(site);
+          else buckets.set(key, [site]);
+        }
+        for (const sites of buckets.values()) {
+          const first = sites[0],
+            material = new THREE.MeshBasicMaterial({
+              map: siteNodeTexture(first.team, first.stance, first.type),
+              transparent: true,
+              depthTest: false,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            }),
+            mesh = new THREE.InstancedMesh(
+              siteNodeGeometry,
+              material,
+              sites.length,
+            );
+          mesh.count = sites.length;
+          mesh.frustumCulled = false;
+          mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+          mesh.renderOrder = 22;
+          siteNodeBatchGroup.add(mesh);
+          siteNodeBatches.push({ mesh, sites });
+        }
+        updateSiteNodeBatches();
       };
     const rebuildTerritory = () => {
       territoryGroup.children.slice().forEach((child) => {
@@ -3248,6 +3556,7 @@ export default function Game3D() {
         disposeCommandObject(child, false);
       });
       siteObjects.clear();
+      siteHitProxies.length = 0;
       gameRef.current.sites
         .filter((site) => !site.destroyed)
         .forEach((site) => {
@@ -3290,15 +3599,7 @@ export default function Game3D() {
             portalRing.renderOrder = 27;
             g.add(portalLine, portalRing);
           }
-          const nodeSprite = new THREE.Sprite(
-              new THREE.SpriteMaterial({
-                map: siteNodeTexture(site.team, site.stance),
-                transparent: true,
-                depthTest: false,
-                depthWrite: false,
-              }),
-            ),
-            routeHighlight = new THREE.Sprite(
+          const routeHighlight = new THREE.Sprite(
               new THREE.SpriteMaterial({
                 map: haloTexture("#ffe16d"),
                 transparent: true,
@@ -3314,9 +3615,6 @@ export default function Game3D() {
                 depthWrite: false,
               }),
             );
-          nodeSprite.scale.set(1.15, 1.15, 1);
-          nodeSprite.position.y = 1.75;
-          nodeSprite.renderOrder = 22;
           routeHighlight.scale.set(1.5, 1.5, 1);
           routeHighlight.position.y = 1.75;
           routeHighlight.visible = selectedRef.current === site.id;
@@ -3325,33 +3623,40 @@ export default function Game3D() {
           hoverHighlight.position.y = 1.75;
           hoverHighlight.visible = false;
           hoverHighlight.renderOrder = 24;
-          const countCanvas = document.createElement("canvas");
-          countCanvas.width = 256;
-          countCanvas.height = 72;
-          const countContext = countCanvas.getContext("2d")!,
+          const labelColor =
+              site.team === "pku"
+                ? "#df3b50"
+                : gameRef.current.campaign.thuFactionName === "中科大"
+                  ? "#3a8fd2"
+                  : "#a569d0",
+            infoCanvas = document.createElement("canvas");
+          infoCanvas.width = 512;
+          infoCanvas.height = 256;
+          const infoContext = infoCanvas.getContext("2d")!,
             initialCount = nearbyFriendlyPeople(site);
-          drawCountBadge(countContext, initialCount);
-          const countTexture = new THREE.CanvasTexture(countCanvas),
-            countSprite = new THREE.Sprite(
+          drawSiteInfo(infoContext, site, initialCount, labelColor);
+          const infoTexture = new THREE.CanvasTexture(infoCanvas),
+            infoSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
-                map: countTexture,
+                map: infoTexture,
                 transparent: true,
                 depthTest: false,
                 depthWrite: false,
               }),
             );
-          countTexture.colorSpace = THREE.SRGBColorSpace;
-          countSprite.scale.set(1.65, 0.46, 1);
-          countSprite.position.y = 0.92;
-          countSprite.renderOrder = 22;
-          g.add(routeHighlight, hoverHighlight, nodeSprite, countSprite);
+          infoTexture.colorSpace = THREE.SRGBColorSpace;
+          const labelScaleX = isTarget ? 4.6 : 3.7;
+          infoSprite.scale.set(labelScaleX, 2.6, 1);
+          infoSprite.position.y = 1.8;
+          infoSprite.renderOrder = 22;
+          g.add(routeHighlight, hoverHighlight, infoSprite);
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
-          g.userData.nodeSprite = nodeSprite;
           g.userData.countBadge = {
-            context: countContext,
-            texture: countTexture,
+            context: infoContext,
+            texture: infoTexture,
             last: initialCount,
+            labelColor,
           };
           let materialBadge: THREE.Sprite | null = null;
           if (customSiteTexture) {
@@ -3384,38 +3689,6 @@ export default function Game3D() {
             beacon.userData.targetBeacon = true;
             g.add(beacon);
           }
-          const labelColor =
-              site.team === "pku"
-                ? "#df3b50"
-                : gameRef.current.campaign.thuFactionName === "中科大"
-                  ? "#3a8fd2"
-                  : "#a569d0",
-            sprite = new THREE.Sprite(
-              new THREE.SpriteMaterial({
-                map: labelTexture(site.displayName ?? site.name, labelColor),
-                transparent: true,
-                depthTest: false,
-              }),
-            );
-          const labelScaleX = isTarget ? 4.6 : 3.7,
-            labelScaleY = isTarget ? 0.82 : 0.68,
-            labelY = 2.75 + (site.id % 3) * 0.42;
-          sprite.scale.set(labelScaleX, labelScaleY, 1);
-          sprite.position.y = labelY;
-          sprite.renderOrder = 20;
-          g.add(sprite);
-          const typeSprite = new THREE.Sprite(
-            new THREE.SpriteMaterial({
-              map: siteTypeIconTexture(site.type),
-              transparent: true,
-              depthTest: false,
-              depthWrite: false,
-            }),
-          );
-          typeSprite.scale.set(0.44, 0.44, 1);
-          typeSprite.position.set(0, 1.75, 0);
-          typeSprite.renderOrder = 26;
-          g.add(typeSprite);
           g.userData.fixedMarkerIcons = [
             {
               object: routeHighlight,
@@ -3432,32 +3705,11 @@ export default function Game3D() {
               scaleY: 1.78,
             },
             {
-              object: nodeSprite,
+              object: infoSprite,
               x: 0,
-              y: 1.75,
-              scaleX: 1.15,
-              scaleY: 1.15,
-            },
-            {
-              object: typeSprite,
-              x: 0,
-              y: 1.75,
-              scaleX: 0.44,
-              scaleY: 0.44,
-            },
-            {
-              object: countSprite,
-              x: 0,
-              y: 0.92,
-              scaleX: 1.65,
-              scaleY: 0.46,
-            },
-            {
-              object: sprite,
-              x: 0,
-              y: labelY,
+              y: 1.8,
               scaleX: labelScaleX,
-              scaleY: labelScaleY,
+              scaleY: 2.6,
             },
             ...(materialBadge
               ? [
@@ -3472,32 +3724,31 @@ export default function Game3D() {
               : []),
           ];
           const hit = new THREE.Mesh(
-            new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
-            new THREE.MeshBasicMaterial({
-              transparent: true,
-              opacity: 0,
-              depthWrite: false,
-            }),
+            siteHitGeometry,
+            siteHitMaterial,
           );
-          hit.position.y = 1.75;
+          hit.position.set(
+            site.x,
+            terrainHeight(region, site.x, site.z) + 1.75,
+            site.z,
+          );
           hit.userData.siteHitProxy = true;
-          g.add(hit);
+          hit.userData.siteId = site.id;
+          hit.updateMatrixWorld(true);
+          siteHitProxies.push(hit);
           g.traverse((o) => {
             o.userData.siteId = site.id;
           });
           buildingGroup.add(g);
           siteObjects.set(site.id, g);
         });
+      rebuildSiteNodeBatches();
       rebuildTerritory();
     };
     const refreshSiteStance = (siteId: number) => {
-      const site = gameRef.current.sites[siteId],
-        object = siteObjects.get(siteId),
-        nodeSprite = object?.userData.nodeSprite as THREE.Sprite | undefined;
-      if (!site || !nodeSprite) return;
-      const material = nodeSprite.material as THREE.SpriteMaterial;
-      material.map = siteNodeTexture(site.team, site.stance);
-      material.needsUpdate = true;
+      const site = gameRef.current.sites[siteId];
+      if (!site) return;
+      rebuildSiteNodeBatches();
       if (site.orderTarget != null) rebuildCommandLines();
     };
     const refreshRouteHighlights = () => {
@@ -3596,6 +3847,7 @@ export default function Game3D() {
         }),
       },
       unitBodyGeometry = new THREE.SphereGeometry(0.58, 16, 12),
+      farUnitBodyGeometry = new THREE.SphereGeometry(0.58, 8, 6),
       unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
       unitHandGeometry = new THREE.SphereGeometry(0.09, 8, 6),
       unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 18),
@@ -3678,6 +3930,7 @@ export default function Game3D() {
       sharedUnitGeometries = new Set<THREE.BufferGeometry>([
         hpGeometry,
         unitBodyGeometry,
+        farUnitBodyGeometry,
         unitLimbGeometry,
         unitHandGeometry,
         unitGlowGeometry,
@@ -3698,6 +3951,43 @@ export default function Game3D() {
         routeDotMaterials.pku,
         routeDotMaterials.thu,
       ]);
+    const useLegacyUnitRenderer =
+        new URLSearchParams(location.search).get("renderer") === "legacy",
+      unitInstanceCapacity = 3200,
+      farUnitMeshes = {
+        pku: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.pku,
+          unitInstanceCapacity,
+        ),
+        thu: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.thu,
+          unitInstanceCapacity,
+        ),
+        ustc: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.ustc,
+          unitInstanceCapacity,
+        ),
+        zju: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.zju,
+          unitInstanceCapacity,
+        ),
+      },
+      farUnitDummy = new THREE.Object3D(),
+      detailedUnitIds = new Set<number>(),
+      unitFightingUntil = new Map<number, number>();
+    if (!useLegacyUnitRenderer)
+      Object.values(farUnitMeshes).forEach((mesh) => {
+        mesh.count = 0;
+        mesh.frustumCulled = false;
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        unitGroup.add(mesh);
+      });
     const disposeUnitObject = (object: THREE.Object3D) => {
       const geometries = new Set<THREE.BufferGeometry>(),
         materials = new Set<THREE.Material>();
@@ -3723,101 +4013,178 @@ export default function Game3D() {
       geometries.forEach((geometry) => geometry.dispose());
       materials.forEach((material) => material.dispose());
     };
-    const rebuildUnits = () => {
-      unitGroup.children.slice().forEach((child) => {
-        unitGroup.remove(child);
-        disposeUnitObject(child);
-      });
-      unitObjects.clear();
-      gameRef.current.units.forEach((u) => {
-        const g = new THREE.Group(),
-          region = regionForX(u.x);
-        const body = new THREE.Mesh(
+    const createDetailedUnitObject = (u: UnitState) => {
+      const g = new THREE.Group(),
+        region = regionForX(u.x),
+        body = new THREE.Mesh(
           unitBodyGeometry,
           u.skin ? unitBodyMaterials[u.skin] : unitBodyMaterials[u.team],
         );
-        body.position.y = 0.98;
-        body.castShadow = false;
-        body.receiveShadow = false;
-        g.add(body);
-        const arms: THREE.Mesh[] = [],
-          legs: THREE.Mesh[] = [],
-          detailParts: THREE.Mesh[] = [];
-        [-1, 1].forEach((s) => {
-          const arm = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
-          arm.position.set(s * 0.54, 0.9, 0);
-          arm.rotation.z = s * 0.95;
-          g.add(arm);
-          arms.push(arm);
-          detailParts.push(arm);
-          const leg = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
-          leg.position.set(s * 0.25, 0.35, 0);
-          leg.rotation.z = s * 0.28;
-          g.add(leg);
-          legs.push(leg);
-          detailParts.push(leg);
-          const hand = new THREE.Mesh(unitHandGeometry, unitLimbMaterial);
-          hand.position.set(s * 0.82, 0.71, 0);
-          g.add(hand);
-          detailParts.push(hand);
+      body.position.y = 0.98;
+      body.castShadow = false;
+      body.receiveShadow = false;
+      g.add(body);
+      const arms: THREE.Mesh[] = [],
+        legs: THREE.Mesh[] = [],
+        detailParts: THREE.Mesh[] = [];
+      [-1, 1].forEach((side) => {
+        const arm = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
+        arm.position.set(side * 0.54, 0.9, 0);
+        arm.rotation.z = side * 0.95;
+        g.add(arm);
+        arms.push(arm);
+        detailParts.push(arm);
+        const leg = new THREE.Mesh(unitLimbGeometry, unitLimbMaterial);
+        leg.position.set(side * 0.25, 0.35, 0);
+        leg.rotation.z = side * 0.28;
+        g.add(leg);
+        legs.push(leg);
+        detailParts.push(leg);
+        const hand = new THREE.Mesh(unitHandGeometry, unitLimbMaterial);
+        hand.position.set(side * 0.82, 0.71, 0);
+        g.add(hand);
+        detailParts.push(hand);
+      });
+      const glow = new THREE.Mesh(unitGlowGeometry, unitGlowMaterials[u.team]);
+      glow.rotation.x = -Math.PI / 2;
+      glow.position.y = 0.05;
+      g.add(glow);
+      const selectionRing = new THREE.Mesh(
+        unitSelectionGeometry,
+        unitSelectionMaterial,
+      );
+      selectionRing.rotation.x = -Math.PI / 2;
+      selectionRing.position.y = 0.075;
+      selectionRing.visible = selectedUnitIds.has(u.id);
+      selectionRing.renderOrder = 45;
+      g.add(selectionRing);
+      const routeMarker = new THREE.Sprite(routeDotMaterials[u.team]);
+      routeMarker.position.y = 1.9;
+      routeMarker.scale.set(1.15, 1.15, 1);
+      routeMarker.visible = false;
+      routeMarker.renderOrder = 90;
+      g.add(routeMarker);
+      const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
+        hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
+      hpBack.scale.set(0.78, 1, 1);
+      hpBack.position.set(0, 1.72, 0.05);
+      hpBack.renderOrder = 42;
+      hpBack.visible = false;
+      hpFill.scale.set(0.74, 0.62, 1);
+      hpFill.position.set(0, 1.72, 0.06);
+      hpFill.renderOrder = 43;
+      hpFill.visible = false;
+      g.add(hpBack, hpFill);
+      g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
+      g.scale.setScalar(UNIT_RENDER_SCALE);
+      g.userData = {
+        unitId: u.id,
+        arms,
+        legs,
+        body,
+        detailParts,
+        detailsVisible: true,
+        glow,
+        hpBack,
+        hpFill,
+        selectionRing,
+        routeMarker,
+        renderTeam: u.team,
+        renderSkin: u.skin ?? u.team,
+      };
+      unitGroup.add(g);
+      unitObjects.set(u.id, g);
+      detailedUnitIds.add(u.id);
+      return g;
+    };
+    const syncDetailedUnits = (force = false) => {
+      if (useLegacyUnitRenderer) {
+        if (!force && unitObjects.size === gameRef.current.units.length) return;
+        unitObjects.forEach((object) => {
+          unitGroup.remove(object);
+          disposeUnitObject(object);
         });
-        const glow = new THREE.Mesh(
-          unitGlowGeometry,
-          unitGlowMaterials[u.team],
+        unitObjects.clear();
+        detailedUnitIds.clear();
+        gameRef.current.units.forEach(createDetailedUnitObject);
+        return;
+      }
+      const cap = activeQualityProfile.detailedUnits,
+        closeView = camera.position.distanceTo(controls.target) < 20,
+        candidates = gameRef.current.units
+          .map((unit) => {
+            const priority =
+                selectedUnitIds.has(unit.id) || unit.id === directLeaderId
+                  ? -1000
+                  : (unitFightingUntil.get(unit.id) ?? 0) > performance.now() ||
+                      unit.retreating
+                    ? -500
+                    : 0,
+              distance = Math.hypot(
+                unit.x - controls.target.x,
+                unit.z - controls.target.z,
+              );
+            return { unit, score: priority + distance };
+          })
+          .sort((a, b) => a.score - b.score),
+        desired = new Set(
+          candidates
+            .filter((item) => item.score < 0 || (closeView && item.score < 18))
+            .slice(0, cap)
+            .map((item) => item.unit.id),
+        ),
+        unitsById = new Map(
+          gameRef.current.units.map((unit) => [unit.id, unit] as const),
         );
-        glow.rotation.x = -Math.PI / 2;
-        glow.position.y = 0.05;
-        g.add(glow);
-        const selectionRing = new THREE.Mesh(
-          unitSelectionGeometry,
-          unitSelectionMaterial,
-        );
-        selectionRing.rotation.x = -Math.PI / 2;
-        selectionRing.position.y = 0.075;
-        selectionRing.visible = selectedUnitIds.has(u.id);
-        selectionRing.renderOrder = 45;
-        g.add(selectionRing);
-        const routeMarker = new THREE.Sprite(routeDotMaterials[u.team]);
-        routeMarker.position.y = 1.9;
-        routeMarker.scale.set(1.15, 1.15, 1);
-        routeMarker.visible = false;
-        routeMarker.renderOrder = 90;
-        g.add(routeMarker);
-        const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
-          hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
-        hpBack.scale.set(0.78, 1, 1);
-        hpBack.position.set(0, 1.72, 0.05);
-        hpBack.renderOrder = 42;
-        hpBack.visible = false;
-        hpFill.scale.set(0.74, 0.62, 1);
-        hpFill.position.set(0, 1.72, 0.06);
-        hpFill.renderOrder = 43;
-        hpFill.visible = false;
-        g.add(hpBack, hpFill);
-        const initialDetailsVisible =
-          camera.position.distanceTo(controls.target) < 20;
-        detailParts.forEach((part) => (part.visible = initialDetailsVisible));
-        g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
-        g.scale.setScalar(UNIT_RENDER_SCALE);
-        g.userData = {
-          unitId: u.id,
-          arms,
-          legs,
-          body,
-          detailParts,
-          detailsVisible: initialDetailsVisible,
-          glow,
-          hpBack,
-          hpFill,
-          selectionRing,
-          routeMarker,
-          fightingUntil: 0,
-        };
-        unitGroup.add(g);
-        unitObjects.set(u.id, g);
+      unitObjects.forEach((object, id) => {
+        const unit = unitsById.get(id),
+          appearanceChanged =
+            !!unit &&
+            (object.userData.renderTeam !== unit.team ||
+              object.userData.renderSkin !== (unit.skin ?? unit.team));
+        if (desired.has(id) && unit && !appearanceChanged) return;
+        unitGroup.remove(object);
+        disposeUnitObject(object);
+        unitObjects.delete(id);
+        detailedUnitIds.delete(id);
+      });
+      desired.forEach((id) => {
+        if (unitObjects.has(id)) return;
+        const unit = unitsById.get(id);
+        if (unit) createDetailedUnitObject(unit);
       });
     };
+    const updateFarUnitInstances = () => {
+      if (useLegacyUnitRenderer) return;
+      const counts = { pku: 0, thu: 0, ustc: 0, zju: 0 };
+      for (const unit of gameRef.current.units) {
+        if (detailedUnitIds.has(unit.id)) continue;
+        const key = (unit.skin ?? unit.team) as keyof typeof farUnitMeshes,
+          index = counts[key]++;
+        if (index >= unitInstanceCapacity) continue;
+        farUnitDummy.position.set(
+          unit.x,
+          terrainHeight(regionForX(unit.x), unit.x, unit.z) +
+            0.98 * UNIT_RENDER_SCALE +
+            (insideWater(unit.x, unit.z) ? 0.1 : 0),
+          unit.z,
+        );
+        farUnitDummy.rotation.set(0, Math.atan2(unit.tx - unit.x, unit.tz - unit.z), 0);
+        farUnitDummy.scale.setScalar(UNIT_RENDER_SCALE);
+        farUnitDummy.updateMatrix();
+        farUnitMeshes[key].setMatrixAt(index, farUnitDummy.matrix);
+      }
+      (Object.keys(farUnitMeshes) as (keyof typeof farUnitMeshes)[]).forEach(
+        (key) => {
+          const mesh = farUnitMeshes[key];
+          mesh.count = Math.min(counts[key], unitInstanceCapacity);
+          mesh.instanceMatrix.needsUpdate = true;
+        },
+      );
+    };
+    const rebuildUnits = () => syncDetailedUnits(true);
     const refreshUnitSelection = () => {
+      syncDetailedUnits();
       unitObjects.forEach((object, id) => {
         const ring = object.userData.selectionRing as THREE.Mesh | undefined;
         if (ring) ring.visible = selectedUnitIds.has(id);
@@ -3883,7 +4250,8 @@ export default function Game3D() {
       cg = new THREE.SphereGeometry(0.52, 10, 8),
       cms = [0x315d36, 0x467648, 0x5b8a4e].map(
         (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92 }),
-      );
+      ),
+      treePositions: { x: number; y: number; z: number }[] = [];
     for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
       for (let i = 0; i < count; i++) {
         const x = r.offsetX - r.width / 2 + rnd() * r.width,
@@ -3899,22 +4267,32 @@ export default function Game3D() {
           )
         )
           continue;
-        const g = new THREE.Group(),
-          tr = new THREE.Mesh(tg, tm);
-        tr.position.y = 0.43;
-        tr.castShadow = true;
-        g.add(tr);
-        cms.forEach((m, j) => {
-          const cr = new THREE.Mesh(cg, m);
-          cr.scale.set(1.1 - j * 0.18, 0.65, 1.1 - j * 0.18);
-          cr.position.y = 0.92 + j * 0.32;
-          cr.castShadow = true;
-          g.add(cr);
-        });
-        g.position.set(x, terrainHeight(r, x, z), z);
-        treeGroup.add(g);
+        treePositions.push({ x, y: terrainHeight(r, x, z), z });
       }
     }
+    const treeTrunks = new THREE.InstancedMesh(tg, tm, treePositions.length),
+      treeCrowns = cms.map(
+        (material) =>
+          new THREE.InstancedMesh(cg, material, treePositions.length),
+      ),
+      treeDummy = new THREE.Object3D();
+    treePositions.forEach((position, index) => {
+      treeDummy.position.set(position.x, position.y + 0.43, position.z);
+      treeDummy.scale.set(1, 1, 1);
+      treeDummy.updateMatrix();
+      treeTrunks.setMatrixAt(index, treeDummy.matrix);
+      treeCrowns.forEach((mesh, layer) => {
+        treeDummy.position.y = position.y + 0.92 + layer * 0.32;
+        treeDummy.scale.set(1.1 - layer * 0.18, 0.65, 1.1 - layer * 0.18);
+        treeDummy.updateMatrix();
+        mesh.setMatrixAt(index, treeDummy.matrix);
+      });
+    });
+    treeTrunks.instanceMatrix.needsUpdate = true;
+    treeCrowns.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
+    treeTrunks.castShadow = true;
+    treeCrowns.forEach((mesh) => (mesh.castShadow = true));
+    treeGroup.add(treeTrunks, ...treeCrowns);
     const lampPositions: { x: number; z: number; r: any }[] = [],
       lampSeen = new Set<string>();
     for (const r of [regions.main]) {
@@ -4079,7 +4457,7 @@ export default function Game3D() {
       if (screenHit != null) return screenHit;
       setRay(ev);
       const hit = ray
-        .intersectObjects(buildingGroup.children, true)
+        .intersectObjects(siteHitProxies, false)
         .find((item) => item.object.userData.siteHitProxy);
       if (hit) return hit.object.userData.siteId as number;
       return undefined;
@@ -4982,36 +5360,26 @@ export default function Game3D() {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       const g = gameRef.current,
         now = performance.now(),
+        combatTimeScale = THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),
         used = new Set<number>(),
         dead = new Set<number>();
       let ordersChanged = false;
       combatPulse++;
-      const cellSize = 1.5,
-        grid = new Map<string, UnitState[]>(),
-        cellKey = (x: number, z: number) =>
-          `${Math.floor(x / cellSize)}/${Math.floor(z / cellSize)}`;
-      g.units.forEach((unit) => {
-        const key = cellKey(unit.x, unit.z),
-          bucket = grid.get(key);
-        if (bucket) bucket.push(unit);
-        else grid.set(key, [unit]);
-      });
-      const aliveByTeam = {
-        pku: g.units.filter((candidate) => candidate.team === "pku").length,
-        thu: g.units.filter((candidate) => candidate.team === "thu").length,
+      refreshDynamicUnitIndex();
+      const aliveByTeam = { pku: 0, thu: 0 };
+      for (const unit of g.units) aliveByTeam[unit.team]++;
+      const activeSitesByTeam: Record<Team, SiteState[]> = {
+        pku: [],
+        thu: [],
       };
+      for (const site of g.sites)
+        if (!site.destroyed) activeSitesByTeam[site.team].push(site);
       for (const unit of g.units) {
         if (!g.campaign.warUnlocked) break;
         if (used.has(unit.id) || unit.hp <= 0) continue;
         let enemy: UnitState | undefined,
           best = 1.35;
-        const gx = Math.floor(unit.x / cellSize),
-          gz = Math.floor(unit.z / cellSize),
-          nearby: UnitState[] = [];
-        for (let ox = -1; ox <= 1; ox++)
-          for (let oz = -1; oz <= 1; oz++)
-            nearby.push(...(grid.get(`${gx + ox}/${gz + oz}`) ?? []));
-        for (const candidate of nearby) {
+        for (const candidate of unitsNearPoint(unit.x, unit.z, 1.35)) {
           if (
             candidate.team === unit.team ||
             candidate.hp <= 0 ||
@@ -5030,10 +5398,8 @@ export default function Game3D() {
         if (!enemy) continue;
         used.add(unit.id);
         used.add(enemy.id);
-        const unitMesh = unitObjects.get(unit.id),
-          enemyMesh = unitObjects.get(enemy.id);
-        if (unitMesh) unitMesh.userData.fightingUntil = now + 260;
-        if (enemyMesh) enemyMesh.userData.fightingUntil = now + 260;
+        unitFightingUntil.set(unit.id, now + 260);
+        unitFightingUntil.set(enemy.id, now + 260);
         const defenseStats = (fighter: UnitState) => {
             const home = g.sites[fighter.siteId];
             if (
@@ -5098,26 +5464,39 @@ export default function Game3D() {
             morningPenalty *
             enemyDefense.attack;
         const unitDamage =
-            ((1.25 + enemy.supply * 0.007) * enemyPower * unitDefense.taken) /
-            ((unitDecision.defense ?? 1) * unitStatus.defense),
+            (((1.25 + enemy.supply * 0.007) * enemyPower * unitDefense.taken) /
+              ((unitDecision.defense ?? 1) * unitStatus.defense)) *
+            combatTimeScale,
           enemyDamage =
-            ((1.25 + unit.supply * 0.007) * unitPower * enemyDefense.taken) /
-            ((enemyDecision.defense ?? 1) * enemyStatus.defense);
+            (((1.25 + unit.supply * 0.007) * unitPower * enemyDefense.taken) /
+              ((enemyDecision.defense ?? 1) * enemyStatus.defense)) *
+            combatTimeScale;
         unit.hp -= unitDamage;
         enemy.hp -= enemyDamage;
         unit.morale = Math.max(0, (unit.morale ?? 100) - unitDamage * 0.72);
         enemy.morale = Math.max(0, (enemy.morale ?? 100) - enemyDamage * 0.72);
         unit.supply = Math.max(
           0,
-          unit.supply - 0.07 * unitStatus.supplyUse * (unitDecision.supplyUse ?? 1),
+          unit.supply -
+            0.07 *
+              combatTimeScale *
+              unitStatus.supplyUse *
+              (unitDecision.supplyUse ?? 1),
         );
         enemy.supply = Math.max(
           0,
-          enemy.supply - 0.07 * enemyStatus.supplyUse * (enemyDecision.supplyUse ?? 1),
+          enemy.supply -
+            0.07 *
+              combatTimeScale *
+              enemyStatus.supplyUse *
+              (enemyDecision.supplyUse ?? 1),
         );
         if (unit.hp <= 0) dead.add(unit.id);
         if (enemy.hp <= 0) dead.add(enemy.id);
-        if (combatPulse % 3 === 0 && combatEffects.length < 18)
+        if (
+          combatPulse % 3 === 0 &&
+          combatEffects.length < activeQualityProfile.combatParticles
+        )
           spawnCombatEffect((unit.x + enemy.x) / 2, (unit.z + enemy.z) / 2);
         if (combatPulse % 5 === 0)
           addBattleAlert((unit.x + enemy.x) / 2, (unit.z + enemy.z) / 2);
@@ -5135,13 +5514,17 @@ export default function Game3D() {
             (1 - Math.max(0, unit.hp) / 100) * 0.22 +
             casualtyRatio * 0.42;
         if (collapse < 0.62) continue;
-        const fallback = g.sites
-          .filter((site) => site.team === unit.team && !site.destroyed)
-          .sort(
-            (a, b) =>
-              Math.hypot(a.x - unit.x, a.z - unit.z) -
-              Math.hypot(b.x - unit.x, b.z - unit.z),
-          )[0];
+        const fallback = activeSitesByTeam[unit.team].reduce<
+          SiteState | undefined
+        >(
+          (closest, site) =>
+            !closest ||
+            Math.hypot(site.x - unit.x, site.z - unit.z) <
+              Math.hypot(closest.x - unit.x, closest.z - unit.z)
+              ? site
+              : closest,
+          undefined,
+        );
         if (!fallback) continue;
         unit.retreating = true;
         unit.targetSiteId = fallback.id;
@@ -5203,13 +5586,14 @@ export default function Game3D() {
             )[0];
           if (!home) continue;
           unit.siteId = home.id;
-          unit.path = findPath(
+          const homePath = findPath(
             unit.x,
             unit.z,
             home.navX ?? home.x,
             home.navZ ?? home.z,
           );
-          if (!unit.path.length) {
+          unit.path = homePath;
+          if (!homePath.length) {
             unit.path = undefined;
             unit.pathIndex = undefined;
             unit.tx = unit.x;
@@ -5226,6 +5610,7 @@ export default function Game3D() {
         rebuildCommandLines();
       }
       if (dead.size) {
+        let selectionChanged = false;
         for (const unit of g.units) {
           if (!dead.has(unit.id)) continue;
           g.deaths[unit.team] += unit.strength;
@@ -5235,26 +5620,30 @@ export default function Game3D() {
             disposeUnitObject(mesh);
           }
           unitObjects.delete(unit.id);
-          selectedUnitIds.delete(unit.id);
+          detailedUnitIds.delete(unit.id);
+          unitFightingUntil.delete(unit.id);
+          selectionChanged = selectedUnitIds.delete(unit.id) || selectionChanged;
         }
         g.units = g.units.filter((unit) => !dead.has(unit.id));
-        refreshUnitSelection();
-        rebuildCommandLines();
+        if (selectionChanged) refreshUnitSelection();
       }
       for (const site of g.sites) {
         if (!g.campaign.warUnlocked) break;
         if (site.destroyed) continue;
         const siteX = site.navX ?? site.x,
-          siteZ = site.navZ ?? site.z;
-        const attackers = g.units.filter(
+          siteZ = site.navZ ?? site.z,
+          nearbySiteUnits = unitsNearPoint(siteX, siteZ, 1.85);
+        const attackers = nearbySiteUnits.filter(
           (unit) =>
+            unit.hp > 0 &&
             unit.targetSiteId === site.id &&
             unit.team !== site.team &&
             Math.hypot(unit.x - siteX, unit.z - siteZ) < 1.55,
         );
         if (!attackers.length) continue;
-        const defenders = g.units.filter(
+        const defenders = nearbySiteUnits.filter(
           (unit) =>
+            unit.hp > 0 &&
             unit.team === site.team &&
             Math.hypot(unit.x - siteX, unit.z - siteZ) < 1.85,
         );
@@ -5291,13 +5680,14 @@ export default function Game3D() {
               )[0];
             if (fallback) {
               unit.siteId = fallback.id;
-              unit.path = findPath(
+              const fallbackPath = findPath(
                 unit.x,
                 unit.z,
                 fallback.navX ?? fallback.x,
                 fallback.navZ ?? fallback.z,
               );
-              if (unit.path.length) {
+              unit.path = fallbackPath;
+              if (fallbackPath.length) {
                 unit.pathIndex = 0;
                 unit.tx = fallback.navX ?? fallback.x;
                 unit.tz = fallback.navZ ?? fallback.z;
@@ -6335,8 +6725,14 @@ export default function Game3D() {
       performanceWindowAt = last,
       performanceFrameTime = 0,
       performanceFrameCount = 0,
+      simulationSpentMs = 0,
+      simulationSamples = 0,
       lastShadowUpdateAt = 0,
-      nextStuckCheckAt = 0;
+      nextStuckCheckAt = 0,
+      nextLodRefreshAt = 0,
+      nextUnitSimulationAt = 0,
+      lastUnitSimulationAt = last,
+      unitSimulationTick = 0;
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
@@ -6348,22 +6744,47 @@ export default function Game3D() {
       if (rawDelta < 0.2) {
         performanceFrameTime += rawDelta;
         performanceFrameCount++;
+        performanceController.reportFrame(rawDelta * 1000, now);
       }
       if (now - performanceWindowAt > 2000 && performanceFrameCount > 20) {
         const averageFrameTime = performanceFrameTime / performanceFrameCount;
-        let nextPixelRatio = renderPixelRatio;
-        if (averageFrameTime > 1 / 46)
-          nextPixelRatio = Math.max(0.82, renderPixelRatio - 0.12);
-        else if (averageFrameTime < 1 / 58)
-          nextPixelRatio = Math.min(maximumPixelRatio, renderPixelRatio + 0.06);
+        activeQualityProfile = performanceController.profile;
+        const nextPixelRatio = Math.min(
+          maximumPixelRatio,
+          activeQualityProfile.pixelRatio,
+        );
         if (Math.abs(nextPixelRatio - renderPixelRatio) > 0.01) {
           renderPixelRatio = nextPixelRatio;
           renderer.setPixelRatio(renderPixelRatio);
           renderer.setSize(host.clientWidth, host.clientHeight, false);
         }
+        performanceController.update({
+          frameMs: averageFrameTime * 1000,
+          fps: 1 / Math.max(0.001, averageFrameTime),
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          instancedUnits: gameRef.current.units.length,
+          detailedUnits: unitObjects.size,
+          simulationMs:
+            simulationSamples > 0 ? simulationSpentMs / simulationSamples : 0,
+          pathfindingMs:
+            pathfindingSamples > 0
+              ? pathfindingSpentMs / pathfindingSamples
+              : 0,
+        });
+        windowDetailMeshes.forEach(
+          (mesh) => (mesh.visible = activeQualityProfile.windowDetails),
+        );
+        roofDetailMeshes.forEach(
+          (mesh) => (mesh.visible = activeQualityProfile.roofDetails),
+        );
         performanceWindowAt = now;
         performanceFrameTime = 0;
         performanceFrameCount = 0;
+        simulationSpentMs = 0;
+        simulationSamples = 0;
+        pathfindingSpentMs = 0;
+        pathfindingSamples = 0;
       }
       const g = gameRef.current;
       if (screenRef.current === "home") {
@@ -6511,12 +6932,16 @@ export default function Game3D() {
         25,
       );
       sun.intensity = day * 3.4;
-      const shouldCastSunShadow = day > 0.08;
+      const shouldCastSunShadow =
+        day > 0.08 && activeQualityProfile.dynamicLights > 0;
       if (sun.castShadow !== shouldCastSunShadow) {
         sun.castShadow = shouldCastSunShadow;
         renderer.shadowMap.needsUpdate = true;
       }
-      if (shouldCastSunShadow && now - lastShadowUpdateAt > 850) {
+      if (
+        shouldCastSunShadow &&
+        now - lastShadowUpdateAt > activeQualityProfile.shadowIntervalMs
+      ) {
         lastShadowUpdateAt = now;
         renderer.shadowMap.needsUpdate = true;
       }
@@ -6537,7 +6962,11 @@ export default function Game3D() {
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.ustc.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.zju.emissiveIntensity = 0.035 + night * 0.24;
-      lights.forEach((l) => (l.intensity = night * 5.5));
+      lights.forEach(
+        (light, index) =>
+          (light.intensity =
+            index < activeQualityProfile.dynamicLights ? night * 5.5 : 0),
+      );
       renderer.toneMappingExposure = 0.72 + day * 0.38;
       commandAnimations.forEach((animation) => {
         animation.movers.forEach((mover, index) => {
@@ -6560,21 +6989,49 @@ export default function Game3D() {
         effect.sprite.scale.setScalar(1 + progress * 1.3);
         (effect.sprite.material as THREE.SpriteMaterial).opacity = 1 - progress;
       }
+      const simulationTimeScale = THREE.MathUtils.clamp(
+          timeScaleRef.current,
+          0.5,
+          16,
+        ),
+        simulateUnits = now >= nextUnitSimulationAt,
+        simulationDt = simulateUnits
+          ? Math.min(
+              0.85,
+              Math.max(
+                0.005,
+                ((now - lastUnitSimulationAt) / 1000) * simulationTimeScale,
+              ),
+            )
+          : 0,
+        simulationStartedAt = simulateUnits ? performance.now() : 0;
+      if (simulateUnits) {
+        nextUnitSimulationAt = now + 50;
+        lastUnitSimulationAt = now;
+        unitSimulationTick++;
+        refreshDynamicUnitIndex();
+      }
       const separationCell = 0.24,
         separationGrid = new Map<string, UnitState[]>(),
         separationKey = (x: number, z: number) =>
           `${Math.floor(x / separationCell)}/${Math.floor(z / separationCell)}`;
-      g.units.forEach((unit) => {
-        const key = separationKey(unit.x, unit.z),
-          bucket = separationGrid.get(key);
-        if (bucket) bucket.push(unit);
-        else separationGrid.set(key, [unit]);
-      });
+      if (simulateUnits)
+        g.units.forEach((unit) => {
+          const key = separationKey(unit.x, unit.z),
+            bucket = separationGrid.get(key);
+          if (bucket) bucket.push(unit);
+          else separationGrid.set(key, [unit]);
+        });
       const renderUnitDetails =
         directControlActive || camera.position.distanceTo(controls.target) < 20;
+      let lodRefreshed = false;
+      if (now >= nextLodRefreshAt) {
+        nextLodRefreshAt = now + 250;
+        syncDetailedUnits();
+        lodRefreshed = true;
+      }
       g.units.forEach((u) => {
         const mesh = unitObjects.get(u.id);
-        if (!mesh) return;
         const pathPoint =
             u.path && (u.pathIndex ?? 0) < u.path.length
               ? u.path[u.pathIndex ?? 0]
@@ -6584,15 +7041,15 @@ export default function Game3D() {
           dx = destinationX - u.x,
           dz = destinationZ - u.z,
           dist = Math.hypot(dx, dz),
-          fighting = mesh.userData.fightingUntil > now,
+          fighting = (unitFightingUntil.get(u.id) ?? 0) > now,
           phase = now * 0.014 + u.id;
-        if (mesh.userData.detailsVisible !== renderUnitDetails) {
+        if (mesh && mesh.userData.detailsVisible !== renderUnitDetails) {
           (mesh.userData.detailParts as THREE.Mesh[]).forEach(
             (part) => (part.visible = renderUnitDetails),
           );
           mesh.userData.detailsVisible = renderUnitDetails;
         }
-        if (renderUnitDetails) {
+        if (mesh && renderUnitDetails) {
           (mesh.userData.arms as THREE.Mesh[]).forEach(
             (arm, index) =>
               (arm.rotation.x =
@@ -6606,19 +7063,37 @@ export default function Game3D() {
                 Math.sin(phase + index * Math.PI)),
           );
         }
-        mesh.userData.body.position.y =
-          0.98 + (fighting ? Math.abs(Math.sin(phase * 1.7)) * 0.18 : 0);
-        const glow = mesh.userData.glow as THREE.Mesh;
-        glow.visible = fighting || selectedUnitIds.has(u.id) || night > 0.34;
-        glow.scale.setScalar(fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1);
-        const hpRatio = THREE.MathUtils.clamp(u.hp / 100, 0, 1),
-          hpBack = mesh.userData.hpBack as THREE.Mesh,
-          hpFill = mesh.userData.hpFill as THREE.Mesh;
-        hpBack.visible = fighting;
-        hpFill.visible = fighting;
-        hpFill.scale.x = 0.74 * hpRatio;
-        hpFill.position.x = -0.37 * (1 - hpRatio);
-        if (fighting) return;
+        if (mesh) {
+          mesh.userData.body.position.y =
+            0.98 + (fighting ? Math.abs(Math.sin(phase * 1.7)) * 0.18 : 0);
+          const glow = mesh.userData.glow as THREE.Mesh;
+          glow.visible = fighting || selectedUnitIds.has(u.id) || night > 0.34;
+          glow.scale.setScalar(fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1);
+          const hpRatio = THREE.MathUtils.clamp(u.hp / 100, 0, 1),
+            hpBack = mesh.userData.hpBack as THREE.Mesh,
+            hpFill = mesh.userData.hpFill as THREE.Mesh;
+          hpBack.visible = fighting;
+          hpFill.visible = fighting;
+          hpFill.scale.x = 0.74 * hpRatio;
+          hpFill.position.x = -0.37 * (1 - hpRatio);
+        }
+        if (fighting || !simulateUnits) return;
+        const distanceToView = Math.hypot(
+            u.x - controls.target.x,
+            u.z - controls.target.z,
+          ),
+          prioritySimulation =
+            !!mesh ||
+            selectedUnitIds.has(u.id) ||
+            u.id === directLeaderId ||
+            u.retreating,
+          simulationDivisor = prioritySimulation
+            ? 1
+            : distanceToView < 32
+              ? 2
+              : 4;
+        if ((unitSimulationTick + u.id) % simulationDivisor !== 0) return;
+        const unitSimulationDt = simulationDt * simulationDivisor;
         if (pathPoint && dist < 0.24) {
           u.pathIndex = (u.pathIndex ?? 0) + 1;
           return;
@@ -6645,7 +7120,7 @@ export default function Game3D() {
               morningMove *
               unitStatus.movement *
               (unitDecision.movement ?? 1) *
-              dt;
+              unitSimulationDt;
           const forwardX = dx / dist,
             forwardZ = dz / dist,
             gx = Math.floor(u.x / separationCell),
@@ -6708,28 +7183,67 @@ export default function Game3D() {
           }
           u.x = resolvedX;
           u.z = resolvedZ;
-          mesh.position.set(
-            u.x,
-            terrainHeight(regionForX(u.x), u.x, u.z) +
-              (insideWater(u.x, u.z) ? 0.1 : 0),
-            u.z,
-          );
-          mesh.rotation.y = Math.atan2(moveX, moveZ);
+          if (mesh) {
+            mesh.position.set(
+              u.x,
+              terrainHeight(regionForX(u.x), u.x, u.z) +
+                (insideWater(u.x, u.z) ? 0.1 : 0),
+              u.z,
+            );
+            mesh.rotation.y = Math.atan2(moveX, moveZ);
+          }
         }
       });
-      if (now - statAt > 500) {
+      if (simulateUnits || lodRefreshed) updateFarUnitInstances();
+      if (simulateUnits) {
+        simulationSpentMs += performance.now() - simulationStartedAt;
+        simulationSamples++;
+      }
+      if (now - statAt > 1000) {
         statAt = now;
+        let pkuPopulation = 0,
+          thuPopulation = 0,
+          pkuSiteCount = 0,
+          thuSiteCount = 0;
+        const populationCellSize = 4,
+          populationGrid = new Map<string, UnitState[]>(),
+          populationKey = (x: number, z: number) =>
+            `${Math.floor(x / populationCellSize)}/${Math.floor(z / populationCellSize)}`;
+        for (const unit of g.units) {
+          if (unit.team === "pku") pkuPopulation += unit.strength;
+          else thuPopulation += unit.strength;
+          const key = populationKey(unit.x, unit.z),
+            bucket = populationGrid.get(key);
+          if (bucket) bucket.push(unit);
+          else populationGrid.set(key, [unit]);
+        }
+        nearbyPopulationCache.clear();
+        for (const site of g.sites) {
+          if (site.destroyed) continue;
+          if (site.team === "pku") pkuSiteCount++;
+          else thuSiteCount++;
+          const siteX = site.navX ?? site.x,
+            siteZ = site.navZ ?? site.z,
+            gridX = Math.floor(siteX / populationCellSize),
+            gridZ = Math.floor(siteZ / populationCellSize);
+          let nearby = 0;
+          for (let offsetX = -1; offsetX <= 1; offsetX++)
+            for (let offsetZ = -1; offsetZ <= 1; offsetZ++)
+              for (const unit of
+                populationGrid.get(`${gridX + offsetX}/${gridZ + offsetZ}`) ??
+                [])
+                if (
+                  unit.team === site.team &&
+                  Math.hypot(unit.x - siteX, unit.z - siteZ) < 3.4
+                )
+                  nearby += unit.strength;
+          nearbyPopulationCache.set(site.id, nearby);
+        }
         setStats({
-          pku: g.units
-            .filter((u) => u.team === "pku")
-            .reduce((sum, unit) => sum + unit.strength, 0),
-          thu: g.units
-            .filter((u) => u.team === "thu")
-            .reduce((sum, unit) => sum + unit.strength, 0),
-          pkuSites: g.sites.filter((s) => s.team === "pku" && !s.destroyed)
-            .length,
-          thuSites: g.sites.filter((s) => s.team === "thu" && !s.destroyed)
-            .length,
+          pku: pkuPopulation,
+          thu: thuPopulation,
+          pkuSites: pkuSiteCount,
+          thuSites: thuSiteCount,
           pkuGrowth: productionGrowthPerHour("pku"),
           thuGrowth: productionGrowthPerHour("thu"),
         });
@@ -6754,12 +7268,13 @@ export default function Game3D() {
                   context: CanvasRenderingContext2D;
                   texture: THREE.CanvasTexture;
                   last: number;
+                  labelColor: string;
                 }
               | undefined;
           if (!site || !badge) return;
           const count = nearbyFriendlyPeople(site);
           if (count === badge.last) return;
-          drawCountBadge(badge.context, count);
+          drawSiteInfo(badge.context, site, count, badge.labelColor);
           badge.texture.needsUpdate = true;
           badge.last = count;
         });
@@ -6770,6 +7285,7 @@ export default function Game3D() {
         0.45,
         1.9,
       );
+      updateSiteNodeBatches(fixedRingScale);
       siteObjects.forEach((object, id) => {
         const selectionHighlight = object.userData.routeHighlight as
           THREE.Object3D | undefined;
@@ -6871,13 +7387,14 @@ export default function Game3D() {
           if (source.destroyed || source.orderTarget == null) return;
           const target = gameRef.current.sites[source.orderTarget];
           if (!target || target.destroyed) return;
-          source.orderPath = findPath(
+          const orderPath = findPath(
             source.navX ?? source.x,
             source.navZ ?? source.z,
             target.navX ?? target.x,
             target.navZ ?? target.z,
           );
-          if (!source.orderPath.length) {
+          source.orderPath = orderPath;
+          if (!orderPath.length) {
             source.orderPath = undefined;
             source.orderTarget = undefined;
           }
@@ -6886,13 +7403,14 @@ export default function Game3D() {
           if (unit.targetSiteId == null) return;
           const target = gameRef.current.sites[unit.targetSiteId];
           if (!target || target.destroyed) return;
-          unit.path = findPath(
+          const unitPath = findPath(
             unit.x,
             unit.z,
             target.navX ?? target.x,
             target.navZ ?? target.z,
           );
-          if (!unit.path.length) {
+          unit.path = unitPath;
+          if (!unitPath.length) {
             unit.path = undefined;
             unit.targetSiteId = undefined;
             unit.tx = unit.x;
@@ -6919,6 +7437,7 @@ export default function Game3D() {
       },
       setLayers: (sites, control) => {
         buildingGroup.visible = sites;
+        siteNodeBatchGroup.visible = sites;
         territoryGroup.visible = control;
       },
       setPerspective: (team) => {
@@ -6951,7 +7470,9 @@ export default function Game3D() {
       removeEventListener("resize", resize);
       removeEventListener("keydown", onDirectKeyDown);
       removeEventListener("keyup", onDirectKeyUp);
-      controls.removeEventListener("start", hideSitePanel);
+      controls.removeEventListener("start", beginCameraInteraction);
+      controls.removeEventListener("end", endCameraInteraction);
+      clearTimeout(cameraInteractionEndTimer);
       controls.dispose();
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
@@ -6968,6 +7489,8 @@ export default function Game3D() {
           material.dispose();
         });
       });
+      siteHitGeometry.dispose();
+      siteHitMaterial.dispose();
       renderer.renderLists.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
@@ -6978,30 +7501,73 @@ export default function Game3D() {
   }, [screen]);
 
   const snapshotCurrentGame = (name: string): Snapshot => {
-    const data = structuredClone(gameRef.current);
-    data.units.forEach((unit) => {
-      unit.path = undefined;
-      unit.pathIndex = undefined;
-    });
-    data.sites.forEach((site) => (site.orderPath = undefined));
+    const current = gameRef.current,
+      data: GameData = {
+        timeOfDay: current.timeOfDay,
+        resources: { ...current.resources },
+        deaths: { ...current.deaths },
+        sites: current.sites.map((site) => ({
+          ...site,
+          orderPath: undefined,
+        })),
+        units: current.units.map((unit) => ({
+          ...unit,
+          path: undefined,
+          pathIndex: undefined,
+        })),
+        campaign: structuredClone(current.campaign),
+      };
     return {
-      version: 3,
+      version: 4,
       name,
       savedAt: Date.now(),
       ...data,
     };
   };
-  const saveUnfinishedGame = () => {
+  const saveUnfinishedGame = (immediate = false) => {
     if (screenRef.current !== "game") return;
-    try {
-      const snapshot = snapshotCurrentGame("未完成战局");
-      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snapshot));
-    } catch {
-      // The manual save flow reports storage errors; autosave fails silently.
-    }
+    if (autosaveTaskRef.current != null)
+      window.clearTimeout(autosaveTaskRef.current);
+    const persist = () => {
+      autosaveTaskRef.current = null;
+      const startedAt = performance.now();
+      try {
+        const snapshot = snapshotCurrentGame("未完成战局"),
+          worker = saveWorkerRef.current;
+        if (worker)
+          worker.postMessage({
+            type: "put",
+            requestId: ++saveWorkerRequestRef.current,
+            key: AUTOSAVE_KEY,
+            value: snapshot,
+          });
+        else localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snapshot));
+      } catch {
+        // The manual save flow reports storage errors; autosave fails silently.
+      } finally {
+        performanceControllerRef.current.update({
+          saveMs: performance.now() - startedAt,
+        });
+      }
+    };
+    if (immediate) persist();
+    else
+      autosaveTaskRef.current = window.setTimeout(() => {
+        if ("requestIdleCallback" in window)
+          window.requestIdleCallback(persist, { timeout: 2000 });
+        else persist();
+      }, 0);
   };
   const clearUnfinishedGame = () => {
     localStorage.removeItem(AUTOSAVE_KEY);
+    const worker = saveWorkerRef.current;
+    if (worker)
+      worker.postMessage({
+        type: "delete",
+        requestId: ++saveWorkerRequestRef.current,
+        key: AUTOSAVE_KEY,
+      });
+    else void deleteIndexedSnapshot(AUTOSAVE_KEY);
     setAutosave(null);
   };
   const saveGame = () => {
@@ -7025,15 +7591,19 @@ export default function Game3D() {
   };
   useEffect(() => {
     if (screen !== "game") return;
-    const timer = window.setInterval(saveUnfinishedGame, 5000),
+    const timer = window.setInterval(saveUnfinishedGame, 10_000),
       onVisibility = () => {
-        if (document.visibilityState === "hidden") saveUnfinishedGame();
+        if (document.visibilityState === "hidden") saveUnfinishedGame(true);
       },
-      onBeforeUnload = () => saveUnfinishedGame();
+      onBeforeUnload = () => saveUnfinishedGame(true);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       clearInterval(timer);
+      if (autosaveTaskRef.current != null) {
+        window.clearTimeout(autosaveTaskRef.current);
+        autosaveTaskRef.current = null;
+      }
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
@@ -7042,7 +7612,7 @@ export default function Game3D() {
     clearUnfinishedGame();
     setPlayerTeam(team);
     playerTeamRef.current = team;
-    if (save.version === 3 && save.campaign) {
+    if (save.version >= 3 && save.campaign) {
       const { timeOfDay, resources, deaths, sites, units, campaign } =
         structuredClone(save);
       const defaults = makeFreshGame().campaign,
@@ -7067,7 +7637,7 @@ export default function Game3D() {
           eventHistory:
             campaign.eventHistory ??
             (campaign.firedEvents ?? []).flatMap((id) => {
-              const card = EVENT_CARDS[id];
+              const card = EVENT_CARDS[id as keyof typeof EVENT_CARDS];
               return card ? [{ id, ...card, atHour: 0 }] : [];
             }),
           battleAlerts: campaign.battleAlerts ?? [],
@@ -7316,7 +7886,7 @@ export default function Game3D() {
     )
       setChatUnread((current) => ({
         ...current,
-        [message.channel]: current[message.channel] + 1,
+        [message.channel]: current[message.channel as ChatChannel] + 1,
       }));
   };
   const sendToChannel = (channel: RTCDataChannel, envelope: MultiplayerEnvelope) => {
@@ -7480,6 +8050,12 @@ export default function Game3D() {
           host,
         },
       });
+      if (host)
+        sendToChannel(channel, {
+          type: "state",
+          game: snapshotCurrentGame("联机同步"),
+          role: "host",
+        });
       refreshConnectionCount();
       setLanStatus(host ? "玩家已加入，可继续生成邀请" : "已加入战局");
     };
@@ -7577,6 +8153,53 @@ export default function Game3D() {
           return;
         }
         if (
+          payload.type === "state_delta" &&
+          ((host && payload.role === "guest") ||
+            (!host && payload.role === "host"))
+        ) {
+          const lastRevision =
+            networkReceivedRevisionRef.current.get(channel) ?? -1;
+          if (payload.revision <= lastRevision) return;
+          networkReceivedRevisionRef.current.set(channel, payload.revision);
+          const game = gameRef.current,
+            identity = lanChannelIdentityRef.current.get(channel),
+            allowedTeam = host ? identity?.team : undefined,
+            unitsById = new Map(game.units.map((unit) => [unit.id, unit]));
+          for (const delta of payload.units) {
+            if (allowedTeam && delta.team !== allowedTeam) continue;
+            const existing = unitsById.get(delta.id);
+            if (existing) {
+              const targetChanged = existing.targetSiteId !== delta.targetSiteId;
+              Object.assign(existing, delta);
+              if (targetChanged) {
+                existing.path = undefined;
+                existing.pathIndex = undefined;
+              }
+            } else {
+              const created: UnitState = { ...delta };
+              game.units.push(created);
+              unitsById.set(created.id, created);
+            }
+          }
+          if (payload.removedUnitIds.length) {
+            const removed = new Set(
+              payload.removedUnitIds.filter((id) => {
+                const unit = unitsById.get(id);
+                return !!unit && (!allowedTeam || unit.team === allowedTeam);
+              }),
+            );
+            if (removed.size)
+              game.units = game.units.filter((unit) => !removed.has(unit.id));
+          }
+          if (!host) {
+            game.timeOfDay = payload.timeOfDay;
+            game.campaign.elapsedHours = payload.elapsedHours;
+            game.resources = payload.resources;
+            game.deaths = payload.deaths;
+          }
+          return;
+        }
+        if (
           payload.type === "state" &&
           ((host && payload.role === "guest") ||
             (!host && payload.role === "host"))
@@ -7630,17 +8253,71 @@ export default function Game3D() {
   };
   useEffect(() => {
     const timer = window.setInterval(() => {
-      lanChannelsRef.current.forEach((channel) => {
-        if (channel.readyState !== "open") return;
-        channel.send(
-          JSON.stringify({
-            type: "state",
-            game: gameRef.current,
-            role: lanHostRef.current ? "host" : "guest",
-          } satisfies MultiplayerEnvelope),
+      const openChannels = [...lanChannelsRef.current].filter(
+        (channel) => channel.readyState === "open",
+      );
+      if (!openChannels.length) return;
+      const now = performance.now(),
+        role = lanHostRef.current ? "host" : "guest",
+        signatureOf = (unit: UnitState) =>
+          [
+            unit.team,
+            unit.x.toFixed(2),
+            unit.z.toFixed(2),
+            unit.tx.toFixed(2),
+            unit.tz.toFixed(2),
+            unit.hp.toFixed(1),
+            unit.supply.toFixed(1),
+            unit.morale?.toFixed(1) ?? "",
+            unit.siteId,
+            unit.targetSiteId ?? "",
+            unit.retreating ? 1 : 0,
+            unit.skin ?? "",
+          ].join("/");
+      if (now - networkLastFullAtRef.current >= 10_000) {
+        networkLastFullAtRef.current = now;
+        const envelope: MultiplayerEnvelope = {
+          type: "state",
+          game: snapshotCurrentGame("联机同步"),
+          role,
+        };
+        openChannels.forEach((channel) => sendToChannel(channel, envelope));
+        networkUnitSignaturesRef.current = new Map(
+          gameRef.current.units.map((unit) => [unit.id, signatureOf(unit)]),
         );
-      });
-    }, 700);
+        return;
+      }
+      const game = gameRef.current,
+        currentIds = new Set<number>(),
+        units: UnitNetworkState[] = [];
+      for (const unit of game.units) {
+        currentIds.add(unit.id);
+        const signature = signatureOf(unit);
+        if (networkUnitSignaturesRef.current.get(unit.id) === signature)
+          continue;
+        networkUnitSignaturesRef.current.set(unit.id, signature);
+        const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
+        units.push(networkUnit);
+      }
+      const removedUnitIds: number[] = [];
+      for (const id of networkUnitSignaturesRef.current.keys())
+        if (!currentIds.has(id)) {
+          removedUnitIds.push(id);
+          networkUnitSignaturesRef.current.delete(id);
+        }
+      const envelope: MultiplayerEnvelope = {
+        type: "state_delta",
+        revision: ++networkRevisionRef.current,
+        role,
+        units,
+        removedUnitIds,
+        timeOfDay: game.timeOfDay,
+        elapsedHours: game.campaign.elapsedHours,
+        resources: game.resources,
+        deaths: game.deaths,
+      };
+      openChannels.forEach((channel) => sendToChannel(channel, envelope));
+    }, 200);
     return () => clearInterval(timer);
   }, []);
   const updateMobileJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -7825,6 +8502,18 @@ export default function Game3D() {
           <div className="battle-clock" aria-label="当前游戏时间">
             {clock}
           </div>
+          {showPerformance && (
+            <aside className="performance-hud">
+              <strong>{performanceMetrics.fps.toFixed(0)} FPS</strong>
+              <span>{performanceMetrics.frameMs.toFixed(1)} ms</span>
+              <span>{performanceMetrics.drawCalls} draw</span>
+              <span>{performanceMetrics.instancedUnits} 人</span>
+              <span>模拟 {performanceMetrics.simulationMs.toFixed(1)} ms</span>
+              <span>寻路 {performanceMetrics.pathfindingMs.toFixed(1)} ms</span>
+              <span>存档 {performanceMetrics.saveMs.toFixed(1)} ms</span>
+              <small>{performanceMetrics.quality} · DPR {performanceControllerRef.current.profile.pixelRatio}</small>
+            </aside>
+          )}
           {moreOpen && (
             <aside className="battle-drawer more-drawer">
               <header>
@@ -7897,13 +8586,39 @@ export default function Game3D() {
                 <input
                   type="number"
                   min="0.5"
+                  max="16"
                   step="0.1"
                   value={timeScale}
                   onChange={(event) =>
                     setTimeScale(
-                      Math.max(0.5, Number(event.target.value) || 0.5),
+                      Math.min(
+                        16,
+                        Math.max(0.5, Number(event.target.value) || 0.5),
+                      ),
                     )
                   }
+                />
+              </label>
+              <label>
+                <span>画质模式</span>
+                <select
+                  value={qualityMode}
+                  onChange={(event) =>
+                    setQualityMode(event.target.value as QualityMode)
+                  }
+                >
+                  <option value="auto">自动</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                </select>
+              </label>
+              <label>
+                <span>性能信息</span>
+                <input
+                  type="checkbox"
+                  checked={showPerformance}
+                  onChange={(event) => setShowPerformance(event.target.checked)}
                 />
               </label>
             </aside>
@@ -8015,11 +8730,15 @@ export default function Game3D() {
                       <input
                         type="number"
                         min="0.5"
+                        max="16"
                         step="0.1"
                         value={timeScale}
                         onChange={(event) =>
                           setTimeScale(
-                            Math.max(0.5, Number(event.target.value) || 0.5),
+                            Math.min(
+                              16,
+                              Math.max(0.5, Number(event.target.value) || 0.5),
+                            ),
                           )
                         }
                       />
@@ -8535,10 +9254,15 @@ export default function Game3D() {
           value={timeScale}
           onChange={(event) => setTimeScale(Number(event.target.value))}
         >
+          {![0.5, 1, 2, 4, 8, 16].includes(timeScale) && (
+            <option value={timeScale}>{timeScale}×</option>
+          )}
           <option value={0.5}>0.5×</option>
           <option value={1}>1×</option>
           <option value={2}>2×</option>
           <option value={4}>4×</option>
+          <option value={8}>8×</option>
+          <option value={16}>16×</option>
         </select>
       </div>
       <div className="map-attribution">
