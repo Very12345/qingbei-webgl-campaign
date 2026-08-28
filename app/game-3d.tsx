@@ -30,6 +30,7 @@ import {
   type PerformanceMetrics,
   type QualityMode,
 } from "../src/performance-controller";
+import { PathfindingWorkerPool } from "../src/pathfinding-pool";
 
 type Team = "pku" | "thu";
 type Stance = "defend" | "guard" | "standby";
@@ -1726,6 +1727,30 @@ export default function Game3D() {
         pathfindingSamples++;
         return clonePath(simplified);
       };
+    const pathWorkerPool = new PathfindingWorkerPool({
+        cell: navGrid.cell,
+        cols: navGrid.cols,
+        rows: navGrid.rows,
+        minX: navGrid.minX,
+        minZ: navGrid.minZ,
+        building: navGrid.building,
+        water: navGrid.water,
+        road: navGrid.road,
+      }),
+      findPathInWorker = async (
+        fromX: number,
+        fromZ: number,
+        toX: number,
+        toZ: number,
+      ) => {
+        const start = nearestOpenIndex(navGrid, fromX, fromZ),
+          goal = nearestOpenIndex(navGrid, toX, toZ);
+        if (start < 0 || goal < 0) return [] as [number, number][];
+        const strictPath = await pathWorkerPool.find(start, goal, false);
+        return strictPath.length
+          ? strictPath
+          : pathWorkerPool.find(start, goal, true);
+      };
     const collisionAreas = [
       ...gameplayBuildings(regions.main).map((area: any) => ({
         ...area,
@@ -3128,21 +3153,37 @@ export default function Game3D() {
       let deployed = 0;
       moving.forEach((unit) => {
         const offsetX = ((unit.id % 7) - 3) * 0.13,
-          offsetZ = ((Math.floor(unit.id / 7) % 7) - 3) * 0.13,
-          personalPath = findPath(
-            unit.x,
-            unit.z,
-            targetX + offsetX,
-            targetZ + offsetZ,
-          );
-        if (!personalPath.length) return;
-        const destination = personalPath.at(-1)!;
+          offsetZ = ((Math.floor(unit.id / 7) % 7) - 3) * 0.13;
         unit.targetSiteId = target.id;
-        unit.path = personalPath;
+        unit.path = clonePath(sharedPath);
         unit.pathIndex = 0;
-        unit.tx = destination[0];
-        unit.tz = destination[1];
+        unit.tx = targetX + offsetX;
+        unit.tz = targetZ + offsetZ;
         deployed += unit.strength;
+        void findPathInWorker(
+          unit.x,
+          unit.z,
+          targetX + offsetX,
+          targetZ + offsetZ,
+        )
+          .then((personalPath) => {
+            if (
+              !personalPath.length ||
+              unit.targetSiteId !== target.id ||
+              Math.hypot(unit.tx - (targetX + offsetX), unit.tz - (targetZ + offsetZ)) >
+                0.05 ||
+              !gameRef.current.units.includes(unit)
+            )
+              return;
+            const destination = personalPath.at(-1)!;
+            unit.path = personalPath;
+            unit.pathIndex = 0;
+            unit.tx = destination[0];
+            unit.tz = destination[1];
+          })
+          .catch(() => {
+            // The shared corridor remains valid if a worker is unavailable.
+          });
       });
       rebuildCommandLines();
       refreshRouteHighlights();
@@ -3370,6 +3411,7 @@ export default function Game3D() {
         labelColor: string,
       ) => {
         context.clearRect(0, 0, 512, 256);
+        context.beginPath();
         context.fillStyle = "rgba(21,30,25,.86)";
         context.roundRect(4, 4, 504, 88, 16);
         context.fill();
@@ -3381,7 +3423,12 @@ export default function Game3D() {
           titleSize = Math.max(21, Math.min(34, 42 - title.length * 0.6));
         context.font = `700 ${titleSize}px Microsoft YaHei`;
         context.textAlign = "center";
+        context.lineWidth = 5;
+        context.strokeStyle = "rgba(0,0,0,.92)";
+        context.strokeText(title, 256, 61, 474);
+        context.fillStyle = "#fffaf0";
         context.fillText(title, 256, 61, 474);
+        context.beginPath();
         context.fillStyle = "rgba(9,16,14,.94)";
         context.roundRect(128, 181, 256, 70, 18);
         context.fill();
@@ -3648,7 +3695,7 @@ export default function Game3D() {
           const labelScaleX = isTarget ? 4.6 : 3.7;
           infoSprite.scale.set(labelScaleX, 2.6, 1);
           infoSprite.position.y = 1.8;
-          infoSprite.renderOrder = 22;
+          infoSprite.renderOrder = 30;
           g.add(routeHighlight, hoverHighlight, infoSprite);
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
@@ -3909,7 +3956,8 @@ export default function Game3D() {
         transparent: true,
         opacity: 0.95,
         side: THREE.DoubleSide,
-        depthTest: false,
+        depthTest: true,
+        depthWrite: false,
       }),
       routeDotMaterials = {
         pku: new THREE.SpriteMaterial({
@@ -4056,7 +4104,7 @@ export default function Game3D() {
       selectionRing.rotation.x = -Math.PI / 2;
       selectionRing.position.y = 0.075;
       selectionRing.visible = selectedUnitIds.has(u.id);
-      selectionRing.renderOrder = 45;
+      selectionRing.renderOrder = 18;
       g.add(selectionRing);
       const routeMarker = new THREE.Sprite(routeDotMaterials[u.team]);
       routeMarker.position.y = 1.9;
@@ -4466,6 +4514,41 @@ export default function Game3D() {
       setRay(ev);
       return ray.intersectObjects(terrainMeshes, false)[0]?.point ?? null;
     };
+    const projectedUnitPoint = new THREE.Vector3(),
+      hitFriendlyUnitOnScreen = (ev: MouseEvent) => {
+        const rect = renderer.domElement.getBoundingClientRect(),
+          pointerX = ev.clientX - rect.left,
+          pointerY = ev.clientY - rect.top;
+        camera.updateMatrixWorld();
+        let closest: UnitState | undefined,
+          closestDistance = 22;
+        for (const unit of gameRef.current.units) {
+          if (unit.team !== playerTeamRef.current || unit.hp <= 0) continue;
+          projectedUnitPoint
+            .set(
+              unit.x,
+              terrainHeight(regionForX(unit.x), unit.x, unit.z) +
+                0.98 * UNIT_RENDER_SCALE,
+              unit.z,
+            )
+            .project(camera);
+          if (
+            projectedUnitPoint.z < -1 ||
+            projectedUnitPoint.z > 1 ||
+            Math.abs(projectedUnitPoint.x) > 1.08 ||
+            Math.abs(projectedUnitPoint.y) > 1.08
+          )
+            continue;
+          const screenX = ((projectedUnitPoint.x + 1) * rect.width) / 2,
+            screenY = ((1 - projectedUnitPoint.y) * rect.height) / 2,
+            distance = Math.hypot(pointerX - screenX, pointerY - screenY);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closest = unit;
+          }
+        }
+        return closest;
+      };
     const commandHoverPoint = new THREE.Vector3(),
       setRouteUnitMarkers = (sourceId?: number) => {
         const source =
@@ -4674,15 +4757,8 @@ export default function Game3D() {
       }
       const site = hitSite(e),
         sourceSite = hitSiteNode(e, 0.9),
-        point = site == null ? groundAt(e) : null,
-        selection =
-          !!point &&
-          [...selectedUnitIds].some((id) => {
-            const unit = gameRef.current.units.find(
-              (candidate) => candidate.id === id,
-            );
-            return !!unit && Math.hypot(unit.x - point.x, unit.z - point.z) < 3;
-          });
+        screenUnit = site == null ? hitFriendlyUnitOnScreen(e) : undefined,
+        selection = !!screenUnit && selectedUnitIds.has(screenUnit.id);
       down = { x: e.clientX, y: e.clientY, site, sourceSite, selection };
       if (site == null) setSelected(null);
       if (sourceSite != null || selection) {
@@ -4777,19 +4853,34 @@ export default function Game3D() {
                 selectedUnitIds.has(unit.id),
             );
             selectedUnits.forEach((unit, index) => {
-              const personalPath = findPath(
-                unit.x,
-                unit.z,
-                destinationX + ((index % 7) - 3) * 0.12,
-                destinationZ + ((Math.floor(index / 7) % 7) - 3) * 0.12,
-              );
-              if (!personalPath.length) return;
-              const destination = personalPath.at(-1)!;
+              const personalX =
+                  destinationX + ((index % 7) - 3) * 0.12,
+                personalZ =
+                  destinationZ +
+                  ((Math.floor(index / 7) % 7) - 3) * 0.12;
               unit.targetSiteId = target?.id;
-              unit.path = personalPath;
+              unit.path = clonePath(path);
               unit.pathIndex = 0;
-              unit.tx = destination[0];
-              unit.tz = destination[1];
+              unit.tx = personalX;
+              unit.tz = personalZ;
+              void findPathInWorker(unit.x, unit.z, personalX, personalZ)
+                .then((personalPath) => {
+                  if (
+                    !personalPath.length ||
+                    unit.targetSiteId !== target?.id ||
+                    Math.hypot(unit.tx - personalX, unit.tz - personalZ) > 0.05 ||
+                    !gameRef.current.units.includes(unit)
+                  )
+                    return;
+                  const destination = personalPath.at(-1)!;
+                  unit.path = personalPath;
+                  unit.pathIndex = 0;
+                  unit.tx = destination[0];
+                  unit.tz = destination[1];
+                })
+                .catch(() => {
+                  // Keep using the shared corridor when a worker fails.
+                });
             });
             const people = selectedUnits.reduce(
               (sum, unit) => sum + unit.strength,
@@ -4897,12 +4988,15 @@ export default function Game3D() {
       });
     });
     renderer.domElement.addEventListener("dblclick", (e) => {
-      const point = groundAt(e);
-      const nearby = point
+      const screenUnit = hitFriendlyUnitOnScreen(e),
+        point = screenUnit ? null : groundAt(e),
+        centerX = screenUnit?.x ?? point?.x,
+        centerZ = screenUnit?.z ?? point?.z;
+      const nearby = centerX != null && centerZ != null
         ? gameRef.current.units.filter(
             (unit) =>
               unit.team === playerTeamRef.current &&
-              Math.hypot(unit.x - point.x, unit.z - point.z) < 2.6,
+              Math.hypot(unit.x - centerX, unit.z - centerZ) < 2.6,
           )
         : [];
       if (nearby.some((unit) => selectedUnitIds.has(unit.id))) {
@@ -7467,6 +7561,7 @@ export default function Game3D() {
       clearInterval(combatTimer);
       clearInterval(campaignTimer);
       clearInterval(aiTimer);
+      pathWorkerPool.dispose();
       removeEventListener("resize", resize);
       removeEventListener("keydown", onDirectKeyDown);
       removeEventListener("keyup", onDirectKeyUp);
