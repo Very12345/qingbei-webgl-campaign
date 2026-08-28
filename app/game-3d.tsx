@@ -3406,13 +3406,12 @@ export default function Game3D() {
               : sum,
           0,
         ),
-      drawSiteInfo = (
+      drawSiteLabel = (
         context: CanvasRenderingContext2D,
         site: SiteState,
-        count: number,
         labelColor: string,
       ) => {
-        context.clearRect(0, 0, 512, 256);
+        context.clearRect(0, 0, 512, 96);
         context.beginPath();
         context.fillStyle = "rgba(21,30,25,.86)";
         context.roundRect(4, 4, 504, 88, 16);
@@ -3430,17 +3429,26 @@ export default function Game3D() {
         context.strokeText(title, 256, 61, 474);
         context.fillStyle = "#fffaf0";
         context.fillText(title, 256, 61, 474);
-        context.beginPath();
-        context.fillStyle = "rgba(9,16,14,.94)";
-        context.roundRect(128, 181, 256, 70, 18);
-        context.fill();
-        context.strokeStyle = "#f2d478";
-        context.lineWidth = 4;
-        context.stroke();
-        context.fillStyle = "#fff4c4";
-        context.font = "800 30px Microsoft YaHei";
+      },
+      drawSiteCount = (
+        context: CanvasRenderingContext2D,
+        site: SiteState,
+        count: number,
+      ) => {
+        context.clearRect(0, 0, 128, 64);
+        context.font = "900 44px Microsoft YaHei";
         context.textAlign = "center";
-        context.fillText(`友军 ${count}人`, 256, 228);
+        context.textBaseline = "middle";
+        context.lineWidth = 7;
+        context.strokeStyle = "rgba(5,10,9,.88)";
+        context.strokeText(String(count), 64, 34, 112);
+        context.fillStyle =
+          site.team === "pku"
+            ? "rgba(255,115,133,.82)"
+            : gameRef.current.campaign.thuFactionName === "中科大"
+              ? "rgba(103,199,255,.82)"
+              : "rgba(211,160,255,.82)";
+        context.fillText(String(count), 64, 34, 112);
       };
     const siteNodeGeometry = new THREE.PlaneGeometry(1, 1),
       siteNodeBatches: {
@@ -3678,34 +3686,59 @@ export default function Game3D() {
                 : gameRef.current.campaign.thuFactionName === "中科大"
                   ? "#3a8fd2"
                   : "#a569d0",
-            infoCanvas = document.createElement("canvas");
-          infoCanvas.width = 512;
-          infoCanvas.height = 256;
-          const infoContext = infoCanvas.getContext("2d")!,
-            initialCount = nearbyFriendlyPeople(site);
-          drawSiteInfo(infoContext, site, initialCount, labelColor);
-          const infoTexture = new THREE.CanvasTexture(infoCanvas),
-            infoSprite = new THREE.Sprite(
+            labelCanvas = document.createElement("canvas");
+          labelCanvas.width = 512;
+          labelCanvas.height = 96;
+          const labelContext = labelCanvas.getContext("2d")!;
+          drawSiteLabel(labelContext, site, labelColor);
+          const labelTexture = new THREE.CanvasTexture(labelCanvas),
+            labelSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
-                map: infoTexture,
+                map: labelTexture,
                 transparent: true,
                 depthTest: false,
                 depthWrite: false,
               }),
             );
-          infoTexture.colorSpace = THREE.SRGBColorSpace;
-          const labelScaleX = isTarget ? 4.6 : 3.7;
-          infoSprite.scale.set(labelScaleX, 2.6, 1);
-          infoSprite.position.y = 1.8;
-          infoSprite.renderOrder = 30;
-          g.add(routeHighlight, hoverHighlight, infoSprite);
+          labelTexture.colorSpace = THREE.SRGBColorSpace;
+          const labelScaleX = isTarget ? 4.6 : 3.7,
+            labelScaleY = isTarget ? 0.82 : 0.68,
+            labelY = 2.75 + (site.id % 3) * 0.42,
+            countCanvas = document.createElement("canvas");
+          labelSprite.scale.set(labelScaleX, labelScaleY, 1);
+          labelSprite.position.y = labelY;
+          labelSprite.renderOrder = 30;
+          countCanvas.width = 128;
+          countCanvas.height = 64;
+          const countContext = countCanvas.getContext("2d")!,
+            initialCount = nearbyFriendlyPeople(site);
+          drawSiteCount(countContext, site, initialCount);
+          const countTexture = new THREE.CanvasTexture(countCanvas),
+            countSprite = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: countTexture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            );
+          countTexture.colorSpace = THREE.SRGBColorSpace;
+          countSprite.scale.set(0.68, 0.34, 1);
+          countSprite.position.y = 1.5;
+          countSprite.renderOrder = 31;
+          g.add(
+            routeHighlight,
+            hoverHighlight,
+            labelSprite,
+            countSprite,
+          );
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
+          g.userData.labelSprite = labelSprite;
           g.userData.countBadge = {
-            context: infoContext,
-            texture: infoTexture,
+            context: countContext,
+            texture: countTexture,
             last: initialCount,
-            labelColor,
           };
           let materialBadge: THREE.Sprite | null = null;
           if (customSiteTexture) {
@@ -3754,11 +3787,18 @@ export default function Game3D() {
               scaleY: 1.78,
             },
             {
-              object: infoSprite,
+              object: countSprite,
               x: 0,
-              y: 1.8,
+              y: 1.5,
+              scaleX: 0.68,
+              scaleY: 0.34,
+            },
+            {
+              object: labelSprite,
+              x: 0,
+              y: labelY,
               scaleX: labelScaleX,
-              scaleY: 2.6,
+              scaleY: labelScaleY,
             },
             ...(materialBadge
               ? [
@@ -7375,29 +7415,34 @@ export default function Game3D() {
                   context: CanvasRenderingContext2D;
                   texture: THREE.CanvasTexture;
                   last: number;
-                  labelColor: string;
                 }
               | undefined;
           if (!site || !badge) return;
           const count = nearbyFriendlyPeople(site);
           if (count === badge.last) return;
-          drawSiteInfo(badge.context, site, count, badge.labelColor);
+          drawSiteCount(badge.context, site, count);
           badge.texture.needsUpdate = true;
           badge.last = count;
         });
       }
       if (!directControlActive) controls.update();
-      const fixedRingScale = THREE.MathUtils.clamp(
-        camera.position.distanceTo(controls.target) / Math.hypot(24, 22),
-        0.45,
-        1.9,
-      );
+      const markerCameraDistance = camera.position.distanceTo(controls.target),
+        fixedRingScale = THREE.MathUtils.clamp(
+          markerCameraDistance / Math.hypot(24, 22),
+          0.45,
+          1.9,
+        ),
+        showSiteLabels = markerCameraDistance <= 27;
       updateSiteNodeBatches(fixedRingScale);
       siteObjects.forEach((object, id) => {
         const selectionHighlight = object.userData.routeHighlight as
           THREE.Object3D | undefined;
         if (selectionHighlight)
           selectionHighlight.visible = selectedRef.current === id;
+        const label = object.userData.labelSprite as THREE.Sprite | undefined;
+        if (label)
+          label.visible =
+            showSiteLabels || selectedRef.current === id || hoveredSiteId === id;
         const icons = object.userData.fixedMarkerIcons as
           | {
               object: THREE.Sprite;
