@@ -4,6 +4,9 @@ export type CampaignEventCardSpec = {
   effect: string;
   quadrant: "arrival" | "march" | "lake" | "classroom";
   date: string;
+  image?: string;
+  sourceType?: string;
+  sourceUrl?: string;
 };
 
 export type CampaignEventHookContext<TGame = unknown> = {
@@ -22,6 +25,11 @@ export type CampaignEventHook<TGame = unknown> = {
   card: CampaignEventCardSpec;
   when: (context: CampaignEventHookContext<TGame>) => boolean;
   apply?: (context: CampaignEventHookContext<TGame>) => void;
+  aiHints?: {
+    baseUtility: number;
+    tags?: string[];
+    maxAcceptableLossRatio?: number;
+  };
 };
 
 const eventHooks = new Map<string, CampaignEventHook<any>>();
