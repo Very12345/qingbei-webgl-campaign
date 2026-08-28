@@ -2697,8 +2697,10 @@ export default function Game3D() {
         mobileMoveRef.current = { x: 0, z: 0 };
         setJoystickKnob({ x: 0, y: 0 });
         unitObjects.forEach((object) => {
-          const ring = object.userData.selectionRing as THREE.Mesh | undefined;
-          ring?.scale.setScalar(1);
+          const ring = object.userData.selectionRing as
+            | THREE.Sprite
+            | undefined;
+          ring?.scale.set(1.42, 1.42, 1);
         });
         controls.enabled = true;
         if (cameraBeforeDirect) {
@@ -3868,6 +3870,18 @@ export default function Game3D() {
     routeDotContext.shadowBlur = 10;
     routeDotContext.fill();
     const routeDotTexture = new THREE.CanvasTexture(routeDotCanvas);
+    const selectionCanvas = document.createElement("canvas");
+    selectionCanvas.width = 128;
+    selectionCanvas.height = 128;
+    const selectionContext = selectionCanvas.getContext("2d")!;
+    selectionContext.beginPath();
+    selectionContext.arc(64, 64, 48, 0, Math.PI * 2);
+    selectionContext.lineWidth = 10;
+    selectionContext.strokeStyle = "#ffe36f";
+    selectionContext.shadowColor = "#ffe36f";
+    selectionContext.shadowBlur = 8;
+    selectionContext.stroke();
+    const selectionTexture = new THREE.CanvasTexture(selectionCanvas);
     const UNIT_RENDER_SCALE = 0.56 / 3,
       UNIT_SEPARATION_DISTANCE = 0.48 / 3,
       hpGeometry = new THREE.PlaneGeometry(1, 0.1),
@@ -3898,7 +3912,6 @@ export default function Game3D() {
       unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
       unitHandGeometry = new THREE.SphereGeometry(0.09, 8, 6),
       unitGlowGeometry = new THREE.RingGeometry(0.68, 0.86, 18),
-      unitSelectionGeometry = new THREE.RingGeometry(0.91, 1.04, 24),
       unitBodyMaterials = {
         pku: new THREE.MeshStandardMaterial({
           color: 0xffffff,
@@ -3951,11 +3964,11 @@ export default function Game3D() {
           side: THREE.DoubleSide,
         }),
       },
-      unitSelectionMaterial = new THREE.MeshBasicMaterial({
+      unitSelectionMaterial = new THREE.SpriteMaterial({
+        map: selectionTexture,
         color: 0xffdf63,
         transparent: true,
         opacity: 0.95,
-        side: THREE.DoubleSide,
         depthTest: true,
         depthWrite: false,
       }),
@@ -3982,7 +3995,6 @@ export default function Game3D() {
         unitLimbGeometry,
         unitHandGeometry,
         unitGlowGeometry,
-        unitSelectionGeometry,
       ]),
       sharedUnitMaterials = new Set<THREE.Material>([
         hpBackMaterial,
@@ -4097,12 +4109,9 @@ export default function Game3D() {
       glow.rotation.x = -Math.PI / 2;
       glow.position.y = 0.05;
       g.add(glow);
-      const selectionRing = new THREE.Mesh(
-        unitSelectionGeometry,
-        unitSelectionMaterial,
-      );
-      selectionRing.rotation.x = -Math.PI / 2;
-      selectionRing.position.y = 0.075;
+      const selectionRing = new THREE.Sprite(unitSelectionMaterial);
+      selectionRing.position.y = 0.98;
+      selectionRing.scale.set(1.42, 1.42, 1);
       selectionRing.visible = selectedUnitIds.has(u.id);
       selectionRing.renderOrder = 18;
       g.add(selectionRing);
@@ -4234,7 +4243,9 @@ export default function Game3D() {
     const refreshUnitSelection = () => {
       syncDetailedUnits();
       unitObjects.forEach((object, id) => {
-        const ring = object.userData.selectionRing as THREE.Mesh | undefined;
+        const ring = object.userData.selectionRing as
+          | THREE.Sprite
+          | undefined;
         if (ring) ring.visible = selectedUnitIds.has(id);
       });
       setSelectedUnitCount(
@@ -4521,7 +4532,7 @@ export default function Game3D() {
           pointerY = ev.clientY - rect.top;
         camera.updateMatrixWorld();
         let closest: UnitState | undefined,
-          closestDistance = 22;
+          closestDistance = 32;
         for (const unit of gameRef.current.units) {
           if (unit.team !== playerTeamRef.current || unit.hp <= 0) continue;
           projectedUnitPoint
@@ -6956,8 +6967,10 @@ export default function Game3D() {
           }
           controlled.forEach((unit) => {
             const object = unitObjects.get(unit.id),
-              ring = object?.userData.selectionRing as THREE.Mesh | undefined;
-            ring?.scale.setScalar(unit.id === leader.id ? 1.6 : 1);
+              ring = object?.userData.selectionRing as
+                | THREE.Sprite
+                | undefined;
+            ring?.scale.setScalar(unit.id === leader.id ? 2.05 : 1.42);
           });
           const averageX =
               controlled.reduce((sum, unit) => sum + unit.x, 0) /
