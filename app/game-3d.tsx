@@ -956,6 +956,14 @@ export default function Game3D() {
   const [assetOpen, setAssetOpen] = useState(false);
   const [eventLogOpen, setEventLogOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
+  const [decisionZoom, setDecisionZoom] = useState(1);
+  const decisionViewportRef = useRef<HTMLDivElement>(null);
+  const decisionDragRef = useRef<{
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+  } | null>(null);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("standard");
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
   const [siteMaterialUrl, setSiteMaterialUrl] = useState<string | null>(null);
@@ -1076,6 +1084,14 @@ export default function Game3D() {
   useEffect(() => {
     decisionVoteRef.current = decisionVote;
   }, [decisionVote]);
+  useEffect(() => {
+    if (!decisionOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDecisionOpen(false);
+    };
+    addEventListener("keydown", close);
+    return () => removeEventListener("keydown", close);
+  }, [decisionOpen]);
   useEffect(() => {
     regionRef.current = region;
   }, [region]);
@@ -7645,6 +7661,73 @@ export default function Game3D() {
     mobileMoveRef.current = { x: 0, z: 0 };
     setJoystickKnob({ x: 0, y: 0 });
   };
+  const decisionBranchMark = (branch: string) =>
+    ({
+      思想与校园动员: "思",
+      基础科学: "理",
+      燕园防务: "防",
+      后勤治理: "勤",
+      工程体系: "工",
+      学堂传统: "学",
+      校园防务: "卫",
+      后勤健康: "健",
+    })[branch] ?? branch.slice(0, 1);
+  const renderFocusNode = (item: DecisionDefinition) => {
+    const campaign = gameRef.current.campaign,
+      active = campaign.decisions.active[playerTeam],
+      completed = campaign.decisions.completed.includes(item.id),
+      locked = campaign.decisions.locked.includes(item.id),
+      isActive = active?.id === item.id,
+      available = decisionAvailable(item, campaign),
+      remaining = isActive
+        ? Math.max(0, active.completesAt - campaign.elapsedHours)
+        : 0,
+      progress = isActive
+        ? THREE.MathUtils.clamp(
+            (campaign.elapsedHours - active.startedAt) /
+              Math.max(1, active.completesAt - active.startedAt),
+            0,
+            1,
+          )
+        : completed
+          ? 1
+          : 0;
+    return (
+      <button
+        key={item.id}
+        className={`focus-node ${completed ? "completed" : ""} ${locked ? "locked" : ""} ${isActive ? "active" : ""} ${available ? "available" : ""}`}
+        disabled={
+          completed ||
+          locked ||
+          !!campaign.decisions.active[playerTeam] ||
+          !available
+        }
+        onClick={() => requestDecisionStart(item.id, playerTeam)}
+        title={`${item.description}\n${item.days}天 · ${item.cost}战略资源`}
+      >
+        <span className="focus-node-emblem" aria-hidden="true">
+          {decisionBranchMark(item.branch)}
+        </span>
+        <span className="focus-node-copy">
+          <strong>{item.title}</strong>
+          <small>
+            {completed
+              ? "已完成"
+              : locked
+                ? "互斥锁定"
+                : isActive
+                  ? `剩余 ${(remaining / 24).toFixed(1)}天`
+                  : `${item.days}天 · ${item.cost}`}
+          </small>
+        </span>
+        {(isActive || completed) && (
+          <span className="focus-progress" aria-hidden="true">
+            <i style={{ width: `${progress * 100}%` }} />
+          </span>
+        )}
+      </button>
+    );
+  };
   return (
     <main className="game-shell">
       {screen === "game" && <div ref={hostRef} className="webgl-stage" />}
@@ -7661,6 +7744,30 @@ export default function Game3D() {
               }}
             >
               ‹
+            </button>
+            <button
+              aria-label="打开决策树"
+              title="决策树"
+              className={`focus-tree-entry ${decisionOpen ? "active" : ""}`}
+              onClick={() => {
+                setDecisionOpen(true);
+                setMoreOpen(false);
+                setSettingsOpen(false);
+                requestAnimationFrame(() => {
+                  const viewport = decisionViewportRef.current;
+                  if (!viewport) return;
+                  viewport.scrollLeft = Math.max(
+                    0,
+                    (viewport.scrollWidth - viewport.clientWidth) / 2,
+                  );
+                });
+              }}
+            >
+              <span className="focus-tree-glyph" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
             </button>
             <button
               aria-label="更多"
@@ -7754,14 +7861,6 @@ export default function Game3D() {
                   (alert) => !alert.seen,
                 ) && <span>暂无未查看交战。</span>}
               </div>
-              <button
-                onClick={() => {
-                  setDecisionOpen(true);
-                  setMoreOpen(false);
-                }}
-              >
-                决策树
-              </button>
               <button onClick={() => setEventLogOpen(true)}>事件档案</button>
               <button onClick={saveGame}>保存当前战局</button>
             </aside>
@@ -8446,80 +8545,139 @@ export default function Game3D() {
         道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo
       </div>
       {decisionOpen && (
-        <div className="modal-backdrop decision-backdrop">
-          <section className={`decision-modal ${playerTeam}`}>
-            <header>
+        <div className={`focus-tree-screen ${playerTeam}`}>
+          <header className="focus-tree-topbar">
+            <div className="focus-tree-school-mark">
+              <span>{playerTeam === "pku" ? "北" : "清"}</span>
               <div>
-                <h2>{playerTeam === "pku" ? "北京大学" : "清华大学"}决策树</h2>
-                <small>
-                  战略资源 {Math.floor(gameRef.current.resources[playerTeam])} · 同时只能推进一个决策
-                </small>
+                <h2>{playerTeam === "pku" ? "北京大学" : "清华大学"}战略决策</h2>
+                <small>国策树 · 同时只能推进一个决策</small>
               </div>
-              <button onClick={() => setDecisionOpen(false)}>关闭</button>
-            </header>
-            <div className="decision-branches">
+            </div>
+            <div className="focus-tree-resources">
+              <span>战略资源</span>
+              <strong>{Math.floor(gameRef.current.resources[playerTeam])}</strong>
+              {gameRef.current.campaign.decisions.active[playerTeam] ? (
+                <span>
+                  进行中：
+                  {DECISIONS.find(
+                    (item) =>
+                      item.id ===
+                      gameRef.current.campaign.decisions.active[playerTeam]?.id,
+                  )?.title ?? "未知决策"}
+                </span>
+              ) : (
+                <span>当前无进行中决策</span>
+              )}
+            </div>
+            <div className="focus-tree-tools">
+              <button
+                aria-label="缩小决策树"
+                onClick={() =>
+                  setDecisionZoom((value) => Math.max(0.65, value - 0.1))
+                }
+              >
+                −
+              </button>
+              <span>{Math.round(decisionZoom * 100)}%</span>
+              <button
+                aria-label="放大决策树"
+                onClick={() =>
+                  setDecisionZoom((value) => Math.min(1.35, value + 0.1))
+                }
+              >
+                +
+              </button>
+              <button className="focus-tree-close" onClick={() => setDecisionOpen(false)}>
+                关闭
+              </button>
+            </div>
+          </header>
+          <div
+            ref={decisionViewportRef}
+            className="focus-tree-viewport"
+            onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest("button")) return;
+              const viewport = event.currentTarget;
+              viewport.setPointerCapture(event.pointerId);
+              decisionDragRef.current = {
+                x: event.clientX,
+                y: event.clientY,
+                left: viewport.scrollLeft,
+                top: viewport.scrollTop,
+              };
+            }}
+            onPointerMove={(event) => {
+              const drag = decisionDragRef.current;
+              if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId))
+                return;
+              event.currentTarget.scrollLeft = drag.left - (event.clientX - drag.x);
+              event.currentTarget.scrollTop = drag.top - (event.clientY - drag.y);
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId))
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              decisionDragRef.current = null;
+            }}
+            onPointerCancel={() => (decisionDragRef.current = null)}
+          >
+            <div
+              className="focus-tree-canvas"
+              style={{
+                transform: `scale(${decisionZoom})`,
+                transformOrigin: "top center",
+                width: `${100 / decisionZoom}%`,
+              }}
+            >
               {[
                 ...new Set(
                   DECISIONS.filter((item) => item.team === playerTeam).map(
                     (item) => item.branch,
                   ),
                 ),
-              ].map((branch) => (
-                <section className="decision-branch" key={branch}>
-                  <h3>{branch}</h3>
-                  <div className="decision-node-row">
-                    {DECISIONS.filter(
-                      (item) => item.team === playerTeam && item.branch === branch,
-                    ).map((item) => {
-                      const campaign = gameRef.current.campaign,
-                        active = campaign.decisions.active[playerTeam],
-                        completed = campaign.decisions.completed.includes(item.id),
-                        locked = campaign.decisions.locked.includes(item.id),
-                        isActive = active?.id === item.id,
-                        available = decisionAvailable(item, campaign),
-                        remaining = isActive
-                          ? Math.max(0, active.completesAt - campaign.elapsedHours)
-                          : 0;
-                      return (
-                        <button
-                          key={item.id}
-                          className={`decision-node ${completed ? "completed" : ""} ${locked ? "locked" : ""} ${isActive ? "active" : ""}`}
-                          disabled={
-                            completed ||
-                            locked ||
-                            !!campaign.decisions.active[playerTeam] ||
-                            !available
-                          }
-                          onClick={() => requestDecisionStart(item.id, playerTeam)}
-                          title={item.description}
-                        >
-                          <strong>{item.title}</strong>
-                          <span>{item.days}天 · {item.cost}资源</span>
-                          <small>
-                            {completed
-                              ? "已完成"
-                              : locked
-                                ? "互斥锁定"
-                                : isActive
-                                  ? `剩余 ${(remaining / 24).toFixed(1)} 天`
-                                  : item.description}
-                          </small>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
+              ].map((branch) => {
+                const items = DECISIONS.filter(
+                  (item) => item.team === playerTeam && item.branch === branch,
+                );
+                return (
+                  <section className="focus-lane" key={branch}>
+                    <header>
+                      <span>{decisionBranchMark(branch)}</span>
+                      <h3>{branch}</h3>
+                    </header>
+                    <div className="focus-chain">
+                      {items[0] && renderFocusNode(items[0])}
+                      <i className="focus-line vertical" />
+                      {items[1] && renderFocusNode(items[1])}
+                      <div className="focus-fork-lines" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </div>
+                      <div className="focus-fork-nodes">
+                        {items[2] && renderFocusNode(items[2])}
+                        {items[3] && renderFocusNode(items[3])}
+                      </div>
+                      <div className="focus-merge-lines" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </div>
+                      {items[4] && renderFocusNode(items[4])}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
+          </div>
+          <footer className="focus-tree-footer">
+            <span>拖动画布查看路线 · 金色可选 · 绿色完成 · 红色互斥</span>
             {gameRef.current.campaign.decisions.active[playerTeam] && (
-              <button
-                className="cancel-decision"
-                onClick={() => cancelDecision(playerTeam)}
-              >
+              <button onClick={() => cancelDecision(playerTeam)}>
                 取消当前决策（返还50%资源）
               </button>
             )}
-          </section>
+          </footer>
         </div>
       )}
       {eventLogOpen && (
@@ -8617,7 +8775,10 @@ export default function Game3D() {
               className={`event-photo ${activeEvents[0].quadrant} event-${activeEvents[0].id}`}
               style={{
                 backgroundImage: `linear-gradient(#0002,#0005),url(${activeEvents[0].image ? `${import.meta.env.BASE_URL}${activeEvents[0].image}` : `${import.meta.env.BASE_URL}event-archive-sheet-v2.webp`})`,
-                backgroundSize: activeEvents[0].image ? "cover" : "400% 200%",
+                backgroundSize: activeEvents[0].image ? "contain" : "400% 200%",
+                backgroundRepeat: activeEvents[0].image ? "no-repeat" : "repeat",
+                backgroundPosition: activeEvents[0].image ? "center" : undefined,
+                backgroundColor: activeEvents[0].image ? "#070909" : undefined,
               }}
             />
             <div className="event-copy">
