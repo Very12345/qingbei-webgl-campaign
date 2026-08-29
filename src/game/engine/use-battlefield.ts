@@ -1011,9 +1011,74 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       if (r === regions.main)
         for (const surface of sportSurfaces) {
-          const points = surface.points.map(([x, z]) => [x, z]),
-            centerX = points.reduce((sum, point) => sum + point[0], 0) / points.length,
-            centerZ = points.reduce((sum, point) => sum + point[1], 0) / points.length,
+          const rawPoints = surface.points.map(([x, z]) => [x, z]),
+            centerX =
+              rawPoints.reduce((sum, point) => sum + point[0], 0) /
+              rawPoints.length,
+            centerZ =
+              rawPoints.reduce((sum, point) => sum + point[1], 0) /
+              rawPoints.length,
+            covariance = rawPoints.reduce(
+              (value, [x, z]) => {
+                const dx = x - centerX,
+                  dz = z - centerZ;
+                value.xx += dx * dx;
+                value.zz += dz * dz;
+                value.xz += dx * dz;
+                return value;
+              },
+              { xx: 0, zz: 0, xz: 0 },
+            ),
+            axisAngle =
+              Math.atan2(
+                2 * covariance.xz,
+                covariance.xx - covariance.zz,
+              ) / 2,
+            axisX = Math.cos(axisAngle),
+            axisZ = Math.sin(axisAngle),
+            sideX = -axisZ,
+            sideZ = axisX,
+            projections = rawPoints.map(([x, z]) => ({
+              along: (x - centerX) * axisX + (z - centerZ) * axisZ,
+              side: (x - centerX) * sideX + (z - centerZ) * sideZ,
+            })),
+            halfLength = Math.max(
+              ...projections.map((value) => Math.abs(value.along)),
+            ),
+            halfWidth = Math.max(
+              ...projections.map((value) => Math.abs(value.side)),
+            ),
+            at = (along: number, side: number): [number, number] => [
+              centerX + axisX * along + sideX * side,
+              centerZ + axisZ * along + sideZ * side,
+            ],
+            capsule = (length: number, width: number) => {
+              const radius = Math.max(0.08, width),
+                straight = Math.max(0.05, length - radius),
+                result: [number, number][] = [];
+              for (let index = 0; index <= 16; index++) {
+                const angle = -Math.PI / 2 + (index / 16) * Math.PI;
+                result.push(
+                  at(
+                    straight + Math.cos(angle) * radius,
+                    Math.sin(angle) * radius,
+                  ),
+                );
+              }
+              for (let index = 0; index <= 16; index++) {
+                const angle = Math.PI / 2 + (index / 16) * Math.PI;
+                result.push(
+                  at(
+                    -straight + Math.cos(angle) * radius,
+                    Math.sin(angle) * radius,
+                  ),
+                );
+              }
+              return result;
+            },
+            points = surface.track
+              ? capsule(halfLength, halfWidth)
+              : rawPoints,
             base = new THREE.Mesh(
               surfaceGeometry(r, points, 0.055),
               new THREE.MeshStandardMaterial({
@@ -1027,11 +1092,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           base.receiveShadow = false;
           base.renderOrder = 2;
           mapGroup.add(base);
-          const innerScale = surface.track ? 0.7 : 0.92,
-            inner = points.map(([x, z]) => [
-              centerX + (x - centerX) * innerScale,
-              centerZ + (z - centerZ) * innerScale,
-            ]),
+          const pitchHalfLength = surface.track
+              ? Math.max(0.35, halfLength - 0.46)
+              : halfLength * 0.94,
+            pitchHalfWidth = surface.track
+              ? Math.max(0.28, halfWidth - 0.42)
+              : halfWidth * 0.94,
+            inner: [number, number][] = [
+              at(-pitchHalfLength, -pitchHalfWidth),
+              at(pitchHalfLength, -pitchHalfWidth),
+              at(pitchHalfLength, pitchHalfWidth),
+              at(-pitchHalfLength, pitchHalfWidth),
+            ],
             pitch = new THREE.Mesh(
               surfaceGeometry(r, inner, 0.075),
               new THREE.MeshStandardMaterial({
@@ -1061,23 +1133,73 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           pitch.renderOrder = 3;
           boundary.renderOrder = 4;
           mapGroup.add(pitch, boundary);
-          if (surface.track)
-            for (const scale of [0.78, 0.85, 0.92]) {
-              const lane = new THREE.LineLoop(
-                new THREE.BufferGeometry().setFromPoints(
-                  points.map(
-                    ([x, z]) =>
-                      new THREE.Vector3(
-                        centerX + (x - centerX) * scale,
-                        terrainHeight(
-                          r,
-                          centerX + (x - centerX) * scale,
-                          centerZ + (z - centerZ) * scale,
-                        ) + 0.092,
-                        centerZ + (z - centerZ) * scale,
-                      ),
+          const lineMaterial = new THREE.LineBasicMaterial({
+              color: 0xf3ead3,
+              transparent: true,
+              opacity: 0.9,
+            }),
+            linePoints = (values: [number, number][]) =>
+              values.map(
+                ([x, z]) =>
+                  new THREE.Vector3(
+                    x,
+                    terrainHeight(r, x, z) + 0.095,
+                    z,
                   ),
+              ),
+            addFieldLine = (
+              values: [number, number][],
+              loop = false,
+            ) => {
+              const geometry = new THREE.BufferGeometry().setFromPoints(
+                  linePoints(values),
                 ),
+                line = loop
+                  ? new THREE.LineLoop(geometry, lineMaterial)
+                  : new THREE.Line(geometry, lineMaterial);
+              line.renderOrder = 5;
+              mapGroup.add(line);
+            };
+          addFieldLine(
+            [at(0, -pitchHalfWidth), at(0, pitchHalfWidth)],
+          );
+          addFieldLine(
+            Array.from({ length: 33 }, (_, index) => {
+              const angle = (index / 32) * Math.PI * 2,
+                radius = Math.min(0.32, pitchHalfWidth * 0.24);
+              return at(Math.cos(angle) * radius, Math.sin(angle) * radius);
+            }),
+            true,
+          );
+          for (const sign of [-1, 1]) {
+            const end = sign * pitchHalfLength,
+              penaltyInner = sign * pitchHalfLength * 0.7,
+              goalInner = sign * pitchHalfLength * 0.86;
+            addFieldLine(
+              [
+                at(end, -pitchHalfWidth * 0.58),
+                at(penaltyInner, -pitchHalfWidth * 0.58),
+                at(penaltyInner, pitchHalfWidth * 0.58),
+                at(end, pitchHalfWidth * 0.58),
+              ],
+            );
+            addFieldLine(
+              [
+                at(end, -pitchHalfWidth * 0.3),
+                at(goalInner, -pitchHalfWidth * 0.3),
+                at(goalInner, pitchHalfWidth * 0.3),
+                at(end, pitchHalfWidth * 0.3),
+              ],
+            );
+          }
+          if (surface.track)
+            for (const inset of [0.08, 0.16, 0.24, 0.32]) {
+              const lanePoints = capsule(
+                Math.max(0.1, halfLength - inset),
+                Math.max(0.08, halfWidth - inset),
+              );
+              const lane = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(linePoints(lanePoints)),
                 new THREE.LineBasicMaterial({
                   color: 0xf3dcc7,
                   transparent: true,
@@ -5008,10 +5130,36 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               : `${reason}，战役结果正式记为${campaign.thuFactionName}胜利；地图仍可继续游玩。`,
         });
       };
+    const resilientTasks = new Map<
+        number,
+        { callback: () => void; interval: number; nextAt: number }
+      >(),
+      resilientSetInterval = (callback: () => void, interval: number) => {
+        const id = window.setInterval(() => {
+          if (
+            dedicatedServerHostRef.current &&
+            document.visibilityState === "hidden"
+          )
+            return;
+          callback();
+          const task = resilientTasks.get(id);
+          if (task) task.nextAt = performance.now() + interval;
+        }, interval);
+        resilientTasks.set(id, {
+          callback,
+          interval,
+          nextAt: performance.now() + interval,
+        });
+        return id;
+      },
+      resilientClearInterval = (id: number) => {
+        window.clearInterval(id);
+        resilientTasks.delete(id);
+      };
     let combatPulse = 0,
       lastCombatParticleAt = 0,
       lastBattleAlertAt = 0;
-    const combatTimer = window.setInterval(() => {
+    const combatTimer = resilientSetInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -5766,7 +5914,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             unit.transportModel = undefined;
           });
       };
-    const campaignTimer = window.setInterval(() => {
+    const campaignTimer = resilientSetInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -6559,7 +6707,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           );
       }
     }, 1000);
-    const aiTimer = window.setInterval(() => {
+    const aiTimer = resilientSetInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -6902,12 +7050,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
-    const animate = (now: number) => {
-      raf = requestAnimationFrame(animate);
+    const animate = (now: number, backgroundServerTick = false) => {
+      if (!backgroundServerTick) raf = requestAnimationFrame(animate);
+      if (
+        !backgroundServerTick &&
+        dedicatedServerHostRef.current &&
+        document.visibilityState === "hidden"
+      )
+        return;
       const rawDelta = (now - last) / 1000,
-        dt = Math.min(0.05, rawDelta);
+        dt = Math.min(backgroundServerTick ? 0.25 : 0.05, rawDelta);
       last = now;
-      if (rawDelta < 0.2) {
+      if (!backgroundServerTick && rawDelta < 0.2) {
         performanceFrameTime += rawDelta;
         performanceFrameCount++;
         performanceController.reportFrame(rawDelta * 1000, now);
@@ -6951,12 +7105,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       const g = gameRef.current;
       if (screenRef.current === "home") {
-        controls.update();
-        renderer.render(scene, camera);
+        if (!backgroundServerTick) {
+          controls.update();
+          renderer.render(scene, camera);
+        }
         return;
       }
       if (pauseOpenRef.current) {
-        renderer.render(scene, camera);
+        if (!backgroundServerTick) renderer.render(scene, camera);
+        return;
+      }
+      if (
+        dedicatedServerHostRef.current &&
+        lanChannelIdentityRef.current.size === 0
+      ) {
+        if (!backgroundServerTick) renderer.render(scene, camera);
         return;
       }
       if (now >= nextStuckCheckAt) {
@@ -7585,8 +7748,34 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         }
       }
-      renderer.render(scene, camera);
+      if (!backgroundServerTick) renderer.render(scene, camera);
     };
+    let serverClockWorker: Worker | null = null;
+    if (dedicatedServerHostRef.current) {
+      serverClockWorker = new Worker(
+        new URL("../server-clock-worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      serverClockWorker.onmessage = () => {
+        if (
+          !dedicatedServerHostRef.current ||
+          document.visibilityState !== "hidden"
+        )
+          return;
+        const tickNow = performance.now();
+        for (const task of resilientTasks.values()) {
+          let iterations = 0;
+          while (tickNow >= task.nextAt && iterations < 4) {
+            task.callback();
+            task.nextAt += task.interval;
+            iterations++;
+          }
+          if (tickNow >= task.nextAt) task.nextAt = tickNow + task.interval;
+        }
+        animate(tickNow, true);
+      };
+      serverClockWorker.postMessage({ type: "start" });
+    }
     raf = requestAnimationFrame(animate);
     const resize = () => {
       renderer.setSize(host.clientWidth, host.clientHeight);
@@ -7703,9 +7892,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     );
     return () => {
       cancelAnimationFrame(raf);
-      clearInterval(combatTimer);
-      clearInterval(campaignTimer);
-      clearInterval(aiTimer);
+      serverClockWorker?.postMessage({ type: "stop" });
+      serverClockWorker?.terminate();
+      resilientClearInterval(combatTimer);
+      resilientClearInterval(campaignTimer);
+      resilientClearInterval(aiTimer);
       pathWorkerPool.dispose();
       removeEventListener("resize", resize);
       removeEventListener("keydown", onDirectKeyDown);
