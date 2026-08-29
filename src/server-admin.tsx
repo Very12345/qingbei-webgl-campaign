@@ -150,6 +150,61 @@ function ServerAdmin() {
           />
           <span>后续玩家允许同阵营</span>
         </label>
+        <label>
+          <span>TURN中继地址</span>
+          <textarea
+            rows={3}
+            value={(server.turnServer?.urls ?? []).join("\n")}
+            placeholder={"turn:example.com:3478\nturns:example.com:5349"}
+            onChange={(event) =>
+              setServer({
+                ...server,
+                turnServer: {
+                  urls: event.target.value
+                    .split(/[\n,]+/)
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                  username: server.turnServer?.username ?? "",
+                  credential: server.turnServer?.credential ?? "",
+                },
+              })
+            }
+          />
+        </label>
+        <label>
+          <span>TURN用户名</span>
+          <input
+            value={server.turnServer?.username ?? ""}
+            onChange={(event) =>
+              setServer({
+                ...server,
+                turnServer: {
+                  urls: server.turnServer?.urls ?? [],
+                  username: event.target.value,
+                  credential: server.turnServer?.credential ?? "",
+                },
+              })
+            }
+          />
+        </label>
+        <label>
+          <span>TURN凭据</span>
+          <input
+            type="password"
+            value={server.turnServer?.credential ?? ""}
+            onChange={(event) =>
+              setServer({
+                ...server,
+                turnServer: {
+                  urls: server.turnServer?.urls ?? [],
+                  username: server.turnServer?.username ?? "",
+                  credential: event.target.value,
+                },
+              })
+            }
+          />
+        </label>
+        <small>跨网络或开启客户端隔离的Wi‑Fi需要TURN；留空时仅尝试直连。修改后需停止并重新启动服务器。</small>
         <button onClick={saveConfiguration}>保存配置</button>
         <button
           className="server-launch"

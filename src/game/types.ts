@@ -244,6 +244,11 @@ export type ServerRecord = {
   hostTeam: Team;
   maxPlayers: number;
   allowSameTeam: boolean;
+  turnServer?: {
+    urls: string[];
+    username: string;
+    credential: string;
+  };
   map: Snapshot;
   players: ServerPlayer[];
   logs?: ServerLogEntry[];

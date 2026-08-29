@@ -87,12 +87,12 @@ type ServerInvitePayload = {
   hostTeam: Team;
   operatorCounts?: Record<Team, number>;
   serverId?: string | null;
+  iceServers?: RTCIceServer[];
 };
 
-const LAN_PEER_CONFIGURATION: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
-  iceCandidatePoolSize: 2,
-};
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.cloudflare.com:3478" },
+];
 
 type TeamSelectionState =
   | {
@@ -204,6 +204,10 @@ export default function Game3D() {
   const lastAutomaticRoomCodeRef = useRef<string | null>(null);
   const lanConnectionTimeoutRef = useRef<number | null>(null);
   const signalingSenderIdRef = useRef(crypto.randomUUID());
+  const serverIceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
+  const iceCandidateTypesRef = useRef(
+    new WeakMap<RTCPeerConnection, Set<string>>(),
+  );
   const clientActionSenderRef = useRef<(action: ClientAction) => boolean>(
     () => false,
   );
@@ -223,6 +227,7 @@ export default function Game3D() {
   const networkPendingPingsRef = useRef(new Map<string, number>());
   const networkLatencySamplesRef = useRef<number[]>([]);
   const networkLastPingAtRef = useRef(0);
+  const lastConnectionFailureRef = useRef<string | null>(null);
   const hostOperationQueueRef = useRef<Array<() => void>>([]);
   const hostOperationFlushTimerRef = useRef<number | null>(null);
   const networkReceivedRevisionRef = useRef(
@@ -901,6 +906,18 @@ export default function Game3D() {
     }
   };
   const launchServer = (server: ServerRecord) => {
+    serverIceServersRef.current = [
+      ...DEFAULT_ICE_SERVERS,
+      ...(server.turnServer?.urls.length
+        ? [
+            {
+              urls: server.turnServer.urls,
+              username: server.turnServer.username,
+              credential: server.turnServer.credential,
+            } satisfies RTCIceServer,
+          ]
+        : []),
+    ];
     dedicatedServerHostRef.current = true;
     setDedicatedServerHost(true);
     loadGame(server.map, "pku", server.id);
@@ -1366,6 +1383,31 @@ export default function Game3D() {
       };
       peer.addEventListener("icegatheringstatechange", listener);
     });
+  const peerConfiguration = (iceServers = serverIceServersRef.current) => ({
+      iceServers,
+      iceCandidatePoolSize: 2,
+    } satisfies RTCConfiguration),
+    watchIceCandidates = (peer: RTCPeerConnection) => {
+      const types = new Set<string>();
+      iceCandidateTypesRef.current.set(peer, types);
+      peer.addEventListener("icecandidate", (event) => {
+        const type = event.candidate?.candidate.match(/\btyp\s+(\w+)/)?.[1];
+        if (type) types.add(type);
+      });
+    },
+    connectionFailureText = (peer: RTCPeerConnection) => {
+      const types = iceCandidateTypesRef.current.get(peer) ?? new Set<string>(),
+        hasTurn = (peer.getConfiguration().iceServers ?? []).some((server) =>
+          (Array.isArray(server.urls) ? server.urls : [server.urls]).some(
+            (url) => url.startsWith("turn:" ) || url.startsWith("turns:"),
+          ),
+        );
+      if (!hasTurn)
+        return "直连失败：两端网络存在隔离或NAT限制，服务器尚未配置TURN中继";
+      if (!types.has("relay"))
+        return "中继失败：TURN地址、用户名或凭据不可用，未生成relay候选";
+      return "已生成TURN中继候选，但连接握手失败；请检查防火墙或重试";
+    };
   const appendChatMessage = (message: ChatMessage) => {
     if (chatMessagesRef.current.some((item) => item.id === message.id)) return;
     setChatMessages((current) => [...current, message].slice(-100));
@@ -1633,6 +1675,7 @@ export default function Game3D() {
         ).length,
       );
     channel.onopen = () => {
+      lastConnectionFailureRef.current = null;
       if (lanConnectionTimeoutRef.current != null) {
         window.clearTimeout(lanConnectionTimeoutRef.current);
         lanConnectionTimeoutRef.current = null;
@@ -1682,7 +1725,8 @@ export default function Game3D() {
       refreshConnectionCount();
       updateActiveServerPlayers();
       setLanStatus(
-        lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭",
+        lastConnectionFailureRef.current ??
+          (lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭"),
       );
       recordServerLog("player", "一名玩家离开服务器");
       if (!host) guestHasAuthoritativeStateRef.current = false;
@@ -2324,25 +2368,53 @@ export default function Game3D() {
     request: Extract<AutomaticSignalMessage, { kind: "join" }>,
   ) => {
     if (automaticHostPeersRef.current.has(request.clientId)) return;
-    const peer = new RTCPeerConnection(LAN_PEER_CONFIGURATION),
+    const peer = new RTCPeerConnection(peerConfiguration()),
       channel = peer.createDataChannel("qingbei-campaign");
+    watchIceCandidates(peer);
     automaticHostPeersRef.current.set(request.clientId, peer);
     automaticHostChannelsRef.current.set(request.clientId, channel);
     lanPeerRef.current = peer;
     lanPeersRef.current.add(peer);
     bindLanChannel(channel, true);
+    let disconnectedAt = 0;
     peer.addEventListener("connectionstatechange", () => {
-      if (["failed", "closed", "disconnected"].includes(peer.connectionState))
+      if (peer.connectionState === "connected") {
+        disconnectedAt = 0;
+        setLanStatus("玩家直连成功，正在同步战局");
+        return;
+      }
+      if (peer.connectionState === "disconnected") {
+        disconnectedAt = Date.now();
+        setLanStatus("玩家网络暂时中断，等待自动恢复…");
+        window.setTimeout(() => {
+          if (
+            peer.connectionState === "disconnected" &&
+            Date.now() - disconnectedAt >= 8_000
+          )
+            setLanStatus(
+              (lastConnectionFailureRef.current = connectionFailureText(peer)),
+            );
+        }, 8_100);
+        return;
+      }
+      if (["failed", "closed"].includes(peer.connectionState))
         automaticHostPeersRef.current.delete(request.clientId);
-      if (["failed", "closed", "disconnected"].includes(peer.connectionState))
+      if (["failed", "closed"].includes(peer.connectionState))
         automaticHostChannelsRef.current.delete(request.clientId);
+      if (peer.connectionState === "failed")
+        setLanStatus(
+          (lastConnectionFailureRef.current = connectionFailureText(peer)),
+        );
     });
     window.setTimeout(() => {
       if (["connected", "closed"].includes(peer.connectionState)) return;
+      setLanStatus(
+        (lastConnectionFailureRef.current = connectionFailureText(peer)),
+      );
       peer.close();
       automaticHostPeersRef.current.delete(request.clientId);
       automaticHostChannelsRef.current.delete(request.clientId);
-    }, 25_000);
+    }, 60_000);
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
     const operatorCounts = { pku: 0, thu: 0 };
@@ -2357,6 +2429,7 @@ export default function Game3D() {
       hostTeam: playerTeamRef.current,
       operatorCounts,
       serverId: activeServerIdRef.current,
+      iceServers: serverIceServersRef.current,
     };
     await publishAutomaticSignal(roomCode, {
       kind: "offer",
@@ -2494,8 +2567,9 @@ export default function Game3D() {
     window.setTimeout(() => void publishJoin(), 700);
   };
   const createManualLanHost = async () => {
-    const peer = new RTCPeerConnection(LAN_PEER_CONFIGURATION),
+    const peer = new RTCPeerConnection(peerConfiguration()),
       channel = peer.createDataChannel("qingbei-campaign");
+    watchIceCandidates(peer);
     lanPeerRef.current = peer;
     lanPeersRef.current.add(peer);
     bindLanChannel(channel, true);
@@ -2515,6 +2589,7 @@ export default function Game3D() {
         hostTeam: playerTeamRef.current,
         operatorCounts,
         serverId: activeServerIdRef.current,
+        iceServers: serverIceServersRef.current,
       }),
     );
     setLanStatus("邀请已生成：复制下方代码给一名玩家");
@@ -2570,6 +2645,7 @@ export default function Game3D() {
     team: Team,
   ) => {
     try {
+      lastConnectionFailureRef.current = null;
       guestHasAuthoritativeStateRef.current = false;
       if (
         lanPeerRef.current &&
@@ -2580,27 +2656,49 @@ export default function Game3D() {
       }
       lanConnectionStageRef.current = "connecting";
       setLanConnectionStage("connecting");
-      const peer = new RTCPeerConnection(LAN_PEER_CONFIGURATION);
+      const peer = new RTCPeerConnection(
+        peerConfiguration(invite.iceServers ?? DEFAULT_ICE_SERVERS),
+      );
+      watchIceCandidates(peer);
       setLanTeam(team);
       lanTeamRef.current = team;
       lanPeerRef.current = peer;
       lanPeersRef.current.add(peer);
       peer.ondatachannel = (event) => bindLanChannel(event.channel, false);
+      let disconnectedAt = 0;
       peer.addEventListener("connectionstatechange", () => {
         if (peer.connectionState === "connected") {
+          disconnectedAt = 0;
           setLanStatus("直连成功，正在同步主机地图…");
           return;
         }
-        if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+        if (peer.connectionState === "disconnected") {
+          disconnectedAt = Date.now();
+          setLanStatus("网络短暂中断，等待自动恢复…");
+          window.setTimeout(() => {
+            if (
+              peer.connectionState !== "disconnected" ||
+              Date.now() - disconnectedAt < 8_000
+            )
+              return;
+            lanConnectionStageRef.current = "failed";
+            setLanConnectionStage("failed");
+            setLanStatus(
+              (lastConnectionFailureRef.current = connectionFailureText(peer)),
+            );
+          }, 8_100);
+          return;
+        }
+        if (peer.connectionState === "failed") {
           if (lanConnectionTimeoutRef.current != null) {
             window.clearTimeout(lanConnectionTimeoutRef.current);
             lanConnectionTimeoutRef.current = null;
           }
-          if (lanConnectionStageRef.current === "connecting") {
-            lanConnectionStageRef.current = "failed";
-            setLanConnectionStage("failed");
-            setLanStatus("直连失败，请重试；主机无需重新创建服务器");
-          }
+          lanConnectionStageRef.current = "failed";
+          setLanConnectionStage("failed");
+          setLanStatus(
+            (lastConnectionFailureRef.current = connectionFailureText(peer)),
+          );
         }
       });
       await peer.setRemoteDescription(invite.sdp);
@@ -2625,8 +2723,10 @@ export default function Game3D() {
           peer.close();
           lanConnectionStageRef.current = "failed";
           setLanConnectionStage("failed");
-          setLanStatus("连接主机超时；可直接重试，无需重新输入房间码");
-        }, 18_000);
+          setLanStatus(
+            (lastConnectionFailureRef.current = connectionFailureText(peer)),
+          );
+        }, 45_000);
       } else {
         setLanOutput(JSON.stringify(peer.localDescription));
         setLanStatus("兼容模式回应已生成，请发回主机");
