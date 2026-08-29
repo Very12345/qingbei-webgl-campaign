@@ -232,8 +232,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(mapGroup);
     const regions = osmRegions as unknown as Record<string, any>;
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
-      windowDetailMeshes: THREE.InstancedMesh[] = [],
-      roofDetailMeshes: THREE.InstancedMesh[] = [];
+      windowDetailMeshes: THREE.InstancedMesh[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main,
       tsinghuaCampus = regions.main.campuses?.find(
@@ -1478,12 +1477,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             zs = pts.map((p: number[]) => p[1]),
             width = Math.max(...xs) - Math.min(...xs),
             depth = Math.max(...zs) - Math.min(...zs);
-          detailDummy.position.set(x, base + h + 0.09, z);
+          detailDummy.position.set(x, base + h + 0.035, z);
           detailDummy.rotation.set(0, ((b.osmId % 12) * Math.PI) / 12, 0);
           detailDummy.scale.set(
-            Math.min(0.42, width * 0.28),
-            0.18,
-            Math.min(0.38, depth * 0.26),
+            Math.min(0.24, width * 0.16),
+            0.07,
+            Math.min(0.22, depth * 0.15),
           );
           detailDummy.updateMatrix();
           roofMatrices.push(detailDummy.matrix.clone());
@@ -1530,17 +1529,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const roofFixtures = new THREE.InstancedMesh(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshStandardMaterial({
-          color: 0x6e7774,
-          roughness: 0.7,
-          metalness: 0.12,
+          color: 0x87918d,
+          roughness: 0.82,
+          metalness: 0.04,
         }),
         roofMatrices.length,
       );
       roofMatrices.forEach((m, i) => roofFixtures.setMatrixAt(i, m));
       roofFixtures.instanceMatrix.needsUpdate = true;
-      roofFixtures.castShadow = true;
+      roofFixtures.castShadow = false;
       roofFixtures.receiveShadow = true;
-      roofDetailMeshes.push(roofFixtures);
       mapGroup.add(roofFixtures);
       const waterMat = new THREE.MeshStandardMaterial({
         color: 0x478ca5,
@@ -6463,9 +6461,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         });
         windowDetailMeshes.forEach(
           (mesh) => (mesh.visible = activeQualityProfile.windowDetails),
-        );
-        roofDetailMeshes.forEach(
-          (mesh) => (mesh.visible = activeQualityProfile.roofDetails),
         );
         performanceWindowAt = now;
         performanceFrameTime = 0;
