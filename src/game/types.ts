@@ -57,10 +57,11 @@ export type UnitState = {
   moveModifier?: number;
   morale?: number;
   retreating?: boolean;
-  skin?: "ustc" | "zju";
+  skin?: "ustc" | "zju" | "nju" | "fdu" | "sjtu";
   transport?: TransportKind;
   transportGroupId?: string;
   transportModel?: import("./research").ResearchId;
+  transportOutsidePenalty?: boolean;
 };
 
 export type TimedStatus = {

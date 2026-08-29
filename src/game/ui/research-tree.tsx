@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { RESEARCH_DEFINITIONS, type ResearchId } from "../research";
+import {
+  RESEARCH_DEFINITIONS,
+  researchIdsForTeam,
+  type ResearchId,
+} from "../research";
 import type { CampaignState, Team } from "../types";
 
 export function ResearchTree({
@@ -20,10 +24,16 @@ export function ResearchTree({
   const [tab, setTab] = useState<"research" | "production">("research");
   const active = campaign.research.active[team];
   const production = campaign.research.production[team];
-  const branches: ResearchId[][] = [
-    ["bike", "ebike"],
-    ["bus", "armored_bus"],
-  ];
+  const branches: ResearchId[][] =
+    team === "pku"
+      ? [
+          ["pku_bike", "pku_slogan_bike", "pku_phone_bike"],
+          ["bus", "large_bus"],
+        ]
+      : [
+          ["thu_bike", "thu_purple_bike"],
+          ["bus", "large_bus"],
+        ];
   const renderResearchNode = (id: ResearchId) => {
     const definition = RESEARCH_DEFINITIONS[id],
       completed = campaign.research.completed[team].includes(id),
@@ -102,15 +112,20 @@ export function ResearchTree({
         <main className="research-tree-canvas">
           {branches.map((branch) => (
             <section className="research-branch" key={branch[0]}>
-              {renderResearchNode(branch[0])}
-              <i className="research-branch-line" aria-hidden="true" />
-              {renderResearchNode(branch[1])}
+              {branch.map((id, index) => (
+                <div className="research-branch-step" key={id}>
+                  {index > 0 && (
+                    <i className="research-branch-line" aria-hidden="true" />
+                  )}
+                  {renderResearchNode(id)}
+                </div>
+              ))}
             </section>
           ))}
         </main>
       ) : (
         <main className="research-tree-canvas production-tree-canvas">
-          {(Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]).map((id) => {
+          {researchIdsForTeam(team).map((id) => {
             const definition = RESEARCH_DEFINITIONS[id],
               unlocked = campaign.research.completed[team].includes(id),
               producing = production?.researchId === id,

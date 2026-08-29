@@ -20,6 +20,7 @@ import { pointInPolygon } from "../create-game";
 import {
   RESEARCH_DEFINITIONS,
   hasResearch,
+  researchIdsForTeam,
   type ResearchId,
 } from "../research";
 import { BASE_TEAM_UNIT_CAP, INITIAL_PRODUCTION_POPULATION_BUDGET, TEAM_COLOR, productionSlots } from "../config";
@@ -234,7 +235,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       windowDetailMeshes: THREE.InstancedMesh[] = [],
       roofDetailMeshes: THREE.InstancedMesh[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
-    const regionForX = (_x: number) => regions.main;
+    const regionForX = (_x: number) => regions.main,
+      tsinghuaCampus = regions.main.campuses?.find(
+        (campus: { name: string }) => campus.name === "清华大学",
+      ),
+      insideTsinghuaCampus = (x: number, z: number) =>
+        !!tsinghuaCampus && pointInPolygon(x, z, tsinghuaCampus.points);
     const footprintArea = (points: readonly (readonly number[])[]) =>
       Math.abs(
         points.reduce((sum, point, index) => {
@@ -2824,6 +2830,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         thu: makeBallTexture("thu-seal.png", "清", "#6f3291", "#6f2c91"),
         ustc: makeBallTexture(null, "科", "#174f78", "#174f78"),
         zju: makeBallTexture(null, "浙", "#175b9b", "#175b9b"),
+        nju: makeBallTexture(null, "南", "#6f2b86", "#6f2b86"),
+        fdu: makeBallTexture(null, "复", "#174a9b", "#174a9b"),
+        sjtu: makeBallTexture(null, "交", "#b11f2d", "#b11f2d"),
       };
     const routeDotCanvas = document.createElement("canvas");
     routeDotCanvas.width = 64;
@@ -2911,6 +2920,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           emissive: 0x175b9b,
           emissiveIntensity: 0.035,
         }),
+        nju: new THREE.MeshStandardMaterial({
+          color: 0xffffff, map: unitBallTextures.nju, roughness: 0.24,
+          metalness: 0.08, emissive: 0x6f2b86, emissiveIntensity: 0.035,
+        }),
+        fdu: new THREE.MeshStandardMaterial({
+          color: 0xffffff, map: unitBallTextures.fdu, roughness: 0.24,
+          metalness: 0.08, emissive: 0x174a9b, emissiveIntensity: 0.035,
+        }),
+        sjtu: new THREE.MeshStandardMaterial({
+          color: 0xffffff, map: unitBallTextures.sjtu, roughness: 0.24,
+          metalness: 0.08, emissive: 0xb11f2d, emissiveIntensity: 0.035,
+        }),
       },
       unitLimbMaterial = new THREE.MeshStandardMaterial({
         color: 0x242824,
@@ -2970,6 +2991,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         unitBodyMaterials.thu,
         unitBodyMaterials.ustc,
         unitBodyMaterials.zju,
+        unitBodyMaterials.nju,
+        unitBodyMaterials.fdu,
+        unitBodyMaterials.sjtu,
         unitLimbMaterial,
         unitGlowMaterials.pku,
         unitGlowMaterials.thu,
@@ -3001,6 +3025,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           unitBodyMaterials.zju,
           unitInstanceCapacity,
         ),
+        nju: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.nju,
+          unitInstanceCapacity,
+        ),
+        fdu: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.fdu,
+          unitInstanceCapacity,
+        ),
+        sjtu: new THREE.InstancedMesh(
+          farUnitBodyGeometry,
+          unitBodyMaterials.sjtu,
+          unitInstanceCapacity,
+        ),
       },
       farUnitDummy = new THREE.Object3D(),
       detailedUnitIds = new Set<number>(),
@@ -3021,32 +3060,37 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         thu: new THREE.MeshStandardMaterial({ color: 0x704096, roughness: 0.48 }),
       },
       bikeMaterials = {
-        pku: new THREE.MeshStandardMaterial({ color: 0xff405d, roughness: 0.42 }),
-        thu: new THREE.MeshStandardMaterial({ color: 0xb97ae4, roughness: 0.42 }),
+        pku: new THREE.MeshStandardMaterial({ color: 0xf2ce31, roughness: 0.42 }),
+        thu: new THREE.MeshStandardMaterial({ color: 0xf2ce31, roughness: 0.42 }),
       },
       transportMeshes = {
         busPku: new THREE.InstancedMesh(busGeometry, busMaterials.pku, 160),
         busThu: new THREE.InstancedMesh(busGeometry, busMaterials.thu, 160),
-        armoredPku: new THREE.InstancedMesh(
+        largePku: new THREE.InstancedMesh(
           busGeometry,
           new THREE.MeshStandardMaterial({ color: 0x61202a, metalness: 0.35 }),
           160,
         ),
-        armoredThu: new THREE.InstancedMesh(
+        largeThu: new THREE.InstancedMesh(
           busGeometry,
           new THREE.MeshStandardMaterial({ color: 0x443052, metalness: 0.35 }),
           160,
         ),
-        bikePku: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.pku, 3200),
-        bikeThu: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.thu, 3200),
-        ebikePku: new THREE.InstancedMesh(
+        pkuBike: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.pku, 3200),
+        pkuSlogan: new THREE.InstancedMesh(
+          bikeGeometry,
+          new THREE.MeshStandardMaterial({ color: 0xffd51f, emissive: 0x5a4400 }),
+          3200,
+        ),
+        pkuPhone: new THREE.InstancedMesh(
           bikeGeometry,
           new THREE.MeshStandardMaterial({ color: 0xff9f31, emissive: 0x5b2700 }),
           3200,
         ),
-        ebikeThu: new THREE.InstancedMesh(
+        thuBike: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.thu, 3200),
+        thuPurple: new THREE.InstancedMesh(
           bikeGeometry,
-          new THREE.MeshStandardMaterial({ color: 0x62c8ff, emissive: 0x143a55 }),
+          new THREE.MeshStandardMaterial({ color: 0x9b55cc, emissive: 0x2d103e }),
           3200,
         ),
       },
@@ -3226,7 +3270,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     };
     const updateFarUnitInstances = () => {
       if (useLegacyUnitRenderer) return;
-      const counts = { pku: 0, thu: 0, ustc: 0, zju: 0 };
+      const counts = {
+        pku: 0,
+        thu: 0,
+        ustc: 0,
+        zju: 0,
+        nju: 0,
+        fdu: 0,
+        sjtu: 0,
+      };
       for (const unit of gameRef.current.units) {
         if (unit.transport === "bus") continue;
         if (detailedUnitIds.has(unit.id)) continue;
@@ -3255,12 +3307,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const transportCounts = {
           busPku: 0,
           busThu: 0,
-          armoredPku: 0,
-          armoredThu: 0,
-          bikePku: 0,
-          bikeThu: 0,
-          ebikePku: 0,
-          ebikeThu: 0,
+          largePku: 0,
+          largeThu: 0,
+          pkuBike: 0,
+          pkuSlogan: 0,
+          pkuPhone: 0,
+          thuBike: 0,
+          thuPurple: 0,
         },
         busLeaders = new Map<string, UnitState>();
       for (const unit of gameRef.current.units) {
@@ -3271,13 +3324,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         if (unit.transport !== "bike") continue;
         const key =
-            unit.transportModel === "ebike"
-              ? unit.team === "pku"
-                ? "ebikePku"
-                : "ebikeThu"
-              : unit.team === "pku"
-                ? "bikePku"
-                : "bikeThu",
+            unit.transportModel === "pku_slogan_bike"
+              ? "pkuSlogan"
+              : unit.transportModel === "pku_phone_bike"
+                ? "pkuPhone"
+                : unit.transportModel === "thu_purple_bike"
+                  ? "thuPurple"
+                  : unit.team === "pku"
+                    ? "pkuBike"
+                    : "thuBike",
           index = transportCounts[key]++;
         transportDummy.position.set(
           unit.x,
@@ -3291,10 +3346,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       for (const leader of busLeaders.values()) {
         const key =
-            leader.transportModel === "armored_bus"
+            leader.transportModel === "large_bus"
               ? leader.team === "pku"
-                ? "armoredPku"
-                : "armoredThu"
+                ? "largePku"
+                : "largeThu"
               : leader.team === "pku"
                 ? "busPku"
                 : "busThu",
@@ -3310,7 +3365,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           0,
         );
         transportDummy.scale.setScalar(
-          leader.transportModel === "armored_bus" ? 1.15 : 1,
+          leader.transportModel === "large_bus" ? 1.15 : 1,
         );
         transportDummy.updateMatrix();
         transportMeshes[key].setMatrixAt(index, transportDummy.matrix);
@@ -4309,7 +4364,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         attackModifier = 1,
         refresh = true,
         supply = 100,
-        skin?: "ustc" | "zju",
+        skin?: UnitState["skin"],
       ) => {
         let id = nextUnitId();
         const actualCount = count * 5;
@@ -4616,12 +4671,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       setOutcome = (winner: Team, reason: string) => {
         const campaign = gameRef.current.campaign;
         if (campaign.outcome) return;
-        if (winner === "pku" && reason.includes("求真书院")) {
-          const qz = gameRef.current.sites.find(
-            (site) => site.name === "求真书院" && !site.destroyed,
-          );
-          if (!qz || qz.team !== "pku") return;
-        }
         campaign.outcome = {
           winner,
           reason,
@@ -4635,12 +4684,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           winner,
           title:
             winner === "pku"
-              ? "胜利广播：解放清华园"
-              : "战役广播：燕园防线失守",
+              ? "胜利广播：北大全面胜利"
+              : `胜利广播：${campaign.thuFactionName}全面胜利`,
           body:
             winner === "pku"
-              ? `求真书院已经被北大控制。${reason}，战役结果正式记为北大胜利；地图仍可继续游玩。`
-              : `${reason}，战役结果正式记为清华胜利；地图仍可继续游玩。`,
+              ? `${reason}，战役结果正式记为北大胜利；地图仍可继续游玩。`
+              : `${reason}，战役结果正式记为${campaign.thuFactionName}胜利；地图仍可继续游玩。`,
         });
       };
     let combatPulse = 0;
@@ -4727,45 +4776,37 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           enemyDecision = decisionEffectsFor(g.campaign, enemy.team),
           unitWaterPenalty = insideWater(unit.x, unit.z) ? 0.5 : 1,
           enemyWaterPenalty = insideWater(enemy.x, enemy.z) ? 0.5 : 1,
-          unitTransportAttack =
-            unit.transportModel === "armored_bus"
-              ? 1.8
-              : unit.transport === "bus"
-                ? 1.5
-                : unit.transportModel === "ebike"
-                  ? 1.2
-                  : unit.transport === "bike"
-                    ? 1.1
-                    : 1,
-          enemyTransportAttack =
-            enemy.transportModel === "armored_bus"
-              ? 1.8
-              : enemy.transport === "bus"
-                ? 1.5
-                : enemy.transportModel === "ebike"
-                  ? 1.2
-                  : enemy.transport === "bike"
-                    ? 1.1
-                    : 1,
-          unitTransportDefense =
-            unit.transportModel === "armored_bus"
-              ? 1 / 3
-              : unit.transport === "bus"
-                ? 0.5
-                : 1,
-          enemyTransportDefense =
-            enemy.transportModel === "armored_bus"
-              ? 1 / 3
-              : enemy.transport === "bus"
-                ? 0.5
-                : 1,
+          unitTransport = unit.transportModel
+            ? RESEARCH_DEFINITIONS[unit.transportModel]
+            : undefined,
+          enemyTransport = enemy.transportModel
+            ? RESEARCH_DEFINITIONS[enemy.transportModel]
+            : undefined,
+          unitOutsidePenalty =
+            unit.transportModel === "thu_purple_bike" &&
+            !insideTsinghuaCampus(unit.x, unit.z),
+          enemyOutsidePenalty =
+            enemy.transportModel === "thu_purple_bike" &&
+            !insideTsinghuaCampus(enemy.x, enemy.z),
+          unitTransportAttack = unitTransport?.attackMultiplier ?? 1,
+          enemyTransportAttack = enemyTransport?.attackMultiplier ?? 1,
+          unitTransportDefense = unitTransport?.damageTakenMultiplier ?? 1,
+          enemyTransportDefense = enemyTransport?.damageTakenMultiplier ?? 1,
           unitMorale = Math.min(
             150,
-            (unit.morale ?? 100) * unitStatus.morale * (unitDecision.morale ?? 1),
+            (unit.morale ?? 100) *
+              unitStatus.morale *
+              (unitDecision.morale ?? 1) *
+              (unitTransport?.moraleMultiplier ?? 1) *
+              (unitOutsidePenalty ? unitTransport?.outsideCampusMorale ?? 1 : 1),
           ),
           enemyMorale = Math.min(
             150,
-            (enemy.morale ?? 100) * enemyStatus.morale * (enemyDecision.morale ?? 1),
+            (enemy.morale ?? 100) *
+              enemyStatus.morale *
+              (enemyDecision.morale ?? 1) *
+              (enemyTransport?.moraleMultiplier ?? 1) *
+              (enemyOutsidePenalty ? enemyTransport?.outsideCampusMorale ?? 1 : 1),
           ),
           unitPower =
             (unit.attackModifier ?? 1) *
@@ -4845,7 +4886,19 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (dead.has(unit.id) || unit.retreating) continue;
         if ((unit.id + combatPulse) % combatStride !== 0) continue;
         const status = unitStatusModifiers(unit),
-          effectiveMorale = Math.min(150, (unit.morale ?? 100) * status.morale),
+          transport = unit.transportModel
+            ? RESEARCH_DEFINITIONS[unit.transportModel]
+            : undefined,
+          outsidePenalty =
+            unit.transportModel === "thu_purple_bike" &&
+            !insideTsinghuaCampus(unit.x, unit.z),
+          effectiveMorale = Math.min(
+            150,
+            (unit.morale ?? 100) *
+              status.morale *
+              (transport?.moraleMultiplier ?? 1) *
+              (outsidePenalty ? transport?.outsideCampusMorale ?? 1 : 1),
+          ),
           alive = aliveByTeam[unit.team],
           casualtyRatio =
             g.deaths[unit.team] /
@@ -5110,17 +5163,40 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         site.orderTarget = undefined;
         site.orderPath = undefined;
         if (site.type === "target" && newTeam === "pku") {
-          rebuildBuildings();
-          rebuildCommandLines();
-          setOutcome("pku", "攻克求真书院");
+          fireEvent("qz_strategic_buff", () => {
+            g.resources.pku += 120;
+            g.campaign.attackBonus.pku *= 1.12;
+            addTimedStatus(
+              "qz_strategic_buff_status",
+              "求真突破",
+              "pku",
+              336,
+              1.12,
+              1.05,
+              1.15,
+              { production: 1.1 },
+            );
+          });
         }
         if (
           (site.type === "capital" || site.name.includes("元培学院")) &&
           oldTeam === "pku" &&
           newTeam === "thu"
         ) {
-          setOutcome("thu", "清华攻克元培学院");
-          fireEvent("yuanpei_fallen");
+          fireEvent("yuanpei_fallen", () => {
+            g.resources.thu += 120;
+            g.campaign.attackBonus.thu *= 1.12;
+            addTimedStatus(
+              "yuanpei_strategic_buff_status",
+              "元培突破",
+              "thu",
+              336,
+              1.12,
+              1.05,
+              1.15,
+              { production: 1.1 },
+            );
+          });
         }
         if (!(site.type === "target" && newTeam === "pku")) {
           rebuildBuildings();
@@ -5128,7 +5204,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         setNotice(
           site.type === "target" && newTeam === "pku"
-            ? `胜利：北京大学已攻克求真书院（战局仍可继续）`
+            ? `北京大学攻克求真书院并获得战略加成；战役继续至一方全部据点失守`
             : `${site.displayName ?? site.name}已被${newTeam === "pku" ? "北大" : g.campaign.thuFactionName}控制`,
         );
       }
@@ -5154,12 +5230,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const game = gameRef.current,
           campaign = game.campaign,
           definition = RESEARCH_DEFINITIONS[kind],
-          isBus = kind === "bus" || kind === "armored_bus",
-          equipmentRequired = isBus ? 1 : 10;
+          isBus = definition.category === "bus",
+          equipmentRequired = isBus ? 1 : definition.passengers;
         if (!hasResearch(campaign, team, kind)) return false;
         if (campaign.research.stockpile[team][kind] < equipmentRequired)
           return false;
-        const peopleRequired = kind === "armored_bus" ? 50 : isBus ? 40 : 10,
+        const peopleRequired = definition.passengers,
           sites = game.sites.filter(
             (site) =>
               site.team === team &&
@@ -5215,7 +5291,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             campaign.elapsedHours + definition.cooldownHours;
           campaign.research.lastBusAllocation[team] = campaign.elapsedHours;
         } else {
-          idle.slice(0, 10).forEach((unit) => {
+          idle.slice(0, peopleRequired).forEach((unit) => {
             unit.transport = "bike";
             unit.transportGroupId = undefined;
             unit.transportModel = kind;
@@ -5330,16 +5406,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
       }
       for (const team of ["pku", "thu"] as Team[])
-        for (const kind of [
-          "armored_bus",
-          "ebike",
-          "bus",
-          "bike",
-        ] as ResearchId[]) {
+        for (const kind of [...researchIdsForTeam(team)].reverse()) {
           if (!hasResearch(campaign, team, kind)) continue;
           if (campaign.research.stockpile[team][kind] <= 0) continue;
           const definition = RESEARCH_DEFINITIONS[kind],
-            isBus = kind === "bus" || kind === "armored_bus",
+            isBus = definition.category === "bus",
             last =
               isBus
                 ? campaign.research.lastBusAllocation[team]
@@ -5784,7 +5855,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             { production: 1.15, defense: 1.1 },
           );
           g.units
-            .filter((unit) => unit.team === "thu")
+            .filter((unit) => unit.team === "thu" && !unit.skin)
             .forEach((unit) => (unit.skin = "ustc"));
           g.sites
             .filter((site) => site.team === "thu" && !site.destroyed)
@@ -5794,6 +5865,55 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           rebuildUnits();
           rebuildBuildings();
         });
+      const deployExternalTeam = (
+        skin: NonNullable<UnitState["skin"]>,
+        label: string,
+        people: number,
+        attack: number,
+        morale: number,
+        useBus = false,
+      ) => {
+        const pkuPeople = teamPopulation("pku"),
+          thuPeople = teamPopulation("thu"),
+          ally: Team = pkuPeople <= thuPeople ? "pku" : "thu",
+          enemy: Team = ally === "pku" ? "thu" : "pku",
+          candidateSites = g.sites.filter(
+            (site) =>
+              site.team === ally &&
+              !site.destroyed &&
+              (!useBus || siteTouchesRoad(site)),
+          ),
+          border = candidateSites.sort((a, b) => b.x - a.x)[0];
+        if (!border) return;
+        const firstId = nextUnitId();
+        border.displayName = `${label}·${border.name}`;
+        spawnUnitsAt(border, ally, Math.ceil(people / 5), attack, false, 130, skin);
+        const guests = g.units.filter((unit) => unit.id >= firstId);
+        guests.forEach((unit) => (unit.morale = morale));
+        if (useBus) {
+          const groupId = `${skin}-bus-${Math.floor(campaign.elapsedHours)}`;
+          guests.slice(0, people).forEach((unit) => {
+            unit.transport = "bus";
+            unit.transportGroupId = groupId;
+            unit.transportModel = "bus";
+          });
+        }
+        const target = g.sites
+          .filter((site) => site.team === enemy && !site.destroyed)
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - border.x, a.z - border.z) -
+              Math.hypot(b.x - border.x, b.z - border.z),
+          )[0];
+        rebuildUnits();
+        rebuildBuildings();
+        if (target) {
+          const stance = border.stance;
+          border.stance = "standby";
+          issueOrder(ally, border, target, people, true);
+          border.stance = stance;
+        }
+      };
       if (campaign.elapsedHours >= 120)
         fireEvent("zju_invasion", () => {
           const pkuPeople = g.units
@@ -5826,6 +5946,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
           rebuildBuildings();
         });
+      if (campaign.elapsedHours >= 240)
+        fireEvent("nju_invasion", () =>
+          deployExternalTeam("nju", "南雍气象站", 20, 1.05, 135),
+        );
+      if (g.deaths.pku + g.deaths.thu >= 160)
+        fireEvent("fdu_invasion", () =>
+          deployExternalTeam("fdu", "相辉交换驻地", 20, 1.08, 145),
+        );
+      if (campaign.elapsedHours >= 360)
+        fireEvent("sjtu_invasion", () =>
+          deployExternalTeam("sjtu", "闵行导航终点", 30, 1.12, 140, true),
+        );
       if (campaign.warUnlocked && qz && thuSites < 48)
         fireEvent("thu_alarm", () => {
           qz.supply = 100;
@@ -5943,19 +6075,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         hasFired: (id) => campaign.firedEvents.includes(id),
         trigger: (id, card, apply) => fireEvent(id, apply, card),
       });
-      if (campaign.outcome) {
+      if (!campaign.outcome) {
         const pkuAlive = g.sites.some(
             (site) => site.team === "pku" && !site.destroyed,
           ),
           thuAlive = g.sites.some(
             (site) => site.team === "thu" && !site.destroyed,
           );
-        if (!pkuAlive || !thuAlive)
-          campaign.outcome = {
-            winner: pkuAlive ? "pku" : "thu",
-            reason: "完全消灭对方势力",
-            atHour: campaign.elapsedHours,
-          };
+        if (pkuAlive !== thuAlive)
+          setOutcome(
+            pkuAlive ? "pku" : "thu",
+            `${pkuAlive ? g.campaign.thuFactionName : "北大"}全部据点失守`,
+          );
       }
     }, 1000);
     const aiTimer = window.setInterval(() => {
@@ -5995,9 +6126,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         routeLimit = aiTeam === "thu" ? 10 : 8,
         waveLimit = aiTeam === "thu" ? 4 : 3;
       if (!g.campaign.research.active[aiTeam]) {
-        const researchChoices = (
-          Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]
-        ).filter(
+        const researchChoices = researchIdsForTeam(aiTeam).filter(
           (id) =>
             !hasResearch(g.campaign, aiTeam, id) &&
             RESEARCH_DEFINITIONS[id].requires.every((required) =>
@@ -6524,6 +6653,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.ustc.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.zju.emissiveIntensity = 0.035 + night * 0.24;
+      unitBodyMaterials.nju.emissiveIntensity = 0.035 + night * 0.24;
+      unitBodyMaterials.fdu.emissiveIntensity = 0.035 + night * 0.24;
+      unitBodyMaterials.sjtu.emissiveIntensity = 0.035 + night * 0.24;
       lights.forEach(
         (light, index) =>
           (light.intensity =
@@ -6672,6 +6804,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             )
               disembarkBusGroup(u.transportGroupId);
           }
+          const transportDefinition = u.transportModel
+              ? RESEARCH_DEFINITIONS[u.transportModel]
+              : undefined,
+            outsideCampusPenalty =
+              u.transportModel === "thu_purple_bike" &&
+              !insideTsinghuaCampus(u.x, u.z);
+          u.transportOutsidePenalty = outsideCampusPenalty;
           const gridIndex = navIndex(navGrid, u.x, u.z),
             unitStatus = unitStatusModifiers(u),
             unitDecision = decisionEffectsFor(g.campaign, u.team),
@@ -6686,15 +6825,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 ? 0.68
                 : 1,
             transportSpeed =
-              u.transportModel === "armored_bus"
-                ? 8
-                : u.transport === "bus"
-                  ? 10
-                  : u.transportModel === "ebike"
-                    ? 7
-                    : u.transport === "bike"
-                      ? 5
-                      : 1,
+              (transportDefinition?.movementMultiplier ?? 1) *
+              (outsideCampusPenalty
+                ? transportDefinition?.outsideCampusMovement ?? 1
+                : 1),
             s =
               roadSpeed *
               terrainSpeed *

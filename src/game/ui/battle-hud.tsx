@@ -24,7 +24,9 @@ export function WarOverview({
       {campaign.outcome && (
         <div className={`outcome ${campaign.outcome.winner}`}>
           <strong>
-            {campaign.outcome.winner === "pku" ? "北大胜利" : "清华胜利"}
+            {campaign.outcome.winner === "pku"
+              ? "北大胜利"
+              : `${campaign.thuFactionName}胜利`}
           </strong>
           <small>{campaign.outcome.reason} · 战局可继续</small>
         </div>

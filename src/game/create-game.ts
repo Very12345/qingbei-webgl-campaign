@@ -390,7 +390,7 @@ export function makeFreshGame(): GameData {
     sites,
     units,
     campaign: {
-      rulesVersion: 2,
+      rulesVersion: 3,
       startDateISO: "2026-08-16T08:00:00+08:00",
       elapsedHours: 0,
       firedEvents: [],

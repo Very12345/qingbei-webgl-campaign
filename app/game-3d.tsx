@@ -300,6 +300,7 @@ export default function Game3D() {
       if (
         campaign.research.active[team] ||
         campaign.research.completed[team].includes(id) ||
+        (definition.team !== "both" && definition.team !== team) ||
         !definition.requires.every((required) =>
           campaign.research.completed[team].includes(required),
         )
@@ -329,7 +330,8 @@ export default function Game3D() {
         definition = RESEARCH_DEFINITIONS[id];
       if (
         campaign.research.production[team] ||
-        !campaign.research.completed[team].includes(id)
+        !campaign.research.completed[team].includes(id) ||
+        (definition.team !== "both" && definition.team !== team)
       )
         return false;
       if (game.resources[team] < definition.deploymentCost) {
@@ -802,7 +804,7 @@ export default function Game3D() {
         normalizedCampaign: CampaignState = {
           ...defaults,
           ...campaign,
-          rulesVersion: 2,
+          rulesVersion: 3,
           startDateISO: campaign.startDateISO || defaults.startDateISO,
           elapsedHours: Number.isFinite(campaign.elapsedHours)
             ? campaign.elapsedHours
@@ -852,17 +854,40 @@ export default function Game3D() {
       normalizedCampaign.research.active ??= { pku: null, thu: null };
       normalizedCampaign.research.completed ??= { pku: [], thu: [] };
       normalizedCampaign.research.production ??= { pku: null, thu: null };
-      normalizedCampaign.research.stockpile ??= {
-        pku: { bike: 0, ebike: 0, bus: 0, armored_bus: 0 },
-        thu: { bike: 0, ebike: 0, bus: 0, armored_bus: 0 },
+      normalizedCampaign.research.stockpile ??= defaults.research.stockpile;
+      const migrateResearchId = (id: string, team: Team): ResearchId => {
+        if (id === "bike") return team === "pku" ? "pku_bike" : "thu_bike";
+        if (id === "ebike")
+          return team === "pku" ? "pku_phone_bike" : "thu_purple_bike";
+        if (id === "armored_bus") return "large_bus";
+        return id as ResearchId;
       };
       for (const team of ["pku", "thu"] as Team[]) {
-        const stockpile = normalizedCampaign.research.stockpile[team];
+        const stockpile = normalizedCampaign.research.stockpile[team] as unknown as Record<string, number>,
+          migratedCompleted = (normalizedCampaign.research.completed[team] as unknown as string[]).map(
+            (id) => migrateResearchId(id, team),
+          );
+        normalizedCampaign.research.completed[team] = [
+          ...new Set(migratedCompleted),
+        ];
+        const active = normalizedCampaign.research.active[team];
+        if (active) active.id = migrateResearchId(active.id, team);
+        const production = normalizedCampaign.research.production[team];
+        if (production)
+          production.researchId = migrateResearchId(
+            production.researchId,
+            team,
+          );
         normalizedCampaign.research.stockpile[team] = {
-          bike: stockpile.bike ?? 0,
-          ebike: stockpile.ebike ?? 0,
+          pku_bike: team === "pku" ? stockpile.pku_bike ?? stockpile.bike ?? 0 : 0,
+          pku_slogan_bike: stockpile.pku_slogan_bike ?? 0,
+          pku_phone_bike:
+            team === "pku" ? stockpile.pku_phone_bike ?? stockpile.ebike ?? 0 : 0,
+          thu_bike: team === "thu" ? stockpile.thu_bike ?? stockpile.bike ?? 0 : 0,
+          thu_purple_bike:
+            team === "thu" ? stockpile.thu_purple_bike ?? stockpile.ebike ?? 0 : 0,
           bus: stockpile.bus ?? 0,
-          armored_bus: stockpile.armored_bus ?? 0,
+          large_bus: stockpile.large_bus ?? stockpile.armored_bus ?? 0,
         };
       }
       normalizedCampaign.research.lastBusAllocation ??= {
@@ -890,6 +915,13 @@ export default function Game3D() {
           qz.displayName = qz.name;
         }
       }
+      if (
+        legacyRulesVersion < 3 &&
+        normalizedCampaign.outcome &&
+        (normalizedCampaign.outcome.reason.includes("求真书院") ||
+          normalizedCampaign.outcome.reason.includes("元培学院"))
+      )
+        normalizedCampaign.outcome = undefined;
       sites.forEach((site) => {
         site.displayName ??= site.name;
         site.dispatchRatio ??=
@@ -925,6 +957,11 @@ export default function Game3D() {
       units.splice(0, units.length, ...expandedUnits);
       units.forEach((unit) => {
         unit.strength = 1;
+        if (unit.transportModel)
+          unit.transportModel = migrateResearchId(
+            unit.transportModel,
+            unit.team,
+          );
         unit.morale ??= 100;
         unit.retreating ??= false;
         unit.path = undefined;
