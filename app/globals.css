@@ -2375,6 +2375,22 @@ select option {
   width: 100%;
   font-size: 17px;
 }
+.home-changelog {
+  width: min(430px, 100%);
+  margin: 12px auto 0;
+  border: 1px solid #8c846c;
+  padding: 8px 11px;
+  background: #111a17dc;
+  color: #d8d1b9;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.home-changelog summary {
+  color: #ffe36f;
+  cursor: pointer;
+  font-weight: 800;
+}
+.home-changelog p { margin: 7px 0 0; }
 .world-settings,
 .home-settings-panel,
 .home-server-page,

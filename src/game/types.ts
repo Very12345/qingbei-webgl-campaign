@@ -218,6 +218,7 @@ export type Snapshot = GameData & {
   version: 1 | 2 | 3 | 4;
   name: string;
   savedAt: number;
+  sourceSavedAt?: number;
   icon?: "map" | "tower" | "book" | "shield";
 };
 

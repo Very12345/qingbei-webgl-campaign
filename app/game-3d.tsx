@@ -128,6 +128,7 @@ export default function Game3D() {
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const siteMenuRef = useRef<HTMLElement>(null);
   const gameRef = useRef<GameData>(makeFreshGame());
+  const activePlayerSaveRef = useRef<number | null>(null);
   const sceneApi = useRef<BattlefieldSceneApi | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [autosave, setAutosave] = useState<Snapshot | null>(null);
@@ -585,7 +586,10 @@ export default function Game3D() {
       autosaveTaskRef.current = null;
       const startedAt = performance.now();
       try {
-        const snapshot = snapshotCurrentGame("未完成战局"),
+        const snapshot = {
+            ...snapshotCurrentGame("未完成战局"),
+            sourceSavedAt: activePlayerSaveRef.current ?? undefined,
+          },
           worker = saveWorkerRef.current;
         const serverId = activeServerIdRef.current;
         if (serverId) {
@@ -655,16 +659,34 @@ export default function Game3D() {
     }
     const baseName =
         saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
-      existingNames = new Set(readSaves().map((save) => save.name));
+      existing = readSaves(),
+      sourceIndex = activePlayerSaveRef.current == null
+        ? -1
+        : existing.findIndex(
+            (save) => save.savedAt === activePlayerSaveRef.current,
+          ),
+      existingNames = new Set(
+        existing
+          .filter((_, index) => index !== sourceIndex)
+          .map((save) => save.name),
+      );
     let name = baseName,
       suffix = 1;
     while (existingNames.has(name)) name = `${baseName} (${suffix++})`;
     const
       snapshot = snapshotCurrentGame(name),
-      next = [snapshot, ...readSaves()].slice(0, 12);
+      next =
+        sourceIndex >= 0
+          ? [
+              snapshot,
+              ...existing.filter((_, index) => index !== sourceIndex),
+            ].slice(0, 12)
+          : [snapshot, ...existing].slice(0, 12);
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(next));
       clearUnfinishedGame();
+      activePlayerSaveRef.current = snapshot.savedAt;
+      setSaveName(name);
       refreshSaves();
       setNotice(`已保存“${name}”`);
       return true;
@@ -814,6 +836,25 @@ export default function Game3D() {
     serverId: string | null = null,
   ) => {
     if (!serverId) clearUnfinishedGame();
+    const playerSaves = readSaves(),
+      sourceSavedAt = serverId
+        ? null
+        : save.sourceSavedAt ??
+          (playerSaves.some((candidate) => candidate.savedAt === save.savedAt)
+            ? save.savedAt
+            : null),
+      sourceSave =
+        sourceSavedAt == null
+          ? undefined
+          : playerSaves.find(
+              (candidate) => candidate.savedAt === sourceSavedAt,
+            );
+    activePlayerSaveRef.current = sourceSavedAt;
+    if (!serverId)
+      setSaveName(
+        sourceSave?.name ??
+          (save.name === "未完成战局" ? "解放清华园" : save.name),
+      );
     setActiveServerId(serverId);
     activeServerIdRef.current = serverId;
     setPlayerTeam(team);
@@ -1084,6 +1125,7 @@ export default function Game3D() {
   };
   const newGame = (team: Team = playerTeam) => {
     clearUnfinishedGame();
+    activePlayerSaveRef.current = null;
     setActiveServerId(null);
     activeServerIdRef.current = null;
     setPlayerTeam(team);

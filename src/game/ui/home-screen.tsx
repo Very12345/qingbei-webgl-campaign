@@ -108,11 +108,17 @@ export function HomeScreen(props: HomeScreenProps) {
           <small>燕园—清华园实时战役</small>
         </header>
         {page === "menu" && (
-          <nav className="home-main-menu" aria-label="主菜单">
-            <button onClick={() => setPage("new")}>新建游戏</button>
-            <button onClick={() => setPage("servers")}>服务器</button>
-            <button onClick={() => setPage("settings")}>设置</button>
-          </nav>
+          <>
+            <nav className="home-main-menu" aria-label="主菜单">
+              <button onClick={() => setPage("new")}>新建游戏</button>
+              <button onClick={() => setPage("servers")}>服务器</button>
+              <button onClick={() => setPage("settings")}>设置</button>
+            </nav>
+            <details className="home-changelog">
+              <summary>更新日志 · 已更新</summary>
+              <p>新增自动房间码联机、多目标兵线与连续装备生产；优化大规模交战和载具显示。</p>
+            </details>
+          </>
         )}
         {page === "settings" && (
           <div className="home-settings-panel">
