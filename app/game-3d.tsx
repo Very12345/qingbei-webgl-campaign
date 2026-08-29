@@ -58,6 +58,13 @@ import {
   type ServerBattleSummary,
 } from "../src/game/server-admin-protocol";
 import {
+  createRoomCode,
+  normalizeRoomCode,
+  publishAutomaticSignal,
+  subscribeAutomaticSignals,
+  type AutomaticSignalMessage,
+} from "../src/game/auto-signaling";
+import {
   AcademicYearOverlay,
   EventBatchOverlay,
   EventLogOverlay,
@@ -127,6 +134,7 @@ export default function Game3D() {
   const [serverSaves, setServerSaves] = useState<ServerRecord[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const activeServerIdRef = useRef<string | null>(null);
+  const pendingServerIdRef = useRef<string | null>(null);
   const adminChannelRef = useRef<BroadcastChannel | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [screen, setScreen] = useState<GameScreen>("home");
@@ -155,6 +163,14 @@ export default function Game3D() {
   const lanChannelsRef = useRef(new Set<RTCDataChannel>());
   const lanChannelIdentityRef = useRef(new Map<RTCDataChannel, PlayerIdentity>());
   const lanHostRef = useRef(false);
+  const automaticSignalSourceRef = useRef<EventSource | null>(null);
+  const automaticHostCodeRef = useRef<string | null>(null);
+  const automaticHostPeersRef = useRef(new Map<string, RTCPeerConnection>());
+  const automaticJoinRef = useRef<{
+    roomCode: string;
+    clientId: string;
+  } | null>(null);
+  const signalingSenderIdRef = useRef(crypto.randomUUID());
   const networkRevisionRef = useRef(0);
   const networkLastFullAtRef = useRef(0);
   const networkUnitSignaturesRef = useRef(new Map<number, string>());
@@ -765,6 +781,7 @@ export default function Game3D() {
     }
   };
   const launchServer = (server: ServerRecord) => {
+    pendingServerIdRef.current = server.id;
     setTeamSelection({
       mode: "host",
       server,
@@ -1547,7 +1564,120 @@ export default function Game3D() {
       }
     };
   };
-  const createLanHost = async () => {
+  const createAutomaticHostOffer = async (
+    roomCode: string,
+    request: Extract<AutomaticSignalMessage, { kind: "join" }>,
+  ) => {
+    if (automaticHostPeersRef.current.has(request.clientId)) return;
+    const peer = new RTCPeerConnection({ iceServers: [] }),
+      channel = peer.createDataChannel("qingbei-campaign");
+    automaticHostPeersRef.current.set(request.clientId, peer);
+    lanPeerRef.current = peer;
+    lanPeersRef.current.add(peer);
+    bindLanChannel(channel, true);
+    peer.addEventListener("connectionstatechange", () => {
+      if (["failed", "closed", "disconnected"].includes(peer.connectionState))
+        automaticHostPeersRef.current.delete(request.clientId);
+    });
+    await peer.setLocalDescription(await peer.createOffer());
+    await waitForIce(peer);
+    const operatorCounts = { pku: 0, thu: 0 };
+    operatorCounts[playerTeamRef.current]++;
+    for (const identity of lanChannelIdentityRef.current.values())
+      operatorCounts[identity.team]++;
+    const invite: ServerInvitePayload = {
+      kind: "qingbei-server-invite",
+      sdp: peer.localDescription!,
+      playerCount: operatorCounts.pku + operatorCounts.thu,
+      hostTeam: playerTeamRef.current,
+      operatorCounts,
+      serverId: activeServerIdRef.current,
+    };
+    await publishAutomaticSignal(roomCode, {
+      kind: "offer",
+      senderId: signalingSenderIdRef.current,
+      clientId: request.clientId,
+      invite,
+      sentAt: Date.now(),
+    });
+    setLanStatus(`已向${request.nickname || "新玩家"}发送自动邀请`);
+  };
+  const startAutomaticHost = async (serverId: string | null = null) => {
+    automaticSignalSourceRef.current?.close();
+    const storageKey = `qingbei-room-code:${serverId ?? "quick"}`,
+      roomCode =
+        sessionStorage.getItem(storageKey) || createRoomCode();
+    sessionStorage.setItem(storageKey, roomCode);
+    automaticHostCodeRef.current = roomCode;
+    setLanMode("host");
+    setLanOutput(roomCode);
+    setLanStatus("自动房间已启动，玩家输入房间码即可加入");
+    const source = subscribeAutomaticSignals(roomCode, (message) => {
+      if (message.senderId === signalingSenderIdRef.current) return;
+      if (message.kind === "join")
+        void createAutomaticHostOffer(roomCode, message).catch((error) =>
+          setLanStatus(
+            error instanceof Error ? error.message : "自动邀请生成失败",
+          ),
+        );
+      if (message.kind === "answer") {
+        const peer = automaticHostPeersRef.current.get(message.clientId);
+        if (!peer || peer.remoteDescription) return;
+        void peer
+          .setRemoteDescription(message.sdp)
+          .then(() => setLanStatus("自动握手完成，正在建立直连"))
+          .catch(() => setLanStatus("自动回应无效，请让玩家重新加入"));
+      }
+    });
+    source.onerror = () =>
+      setLanStatus("自动信令暂时不可用，可使用兼容模式邀请码");
+    automaticSignalSourceRef.current = source;
+    return roomCode;
+  };
+  const requestAutomaticJoin = async (rawCode: string) => {
+    const normalized = normalizeRoomCode(rawCode);
+    if (normalized.length < 8) throw new Error("房间码长度不足");
+    const roomCode = `${normalized.slice(0, 5)}-${normalized.slice(5)}`,
+      clientId = crypto.randomUUID();
+    automaticSignalSourceRef.current?.close();
+    automaticJoinRef.current = { roomCode, clientId };
+    setLanMode("join");
+    setLanStatus("正在查找房间并自动握手…");
+    const publishJoin = () =>
+        publishAutomaticSignal(roomCode, {
+          kind: "join",
+          senderId: signalingSenderIdRef.current,
+          clientId,
+          nickname: playerNickname.trim().slice(0, 16) || "未命名玩家",
+          sentAt: Date.now(),
+        }).catch(() => setLanStatus("无法连接自动信令服务")),
+      source = subscribeAutomaticSignals(roomCode, (message) => {
+        if (
+          message.kind !== "offer" ||
+          message.clientId !== clientId ||
+          message.senderId === signalingSenderIdRef.current
+        )
+          return;
+        const invite = message.invite as ServerInvitePayload,
+          counts = invite.operatorCounts ?? {
+            pku: invite.hostTeam === "pku" ? invite.playerCount : 0,
+            thu: invite.hostTeam === "thu" ? invite.playerCount : 0,
+          },
+          forcedTeam =
+            counts.pku + counts.thu === 1
+              ? counts.pku === 1
+                ? "thu"
+                : "pku"
+              : null;
+        setTeamSelection({ mode: "guest", invite, counts, forcedTeam });
+        setLanStatus("已找到房间，请选择阵营");
+      });
+    source.onopen = () => void publishJoin();
+    source.onerror = () => setLanStatus("房间服务连接中断，正在重试");
+    automaticSignalSourceRef.current = source;
+    window.setTimeout(() => void publishJoin(), 700);
+  };
+  const createManualLanHost = async () => {
     const peer = new RTCPeerConnection({ iceServers: [] }),
       channel = peer.createDataChannel("qingbei-campaign");
     lanPeerRef.current = peer;
@@ -1572,9 +1702,18 @@ export default function Game3D() {
     );
     setLanStatus("邀请已生成：复制下方代码给一名玩家");
   };
+  const createLanHost = async () => {
+    await startAutomaticHost(activeServerIdRef.current);
+  };
   const joinLanHost = async () => {
     try {
-      const parsed = JSON.parse(lanInput) as
+      const input = lanInput.trim();
+      if (!input.startsWith("{")) {
+        await requestAutomaticJoin(input);
+        return;
+      }
+      automaticJoinRef.current = null;
+      const parsed = JSON.parse(input) as
           | RTCSessionDescriptionInit
           | ServerInvitePayload,
         invite: ServerInvitePayload =
@@ -1603,8 +1742,10 @@ export default function Game3D() {
         counts,
         forcedTeam,
       });
-    } catch {
-      setLanStatus("邀请码无效");
+    } catch (error) {
+      setLanStatus(
+        error instanceof Error ? error.message : "房间码或兼容邀请码无效",
+      );
     }
   };
   const connectToLanHost = async (
@@ -1621,8 +1762,24 @@ export default function Game3D() {
       await peer.setRemoteDescription(invite.sdp);
       await peer.setLocalDescription(await peer.createAnswer());
       await waitForIce(peer);
-      setLanOutput(JSON.stringify(peer.localDescription));
-      setLanStatus("回应已生成：复制下方代码发回主机");
+      const automaticJoin = automaticJoinRef.current;
+      if (automaticJoin) {
+        await publishAutomaticSignal(automaticJoin.roomCode, {
+          kind: "answer",
+          senderId: signalingSenderIdRef.current,
+          clientId: automaticJoin.clientId,
+          sdp: peer.localDescription!,
+          sentAt: Date.now(),
+        });
+        automaticSignalSourceRef.current?.close();
+        automaticSignalSourceRef.current = null;
+        automaticJoinRef.current = null;
+        setLanOutput("");
+        setLanStatus("阵营已确认，正在自动连接主机…");
+      } else {
+        setLanOutput(JSON.stringify(peer.localDescription));
+        setLanStatus("兼容模式回应已生成，请发回主机");
+      }
     } catch {
       setLanStatus("加入码无效");
     }
@@ -1647,16 +1804,9 @@ export default function Game3D() {
         };
       setServerSaves(upsertServerSave(server));
       loadGame(server.map, team, server.id);
-      window.setTimeout(() => void createLanHost(), 0);
+      pendingServerIdRef.current = null;
+      window.setTimeout(() => void startAutomaticHost(server.id), 0);
     } else void connectToLanHost(selection.invite, team);
-  };
-  const acceptLanAnswer = async () => {
-    try {
-      await lanPeerRef.current?.setRemoteDescription(JSON.parse(lanInput));
-      setLanStatus("正在接纳玩家；成功后可继续生成下一份邀请");
-    } catch {
-      setLanStatus("回应码无效");
-    }
   };
   const buildServerSummary = (serverId: string): ServerBattleSummary => {
     const server = readServerSaves().find((record) => record.id === serverId),
@@ -1705,7 +1855,11 @@ export default function Game3D() {
       logs: server?.logs ?? [],
       inviteCode: activeServerIdRef.current === serverId ? lanOutput : undefined,
       connectionStatus:
-        activeServerIdRef.current === serverId ? lanStatus : "服务器离线",
+        activeServerIdRef.current === serverId
+          ? lanStatus
+          : pendingServerIdRef.current === serverId
+            ? "等待游戏窗口选择阵营"
+            : "服务器离线",
     };
   };
   const publishServerAdminState = (serverId: string) => {
@@ -1725,17 +1879,26 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <回应JSON>";
+      return "API: status | players | invite | manual-invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <兼容模式回应JSON>";
     if (action === "status")
       return JSON.stringify(buildServerSummary(activeServerIdRef.current ?? ""));
     if (action === "players")
       return buildServerSummary(activeServerIdRef.current ?? "").players
         .map((player) => `${player.nickname}:${player.team}${player.host ? ":host" : ""}`)
         .join(", ");
-    if (!activeServerIdRef.current) throw new Error("服务器尚未在原窗口启动");
+    if (!activeServerIdRef.current)
+      throw new Error(
+        pendingServerIdRef.current
+          ? "请回到游戏窗口完成阵营选择；完成后房间码会自动生成"
+          : "服务器尚未启动，请先点击“启动服务器”并在游戏窗口选择阵营",
+      );
     if (action === "invite") {
-      await createLanHost();
-      return "已生成新的玩家邀请代码";
+      const roomCode = await startAutomaticHost(activeServerIdRef.current);
+      return `自动房间码：${roomCode}`;
+    }
+    if (action === "manual-invite") {
+      await createManualLanHost();
+      return "已生成兼容模式邀请码";
     }
     if (action === "timescale") {
       const value = Math.min(16, Math.max(0.5, Number(args[0])));
@@ -1828,6 +1991,15 @@ export default function Game3D() {
       adminChannelRef.current = null;
     };
   }, [lanOutput, lanStatus, playerNickname]);
+  useEffect(
+    () => () => {
+      automaticSignalSourceRef.current?.close();
+      automaticSignalSourceRef.current = null;
+      automaticHostPeersRef.current.forEach((peer) => peer.close());
+      automaticHostPeersRef.current.clear();
+    },
+    [],
+  );
   useEffect(() => {
     const timer = window.setInterval(() => {
       const openChannels = [...lanChannelsRef.current].filter(
@@ -2240,7 +2412,6 @@ export default function Game3D() {
           lanInput={lanInput}
           setLanInput={setLanInput}
           lanOutput={lanOutput}
-          setLanOutput={setLanOutput}
           lanMode={lanMode}
           setLanMode={setLanMode}
           connectedPlayers={connectedPlayers}
@@ -2248,7 +2419,6 @@ export default function Game3D() {
           setPlayerNickname={setPlayerNickname}
           createLanHost={createLanHost}
           joinLanHost={joinLanHost}
-          acceptLanAnswer={acceptLanAnswer}
           saveName={saveName}
           setSaveName={setSaveName}
           newGameTeam={newGameTeam}

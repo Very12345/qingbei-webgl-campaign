@@ -20,7 +20,6 @@ type HomeScreenProps = {
   lanInput: string;
   setLanInput: (value: string) => void;
   lanOutput: string;
-  setLanOutput: (value: string) => void;
   lanMode: "host" | "join";
   setLanMode: (mode: "host" | "join") => void;
   connectedPlayers: number;
@@ -28,7 +27,6 @@ type HomeScreenProps = {
   setPlayerNickname: (name: string) => void;
   createLanHost: () => Promise<void>;
   joinLanHost: () => Promise<void>;
-  acceptLanAnswer: () => Promise<void>;
   saveName: string;
   setSaveName: (name: string) => void;
   newGameTeam: Team;
@@ -64,7 +62,6 @@ export function HomeScreen(props: HomeScreenProps) {
     lanInput,
     setLanInput,
     lanOutput,
-    setLanOutput,
     lanMode,
     setLanMode,
     connectedPlayers,
@@ -72,7 +69,6 @@ export function HomeScreen(props: HomeScreenProps) {
     setPlayerNickname,
     createLanHost,
     joinLanHost,
-    acceptLanAnswer,
     saveName,
     setSaveName,
     newGameTeam,
@@ -192,12 +188,17 @@ export function HomeScreen(props: HomeScreenProps) {
             <textarea
               value={lanInput}
               onChange={(event) => setLanInput(event.target.value)}
-              placeholder="粘贴服务器邀请代码"
+              placeholder="输入房间码，例如 ABCDE-12345"
             />
             <button onClick={() => void joinLanHost()}>
-              读取邀请并进入阵营大厅
+              查找房间并进入阵营大厅
             </button>
-            <textarea readOnly value={lanOutput} placeholder="将回应代码发回主机" />
+            {lanOutput.startsWith("{") && (
+              <details className="legacy-connection-details">
+                <summary>兼容模式回应码</summary>
+                <textarea readOnly value={lanOutput} />
+              </details>
+            )}
           </div>
         )}
         {page === "new" && (

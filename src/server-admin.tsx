@@ -21,7 +21,6 @@ function ServerAdmin() {
   const [playerSaves] = useState<Snapshot[]>(readSaves());
   const [summary, setSummary] = useState<ServerBattleSummary | null>(null);
   const [command, setCommand] = useState("");
-  const [responseCode, setResponseCode] = useState("");
   const [consoleLines, setConsoleLines] = useState<string[]>([
     "服务器控制台已就绪。输入 help 查看指令。",
   ]);
@@ -158,14 +157,14 @@ function ServerAdmin() {
             channelRef.current?.postMessage({ type: "launch", serverId } satisfies ServerAdminMessage)
           }
         >
-          在原窗口启动并邀请自己
+          启动服务器并在游戏窗口选择阵营
         </button>
         <section className="server-invite-box">
-          <h2>邀请玩家</h2>
+          <h2>房间码</h2>
           <textarea
             readOnly
             value={summary?.inviteCode ?? ""}
-            placeholder="启动后生成邀请代码"
+            placeholder="启动并选择阵营后自动生成"
           />
           <button
             onClick={() => {
@@ -178,27 +177,7 @@ function ServerAdmin() {
               } satisfies ServerAdminMessage);
             }}
           >
-            生成新的常规邀请
-          </button>
-          <textarea
-            value={responseCode}
-            onChange={(event) => setResponseCode(event.target.value)}
-            placeholder="粘贴玩家回应代码"
-          />
-          <button
-            onClick={() => {
-              if (!responseCode.trim()) return;
-              const requestId = crypto.randomUUID();
-              channelRef.current?.postMessage({
-                type: "command",
-                serverId,
-                requestId,
-                command: `accept ${responseCode}`,
-              } satisfies ServerAdminMessage);
-              setResponseCode("");
-            }}
-          >
-            接纳玩家
+            显示或刷新自动房间码
           </button>
           <small>{summary?.connectionStatus ?? "服务器离线"}</small>
         </section>
