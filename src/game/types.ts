@@ -260,6 +260,13 @@ export type ServerConfigurationDraft = {
 
 export type UnitNetworkState = Omit<UnitState, "path" | "pathIndex">;
 export type MultiplayerEnvelope =
+  | {
+      type: "network_chunk";
+      transferId: string;
+      index: number;
+      total: number;
+      data: string;
+    }
   | { type: "state"; game: GameData; role: "host" | "guest" }
   | {
       type: "state_delta";

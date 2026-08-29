@@ -192,6 +192,15 @@ export default function Game3D() {
   const networkReceivedRevisionRef = useRef(
     new WeakMap<RTCDataChannel, number>(),
   );
+  const networkChunkBuffersRef = useRef(
+    new WeakMap<
+      RTCDataChannel,
+      Map<
+        string,
+        { parts: string[]; received: number; total: number; createdAt: number }
+      >
+    >(),
+  );
   const [playerNickname, setPlayerNickname] = useState(() =>
     sessionStorage.getItem("qingbei-player-name") ||
     `玩家${Math.floor(100 + Math.random() * 900)}`,
@@ -1263,8 +1272,39 @@ export default function Game3D() {
         [message.channel]: current[message.channel as ChatChannel] + 1,
       }));
   };
-  const sendToChannel = (channel: RTCDataChannel, envelope: MultiplayerEnvelope) => {
-    if (channel.readyState === "open") channel.send(JSON.stringify(envelope));
+  const sendToChannel = (
+    channel: RTCDataChannel,
+    envelope: MultiplayerEnvelope,
+  ) => {
+    if (channel.readyState !== "open") return;
+    const serialized = JSON.stringify(envelope),
+      chunkSize = 12_000;
+    if (
+      envelope.type === "network_chunk" ||
+      serialized.length <= chunkSize
+    ) {
+      channel.send(serialized);
+      return;
+    }
+    const transferId = crypto.randomUUID(),
+      total = Math.ceil(serialized.length / chunkSize),
+      chunks = Array.from({ length: total }, (_, index) =>
+        JSON.stringify({
+          type: "network_chunk",
+          transferId,
+          index,
+          total,
+          data: serialized.slice(index * chunkSize, (index + 1) * chunkSize),
+        } satisfies MultiplayerEnvelope),
+      );
+    let index = 0;
+    const pump = () => {
+      if (channel.readyState !== "open") return;
+      while (index < chunks.length && channel.bufferedAmount < 512_000)
+        channel.send(chunks[index++]);
+      if (index < chunks.length) window.setTimeout(pump, 12);
+    };
+    pump();
   };
   const relayChatMessage = (message: ChatMessage) => {
     appendChatMessage(message);
@@ -1443,12 +1483,18 @@ export default function Game3D() {
         lanConnectionTimeoutRef.current = null;
       }
       if (!host) {
-        lanConnectionStageRef.current = null;
-        setLanConnectionStage(null);
         automaticSignalSourceRef.current?.close();
         automaticSignalSourceRef.current = null;
         automaticJoinRef.current = null;
         automaticPreferredTeamRef.current = null;
+        lanConnectionStageRef.current = "connecting";
+        setLanConnectionStage("connecting");
+        setLanStatus("直连已建立，正在接收主机地图…");
+        lanConnectionTimeoutRef.current = window.setTimeout(() => {
+          setLanConnectionStage("failed");
+          lanConnectionStageRef.current = "failed";
+          setLanStatus("主机地图传输超时，请重新连接");
+        }, 30_000);
       }
       if (!host) {
         setPlayerTeam(lanTeamRef.current);
@@ -1471,7 +1517,7 @@ export default function Game3D() {
         });
       refreshConnectionCount();
       updateActiveServerPlayers();
-      setLanStatus(host ? "玩家已加入，可继续生成邀请" : "已加入战局");
+      if (host) setLanStatus("玩家已加入，正在发送主机地图");
     };
     channel.onclose = () => {
       lanChannelsRef.current.delete(channel);
@@ -1486,6 +1532,45 @@ export default function Game3D() {
     channel.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as MultiplayerEnvelope;
+        if (payload.type === "network_chunk") {
+          let transfers = networkChunkBuffersRef.current.get(channel);
+          if (!transfers) {
+            transfers = new Map();
+            networkChunkBuffersRef.current.set(channel, transfers);
+          }
+          const now = Date.now();
+          for (const [id, transfer] of transfers)
+            if (now - transfer.createdAt > 45_000) transfers.delete(id);
+          if (
+            payload.total < 1 ||
+            payload.total > 2_000 ||
+            payload.index < 0 ||
+            payload.index >= payload.total
+          )
+            return;
+          let transfer = transfers.get(payload.transferId);
+          if (!transfer) {
+            transfer = {
+              parts: new Array(payload.total),
+              received: 0,
+              total: payload.total,
+              createdAt: now,
+            };
+            transfers.set(payload.transferId, transfer);
+          }
+          if (transfer.total !== payload.total) return;
+          if (transfer.parts[payload.index] == null) {
+            transfer.parts[payload.index] = payload.data;
+            transfer.received++;
+          }
+          if (transfer.received === transfer.total) {
+            transfers.delete(payload.transferId);
+            channel.onmessage?.(
+              new MessageEvent("message", { data: transfer.parts.join("") }),
+            );
+          }
+          return;
+        }
         if (payload.type === "hello") {
           let identity = payload.identity;
           if (host) {
@@ -1689,6 +1774,13 @@ export default function Game3D() {
           payload.role === "host"
         ) {
           gameRef.current = payload.game;
+          if (lanConnectionTimeoutRef.current != null) {
+            window.clearTimeout(lanConnectionTimeoutRef.current);
+            lanConnectionTimeoutRef.current = null;
+          }
+          lanConnectionStageRef.current = null;
+          setLanConnectionStage(null);
+          setLanStatus("主机地图同步完成，已进入战局");
           if (!host) {
             setPlayerTeam(lanTeamRef.current);
             playerTeamRef.current = lanTeamRef.current;
