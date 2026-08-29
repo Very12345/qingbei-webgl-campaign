@@ -188,6 +188,7 @@ function ServerAdmin() {
               <b>{player.nickname}</b>
               <span>{player.team === "pku" ? "北大" : "清华"}</span>
               {player.host && <small>主机</small>}
+              {player.local && <small>本机</small>}
             </div>
           ))}
           {!(summary?.players ?? server.players).length && <p>暂无在线玩家</p>}

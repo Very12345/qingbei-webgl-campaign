@@ -175,6 +175,8 @@ export default function Game3D() {
   const networkRevisionRef = useRef(0);
   const networkLastFullAtRef = useRef(0);
   const networkUnitSignaturesRef = useRef(new Map<number, string>());
+  const networkSiteSignaturesRef = useRef(new Map<number, string>());
+  const networkCampaignSignatureRef = useRef("");
   const networkReceivedRevisionRef = useRef(
     new WeakMap<RTCDataChannel, number>(),
   );
@@ -607,6 +609,7 @@ export default function Game3D() {
                   nickname: playerNickname.trim().slice(0, 16) || "主机",
                   team: playerTeamRef.current,
                   host: true,
+                  local: true,
                 },
                 ...[...lanChannelIdentityRef.current.values()],
               ],
@@ -1396,10 +1399,12 @@ export default function Game3D() {
         nickname: playerNickname.trim().slice(0, 16) || "主机",
         team: playerTeamRef.current,
         host: true,
+        local: true,
       },
       ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
         ...identity,
         host: false,
+        local: false,
       })),
     ];
     setServerSaves(
@@ -1456,10 +1461,21 @@ export default function Game3D() {
           let identity = payload.identity;
           if (host) {
             const usedNames = new Set(
-              [...lanChannelIdentityRef.current.values()].map(
-                (item) => item.nickname,
+                [
+                  playerNickname.trim().slice(0, 16) || "主机",
+                  ...[...lanChannelIdentityRef.current.values()].map(
+                    (item) => item.nickname,
+                  ),
+                ],
               ),
-            );
+              usedIds = new Set([
+                playerIdRef.current,
+                ...[...lanChannelIdentityRef.current.values()].map(
+                  (item) => item.id,
+                ),
+              ]);
+            if (usedIds.has(identity.id))
+              identity = { ...identity, id: crypto.randomUUID() };
             if (usedNames.has(identity.nickname)) {
               let suffix = 2;
               while (usedNames.has(`${identity.nickname}#${suffix}`)) suffix++;
@@ -1579,19 +1595,69 @@ export default function Game3D() {
             if (removed.size)
               game.units = game.units.filter((unit) => !removed.has(unit.id));
           }
+          let sitesChanged = false;
+          for (const incoming of payload.sites ?? []) {
+            let existing = game.sites.find((site) => site.id === incoming.id);
+            if (!existing) {
+              if (!host || (allowedTeam && incoming.team === allowedTeam)) {
+                game.sites.push(structuredClone(incoming));
+                sitesChanged = true;
+              }
+              continue;
+            }
+            if (!host) {
+              if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
+                Object.assign(existing, structuredClone(incoming));
+                sitesChanged = true;
+              }
+              continue;
+            }
+            if (!allowedTeam) continue;
+            const before = JSON.stringify({
+              stance: existing.stance,
+              orderTarget: existing.orderTarget,
+              dispatchRatio: existing.dispatchRatio,
+              displayName: existing.displayName,
+              plannedTarget: existing.plannedOrderTargets?.[allowedTeam],
+            });
+            if (existing.team === allowedTeam) {
+              existing.stance = incoming.stance;
+              existing.orderTarget = incoming.orderTarget;
+              existing.orderPath = incoming.orderPath;
+              existing.dispatchRatio = incoming.dispatchRatio;
+              existing.displayName = incoming.displayName;
+            }
+            existing.plannedOrderTargets ??= {};
+            existing.plannedOrderPaths ??= {};
+            existing.plannedOrderTargets[allowedTeam] =
+              incoming.plannedOrderTargets?.[allowedTeam];
+            existing.plannedOrderPaths[allowedTeam] =
+              incoming.plannedOrderPaths?.[allowedTeam];
+            const after = JSON.stringify({
+              stance: existing.stance,
+              orderTarget: existing.orderTarget,
+              dispatchRatio: existing.dispatchRatio,
+              displayName: existing.displayName,
+              plannedTarget: existing.plannedOrderTargets?.[allowedTeam],
+            });
+            sitesChanged ||= before !== after;
+          }
           if (!host) {
             game.timeOfDay = payload.timeOfDay;
             setTimeScale(payload.timeScale);
             game.campaign.elapsedHours = payload.elapsedHours;
             game.resources = payload.resources;
             game.deaths = payload.deaths;
+            if (payload.campaign)
+              game.campaign = structuredClone(payload.campaign);
           }
+          if (sitesChanged) sceneApi.current?.sync();
           return;
         }
         if (
           payload.type === "state" &&
-          ((host && payload.role === "guest") ||
-            (!host && payload.role === "host"))
+          !host &&
+          payload.role === "host"
         ) {
           gameRef.current = payload.game;
           if (!host) {
@@ -1837,6 +1903,7 @@ export default function Game3D() {
           nickname: playerNickname.trim().slice(0, 16) || "主机",
           team,
           host: true,
+          local: true,
         },
         server = {
           ...selection.server,
@@ -1870,10 +1937,12 @@ export default function Game3D() {
                 nickname: playerNickname.trim().slice(0, 16) || "主机",
                 team: playerTeamRef.current,
                 host: true,
+                local: true,
               },
               ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
                 ...identity,
                 host: false,
+                local: false,
               })),
             ]
           : server?.players ?? [];
@@ -2064,8 +2133,22 @@ export default function Game3D() {
             unit.targetSiteId ?? "",
             unit.retreating ? 1 : 0,
             unit.skin ?? "",
-          ].join("/");
-      if (now - networkLastFullAtRef.current >= 10_000) {
+          ].join("/"),
+        siteSignatureOf = (site: GameData["sites"][number]) =>
+          JSON.stringify({
+            team: site.team,
+            stance: site.stance,
+            orderTarget: site.orderTarget,
+            plannedOrderTargets: site.plannedOrderTargets,
+            dispatchRatio: site.dispatchRatio,
+            displayName: site.displayName,
+            destroyed: site.destroyed,
+            temporary: site.temporary,
+          });
+      if (
+        role === "host" &&
+        now - networkLastFullAtRef.current >= 10_000
+      ) {
         networkLastFullAtRef.current = now;
         const envelope: MultiplayerEnvelope = {
           type: "state",
@@ -2075,6 +2158,9 @@ export default function Game3D() {
         openChannels.forEach((channel) => sendToChannel(channel, envelope));
         networkUnitSignaturesRef.current = new Map(
           gameRef.current.units.map((unit) => [unit.id, signatureOf(unit)]),
+        );
+        networkSiteSignaturesRef.current = new Map(
+          gameRef.current.sites.map((site) => [site.id, siteSignatureOf(site)]),
         );
         return;
       }
@@ -2096,12 +2182,46 @@ export default function Game3D() {
           removedUnitIds.push(id);
           networkUnitSignaturesRef.current.delete(id);
         }
+      const sites: GameData["sites"] = [];
+      for (const site of game.sites) {
+        const signature = siteSignatureOf(site);
+        if (networkSiteSignaturesRef.current.get(site.id) === signature)
+          continue;
+        networkSiteSignaturesRef.current.set(site.id, signature);
+        sites.push(structuredClone(site));
+      }
+      const campaignSignature =
+          role === "host"
+            ? JSON.stringify({
+                firedEvents: game.campaign.firedEvents,
+                warUnlocked: game.campaign.warUnlocked,
+                attackBonus: game.campaign.attackBonus,
+                freezeUntil: game.campaign.freezeUntil,
+                cautionUntil: game.campaign.cautionUntil,
+                outcome: game.campaign.outcome,
+                thuFactionName: game.campaign.thuFactionName,
+                statuses: game.campaign.statuses,
+                battleAlerts: game.campaign.battleAlerts,
+                decisions: game.campaign.decisions,
+                research: game.campaign.research,
+                academicYearOutcome: game.campaign.academicYearOutcome,
+              })
+            : "",
+        campaignChanged =
+          role === "host" &&
+          campaignSignature !== networkCampaignSignatureRef.current;
+      if (campaignChanged)
+        networkCampaignSignatureRef.current = campaignSignature;
       const envelope: MultiplayerEnvelope = {
         type: "state_delta",
         revision: ++networkRevisionRef.current,
         role,
         units,
         removedUnitIds,
+        sites,
+        campaign: campaignChanged
+          ? structuredClone(game.campaign)
+          : undefined,
         timeOfDay: game.timeOfDay,
         timeScale: timeScaleRef.current,
         elapsedHours: game.campaign.elapsedHours,
@@ -2492,6 +2612,8 @@ export default function Game3D() {
           mode={teamSelection.mode}
           counts={teamSelection.counts}
           forcedTeam={teamSelection.forcedTeam}
+          nickname={playerNickname}
+          onNicknameChange={setPlayerNickname}
           onSelect={confirmTeamSelection}
           onCancel={() => setTeamSelection(null)}
         />

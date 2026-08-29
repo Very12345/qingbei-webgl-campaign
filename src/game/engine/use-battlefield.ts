@@ -4898,6 +4898,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       lastBattleAlertAt = 0;
     const combatTimer = window.setInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
+      if (lanChannelsRef.current.size && !lanHostRef.current) return;
       const g = gameRef.current,
         now = performance.now(),
         combatTimeScale = THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),

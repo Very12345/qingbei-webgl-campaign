@@ -227,6 +227,7 @@ export type ServerPlayer = {
   nickname: string;
   team: Team;
   host: boolean;
+  local?: boolean;
 };
 export type ServerLogEntry = {
   id: string;
@@ -266,6 +267,8 @@ export type MultiplayerEnvelope =
       role: "host" | "guest";
       units: UnitNetworkState[];
       removedUnitIds: number[];
+      sites: SiteState[];
+      campaign?: CampaignState;
       timeOfDay: number;
       timeScale: number;
       elapsedHours: number;

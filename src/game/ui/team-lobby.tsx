@@ -4,12 +4,16 @@ export function TeamLobby({
   mode,
   counts,
   forcedTeam,
+  nickname,
+  onNicknameChange,
   onSelect,
   onCancel,
 }: {
   mode: "host" | "guest";
   counts: Record<Team, number>;
   forcedTeam: Team | null;
+  nickname: string;
+  onNicknameChange: (nickname: string) => void;
   onSelect: (team: Team) => void;
   onCancel: () => void;
 }) {
@@ -23,10 +27,23 @@ export function TeamLobby({
           </div>
           <button onClick={onCancel}>取消</button>
         </header>
-        <p>选择前可查看双方当前操作者人数。阵营确认后才进入战局。</p>
+        <p>先填写本机玩家名称，再选择阵营。阵营确认后才进入战局。</p>
+        <label className="team-lobby-name">
+          <span>本机玩家名称</span>
+          <input
+            value={nickname}
+            minLength={2}
+            maxLength={16}
+            autoFocus
+            onChange={(event) => onNicknameChange(event.target.value)}
+            placeholder="2—16个字符"
+          />
+        </label>
         <div className="team-lobby-options">
           {(["pku", "thu"] as Team[]).map((team) => {
-            const disabled = forcedTeam != null && forcedTeam !== team;
+            const disabled =
+              nickname.trim().length < 2 ||
+              (forcedTeam != null && forcedTeam !== team);
             return (
               <button
                 key={team}

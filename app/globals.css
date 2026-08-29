@@ -587,8 +587,22 @@ select option {
   border-left: 3px solid #d4b657;
   background: #211b0d;
 }
+.team-lobby-name {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 18px;
+  color: #e9dfbd;
+  font-weight: 800;
+}
+.team-lobby-name input {
+  width: 100%;
+  min-height: 42px;
+}
 @media (max-width: 620px) {
   .team-lobby-options { grid-template-columns: 1fr; }
+  .team-lobby-name { grid-template-columns: 1fr; }
 }
 .research-tree-screen .focus-tree-topbar {
   min-height: 72px;
