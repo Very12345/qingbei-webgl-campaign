@@ -817,30 +817,41 @@ export default function Game3D() {
     localStorage.setItem(SAVE_KEY, JSON.stringify(next));
     setSaves(next);
   };
-  const openServerAdmin = (existing?: ServerRecord) => {
-    let server = existing;
-    if (!server) {
-      const fresh = makeFreshGame(),
-        now = Date.now();
-      server = {
+  const createServer = (
+    name: string,
+    maxPlayers: number,
+    mapSavedAt?: number,
+  ) => {
+    const now = Date.now(),
+      selectedMap =
+        mapSavedAt == null
+          ? undefined
+          : readSaves().find((save) => save.savedAt === mapSavedAt),
+      fresh = makeFreshGame(),
+      server: ServerRecord = {
         id: crypto.randomUUID(),
-        name: "清北联机服务器",
+        name: name.trim().slice(0, 24) || "清北联机服务器",
         createdAt: now,
         updatedAt: now,
         hostTeam: "pku",
-        maxPlayers: 4,
+        maxPlayers: Math.min(8, Math.max(2, maxPlayers)),
         allowSameTeam: true,
-        map: {
-          version: 4,
-          name: "新服务器地图",
-          savedAt: now,
-          ...fresh,
-        },
+        map: selectedMap
+          ? { ...structuredClone(selectedMap), savedAt: now }
+          : {
+              version: 4,
+              name: "新服务器地图",
+              savedAt: now,
+              ...fresh,
+            },
         players: [],
         logs: [],
       };
-      setServerSaves(upsertServerSave(server));
-    }
+    setServerSaves(upsertServerSave(server));
+    setNotice(`服务器“${server.name}”已创建，可进入控制台详细配置`);
+  };
+  const openServerAdmin = (server?: ServerRecord) => {
+    if (!server) return;
     window.open(
       `${import.meta.env.BASE_URL}server.html?id=${encodeURIComponent(server.id)}`,
       `qingbei-server-${server.id}`,
@@ -876,6 +887,39 @@ export default function Game3D() {
       counts: { pku: 0, thu: 0 },
       forcedTeam: null,
     });
+  };
+  const stopServer = (serverId: string) => {
+    if (activeServerIdRef.current !== serverId) return;
+    recordServerLog("system", "服务器已由控制台停止");
+    saveUnfinishedGame(true);
+    lanChannelsRef.current.forEach((channel) => channel.close());
+    lanChannelsRef.current.clear();
+    lanPeersRef.current.forEach((peer) => peer.close());
+    lanPeersRef.current.clear();
+    automaticHostPeersRef.current.forEach((peer) => peer.close());
+    automaticHostPeersRef.current.clear();
+    automaticHostChannelsRef.current.clear();
+    automaticSignalSourceRef.current?.close();
+    automaticSignalSourceRef.current = null;
+    automaticHostCodeRef.current = null;
+    lanHostRef.current = false;
+    activeServerIdRef.current = null;
+    pendingServerIdRef.current = null;
+    setActiveServerId(null);
+    setConnectedPlayers(0);
+    setLanOutput("");
+    setLanStatus("服务器已停止");
+    const stopped = readServerSaves().find((record) => record.id === serverId);
+    if (stopped)
+      setServerSaves(
+        upsertServerSave({
+          ...stopped,
+          updatedAt: Date.now(),
+        }),
+      );
+    setPauseOpen(false);
+    setHomePage("servers");
+    setScreen("home");
   };
   useEffect(() => {
     if (screen !== "game") return;
@@ -2545,6 +2589,7 @@ export default function Game3D() {
           window.setTimeout(() => publishServerAdminState(server.id), 500);
         }
       }
+      if (message.type === "stop") stopServer(message.serverId);
       if (message.type === "command")
         void executeServerAdminCommand(message.command)
           .then((output) => {
@@ -3126,7 +3171,10 @@ export default function Game3D() {
           renameSave={renameSave}
           changeSaveIcon={changeSaveIcon}
           servers={serverSaves}
+          activeServerId={activeServerId}
+          createServer={createServer}
           launchServer={launchServer}
+          stopServer={stopServer}
           deleteServer={removeServer}
           exportServer={exportServer}
           importServer={(file) => void importServer(file)}

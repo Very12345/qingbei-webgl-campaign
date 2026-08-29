@@ -108,7 +108,7 @@ function ServerAdmin() {
     <main className="server-admin-shell">
       <aside className="server-config-sidebar">
         <header>
-          <small>独立服务器管理</small>
+          <small>服务器控制台</small>
           <h1>{server.name}</h1>
         </header>
         <label>
@@ -154,10 +154,14 @@ function ServerAdmin() {
         <button
           className="server-launch"
           onClick={() =>
-            channelRef.current?.postMessage({ type: "launch", serverId } satisfies ServerAdminMessage)
+            channelRef.current?.postMessage(
+              summary?.online
+                ? ({ type: "stop", serverId } satisfies ServerAdminMessage)
+                : ({ type: "launch", serverId } satisfies ServerAdminMessage),
+            )
           }
         >
-          启动服务器并在游戏窗口选择阵营
+          {summary?.online ? "停止服务器" : "启动服务器"}
         </button>
         <section className="server-invite-box">
           <h2>房间码</h2>

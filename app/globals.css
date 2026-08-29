@@ -166,7 +166,7 @@ select option {
   gap: 8px;
 }
 .server-page-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .server-save-list {
   display: grid;
@@ -183,6 +183,37 @@ select option {
   border: 1px solid #bca45d66;
   background: #101715e8;
 }
+.server-save-list article.online {
+  border-color: #6fc488;
+  box-shadow: inset 3px 0 0 #58b978;
+}
+.server-save-list article.offline { opacity: .86; }
+.server-save-list article strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.server-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #777;
+  box-shadow: 0 0 0 2px #0008;
+}
+.server-save-list article.online .server-status-dot {
+  background: #68dd88;
+  box-shadow: 0 0 10px #68dd88;
+}
+.server-save-list .server-stop {
+  border-color: #b94a54;
+  background: linear-gradient(#793b43, #50252b);
+}
+.server-create-panel small {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.server-import-action { margin-top: 4px; }
 .server-save-list article div,
 .server-player-list {
   display: grid;

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   AiDifficulty,
   ServerRecord,
@@ -9,6 +10,7 @@ export type HomePage =
   | "menu"
   | "new"
   | "servers"
+  | "create-server"
   | "join-server"
   | "settings";
 
@@ -46,7 +48,10 @@ type HomeScreenProps = {
   renameSave: (savedAt: number, name: string) => void;
   changeSaveIcon: (savedAt: number) => void;
   servers: ServerRecord[];
+  activeServerId: string | null;
+  createServer: (name: string, maxPlayers: number, mapSavedAt?: number) => void;
   launchServer: (server: ServerRecord) => void;
+  stopServer: (id: string) => void;
   deleteServer: (id: string) => void;
   exportServer: (server: ServerRecord) => void;
   importServer: (file: File) => void;
@@ -88,12 +93,18 @@ export function HomeScreen(props: HomeScreenProps) {
     renameSave,
     changeSaveIcon,
     servers,
+    activeServerId,
+    createServer,
     launchServer,
+    stopServer,
     deleteServer,
     exportServer,
     importServer,
     openServerAdmin,
   } = props;
+  const [serverName, setServerName] = useState("清北联机服务器"),
+    [serverMaxPlayers, setServerMaxPlayers] = useState(4),
+    [serverMapSavedAt, setServerMapSavedAt] = useState<number | undefined>();
 
   return (
     <section
@@ -133,20 +144,8 @@ export function HomeScreen(props: HomeScreenProps) {
           <div className="lan-panel home-server-page">
             <h2>服务器</h2>
             <div className="server-page-actions">
-              <button onClick={() => openServerAdmin()}>创建服务器</button>
+              <button onClick={() => setPage("create-server")}>创建服务器</button>
               <button onClick={() => setPage("join-server")}>进入服务器</button>
-              <label className="file-action">
-                上传服务器文件
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) importServer(file);
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
             </div>
             <p className="lan-status">
               {lanStatus} · 当前连接 {connectedPlayers} 名远程玩家
@@ -154,22 +153,37 @@ export function HomeScreen(props: HomeScreenProps) {
             <div className="server-save-list">
               {servers.length ? (
                 servers.map((server) => (
-                  <article key={server.id}>
+                  <article
+                    key={server.id}
+                    className={activeServerId === server.id ? "online" : "offline"}
+                  >
                     <div>
-                      <strong>{server.name}</strong>
+                      <strong>
+                        <i className="server-status-dot" />
+                        {server.name}
+                      </strong>
                       <span>
-                        地图：{server.map.name} · 玩家 {server.players.length}/
-                        {server.maxPlayers}
+                        {activeServerId === server.id ? "运行中" : "已停止"} · 地图：
+                        {server.map.name} · {activeServerId === server.id ? "当前" : "上次"}玩家 {server.players.length}/
+                        {server.maxPlayers} · {new Date(server.updatedAt).toLocaleString("zh-CN")}
                       </span>
                     </div>
-                    <button onClick={() => launchServer(server)}>
-                      快捷邀请自己并启动
-                    </button>
+                    {activeServerId === server.id ? (
+                      <button className="server-stop" onClick={() => stopServer(server.id)}>
+                        停止
+                      </button>
+                    ) : (
+                      <button onClick={() => launchServer(server)}>启动</button>
+                    )}
                     <button onClick={() => openServerAdmin(server)}>
-                      管理控制台
+                      控制台
                     </button>
                     <button onClick={() => exportServer(server)}>导出</button>
-                    <button className="delete" onClick={() => deleteServer(server.id)}>
+                    <button
+                      className="delete"
+                      disabled={activeServerId === server.id}
+                      onClick={() => deleteServer(server.id)}
+                    >
                       删除
                     </button>
                   </article>
@@ -178,6 +192,70 @@ export function HomeScreen(props: HomeScreenProps) {
                 <p>尚未创建服务器。</p>
               )}
             </div>
+          </div>
+        )}
+        {page === "create-server" && (
+          <div className="world-settings server-create-panel">
+            <h2>创建服务器</h2>
+            <label>
+              <span>服务器名称</span>
+              <input
+                value={serverName}
+                maxLength={24}
+                onChange={(event) => setServerName(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>最大玩家</span>
+              <select
+                value={serverMaxPlayers}
+                onChange={(event) => setServerMaxPlayers(Number(event.target.value))}
+              >
+                {[2, 3, 4, 5, 6, 7, 8].map((count) => (
+                  <option value={count} key={count}>{count}人</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>基础地图</span>
+              <select
+                value={serverMapSavedAt ?? "fresh"}
+                onChange={(event) =>
+                  setServerMapSavedAt(
+                    event.target.value === "fresh"
+                      ? undefined
+                      : Number(event.target.value),
+                  )
+                }
+              >
+                <option value="fresh">新服务器地图</option>
+                {saves.map((save) => (
+                  <option value={save.savedAt} key={save.savedAt}>{save.name}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={() => {
+                createServer(serverName, serverMaxPlayers, serverMapSavedAt);
+                setPage("servers");
+              }}
+            >
+              创建
+            </button>
+            <label className="file-action server-import-action">
+              上传服务器文件
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) importServer(file);
+                  event.currentTarget.value = "";
+                  setPage("servers");
+                }}
+              />
+            </label>
+            <small>详细地图、同阵营规则和运行参数可在创建后的“控制台”中配置。</small>
           </div>
         )}
         {page === "join-server" && (

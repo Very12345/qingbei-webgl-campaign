@@ -19,6 +19,7 @@ export type ServerBattleSummary = {
 export type ServerAdminMessage =
   | { type: "request-state"; serverId: string }
   | { type: "launch"; serverId: string }
+  | { type: "stop"; serverId: string }
   | { type: "command"; serverId: string; requestId: string; command: string }
   | { type: "state"; serverId: string; summary: ServerBattleSummary }
   | {
