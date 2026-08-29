@@ -23,6 +23,12 @@ export type AutomaticSignalMessage =
       clientId: string;
       sdp: RTCSessionDescriptionInit;
       sentAt: number;
+    }
+  | {
+      kind: "accepted";
+      senderId: string;
+      clientId: string;
+      sentAt: number;
     };
 
 export const normalizeRoomCode = (value: string) =>

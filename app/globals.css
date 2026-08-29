@@ -600,6 +600,30 @@ select option {
   width: 100%;
   min-height: 42px;
 }
+.lan-connection-card {
+  display: grid;
+  justify-items: center;
+  width: min(420px, 92vw);
+  gap: 12px;
+  border: 2px solid #d4bc69;
+  padding: 28px;
+  background: #0b1512f2;
+  color: #f5e9c0;
+  box-shadow: 0 24px 90px #000d;
+  text-align: center;
+}
+.lan-connection-card h2,
+.lan-connection-card p { margin: 0; }
+.lan-connection-card > div { display: flex; gap: 9px; }
+.lan-connection-spinner {
+  width: 44px;
+  height: 44px;
+  border: 5px solid #ffffff26;
+  border-top-color: #f2d36e;
+  border-radius: 50%;
+  animation: lan-connection-spin .85s linear infinite;
+}
+@keyframes lan-connection-spin { to { transform: rotate(360deg); } }
 @media (max-width: 620px) {
   .team-lobby-options { grid-template-columns: 1fr; }
   .team-lobby-name { grid-template-columns: 1fr; }
