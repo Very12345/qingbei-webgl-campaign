@@ -234,7 +234,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(mapGroup);
     const regions = osmRegions as unknown as Record<string, any>;
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
-      windowDetailMeshes: THREE.InstancedMesh[] = [];
+      windowDetailMeshes: THREE.InstancedMesh[] = [],
+      sportMaterials: THREE.MeshStandardMaterial[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main,
       tsinghuaCampus = regions.main.campuses?.find(
@@ -916,22 +917,27 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       },
       {
         name: "北大东操场",
+        track: true,
         points: [[-24.8, 15.29], [-24.09, 18.16], [-22.07, 17.66], [-22.78, 14.8]],
       },
       {
         name: "清华西大操场",
+        track: true,
         points: [[-5.34, -6.08], [-5.62, -10.03], [-3.39, -10.19], [-3.1, -6.24]],
       },
       {
         name: "清华东大操场",
+        track: true,
         points: [[13.25, -7.73], [13.11, -11.85], [15.93, -11.95], [16.07, -7.88]],
       },
       {
         name: "清华紫荆操场",
+        track: true,
         points: [[8.16, -18.14], [7.97, -22.29], [10.35, -22.4], [10.54, -18.25]],
       },
       {
         name: "清华东区操场",
+        track: true,
         points: [[30.86, -5.91], [31.02, -2.48], [32.68, -2.5], [33.15, -2.53], [33, -6.03]],
       },
     ];
@@ -1079,17 +1085,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             points = surface.track
               ? capsule(halfLength, halfWidth)
               : rawPoints,
-            base = new THREE.Mesh(
-              surfaceGeometry(r, points, 0.055),
-              new THREE.MeshStandardMaterial({
-                color: surface.track ? 0x9f3e32 : 0x447d48,
+            baseMaterial = new THREE.MeshStandardMaterial({
+                color: surface.track ? 0xb84a3f : 0x397a48,
+                emissive: surface.track ? 0x2a0d0a : 0x0a2411,
+                emissiveIntensity: 0.05,
                 roughness: 0.96,
                 polygonOffset: true,
                 polygonOffsetFactor: -3,
               }),
+            base = new THREE.Mesh(
+              surfaceGeometry(r, points, 0.055),
+              baseMaterial,
             );
+          sportMaterials.push(baseMaterial);
           base.name = surface.name;
-          base.receiveShadow = false;
+          base.receiveShadow = true;
           base.renderOrder = 2;
           mapGroup.add(base);
           const pitchHalfLength = surface.track
@@ -1104,14 +1114,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               at(pitchHalfLength, pitchHalfWidth),
               at(-pitchHalfLength, pitchHalfWidth),
             ],
-            pitch = new THREE.Mesh(
-              surfaceGeometry(r, inner, 0.075),
-              new THREE.MeshStandardMaterial({
-                color: 0x3f7544,
+            pitchMaterial = new THREE.MeshStandardMaterial({
+                color: 0x2f914d,
+                emissive: 0x092a13,
+                emissiveIntensity: 0.05,
                 roughness: 1,
                 polygonOffset: true,
                 polygonOffsetFactor: -4,
               }),
+            pitch = new THREE.Mesh(
+              surfaceGeometry(r, inner, 0.075),
+              pitchMaterial,
             ),
             boundary = new THREE.LineLoop(
               new THREE.BufferGeometry().setFromPoints(
@@ -1130,6 +1143,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 opacity: 0.92,
               }),
             );
+          sportMaterials.push(pitchMaterial);
+          pitch.receiveShadow = true;
           pitch.renderOrder = 3;
           boundary.renderOrder = 4;
           mapGroup.add(pitch, boundary);
@@ -7285,6 +7300,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       scene.background = sky;
       (scene.fog as THREE.FogExp2).color.copy(sky);
       windowMaterials.forEach((m) => (m.emissiveIntensity = night * 3.2));
+      sportMaterials.forEach(
+        (material) =>
+          (material.emissiveIntensity = 0.025 + night * 0.16),
+      );
       lampBulbMaterial.emissiveIntensity = 0.08 + night * 4.8;
       unitBodyMaterials.pku.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
