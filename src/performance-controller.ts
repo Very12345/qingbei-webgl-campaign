@@ -19,6 +19,8 @@ export type PerformanceMetrics = {
   simulationMs: number;
   pathfindingMs: number;
   saveMs: number;
+  latencyMs: number;
+  jitterMs: number;
   drawCalls: number;
   triangles: number;
   detailedUnits: number;
@@ -73,6 +75,8 @@ export class PerformanceController {
     simulationMs: 0,
     pathfindingMs: 0,
     saveMs: 0,
+    latencyMs: 0,
+    jitterMs: 0,
     drawCalls: 0,
     triangles: 0,
     detailedUnits: 0,

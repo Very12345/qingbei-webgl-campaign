@@ -220,6 +220,11 @@ export default function Game3D() {
   const clientActionRateRef = useRef(
     new WeakMap<RTCDataChannel, number[]>(),
   );
+  const networkPendingPingsRef = useRef(new Map<string, number>());
+  const networkLatencySamplesRef = useRef<number[]>([]);
+  const networkLastPingAtRef = useRef(0);
+  const hostOperationQueueRef = useRef<Array<() => void>>([]);
+  const hostOperationFlushTimerRef = useRef<number | null>(null);
   const networkReceivedRevisionRef = useRef(
     new WeakMap<RTCDataChannel, number>(),
   );
@@ -1417,6 +1422,28 @@ export default function Game3D() {
     sendToChannel(hostChannel, { type: "client_action", action });
     return true;
   };
+  const flushHostOperations = () => {
+    if (hostOperationFlushTimerRef.current != null) {
+      window.clearTimeout(hostOperationFlushTimerRef.current);
+      hostOperationFlushTimerRef.current = null;
+    }
+    const batch = hostOperationQueueRef.current.splice(0);
+    batch.forEach((queued) => queued());
+  };
+  const enqueueHostOperation = (operation: () => void) => {
+    hostOperationQueueRef.current.push(operation);
+    if (
+      dedicatedServerHostRef.current &&
+      document.visibilityState === "hidden"
+    )
+      return;
+    if (hostOperationFlushTimerRef.current != null) return;
+    const frameMs = 50,
+      delay = Math.max(1, frameMs - (performance.now() % frameMs));
+    hostOperationFlushTimerRef.current = window.setTimeout(() => {
+      flushHostOperations();
+    }, delay);
+  };
   const relayChatMessage = (message: ChatMessage) => {
     appendChatMessage(message);
     recordServerLog(
@@ -1644,6 +1671,7 @@ export default function Game3D() {
           game: snapshotCurrentGame("联机同步"),
           role: "host",
         });
+      if (host) networkLastFullAtRef.current = performance.now();
       refreshConnectionCount();
       updateActiveServerPlayers();
       if (host) setLanStatus("玩家已加入，正在发送主机地图");
@@ -1699,6 +1727,42 @@ export default function Game3D() {
               new MessageEvent("message", { data: transfer.parts.join("") }),
             );
           }
+          return;
+        }
+        if (payload.type === "ping") {
+          sendToChannel(channel, {
+            type: "pong",
+            id: payload.id,
+            sentAt: payload.sentAt,
+          });
+          return;
+        }
+        if (payload.type === "pong") {
+          const startedAt = networkPendingPingsRef.current.get(payload.id);
+          if (startedAt == null) return;
+          networkPendingPingsRef.current.delete(payload.id);
+          const rtt = Math.max(0, performance.now() - startedAt),
+            samples = networkLatencySamplesRef.current;
+          samples.push(rtt);
+          if (samples.length > 24) samples.shift();
+          const latency =
+              samples.reduce((sum, sample) => sum + sample, 0) /
+              Math.max(1, samples.length),
+            jitter =
+              samples.length < 2
+                ? 0
+                : samples
+                    .slice(1)
+                    .reduce(
+                      (sum, sample, index) =>
+                        sum + Math.abs(sample - samples[index]),
+                      0,
+                    ) /
+                  (samples.length - 1);
+          performanceControllerRef.current.update({
+            latencyMs: latency,
+            jitterMs: jitter,
+          });
           return;
         }
         if (payload.type === "hello") {
@@ -1818,9 +1882,11 @@ export default function Game3D() {
             networkReceivedRevisionRef.current.get(channel) ?? -1;
           if (payload.revision <= lastRevision) return;
           networkReceivedRevisionRef.current.set(channel, payload.revision);
-          const game = gameRef.current,
-            allowedTeam = identity.team;
-          for (const command of payload.units.slice(0, 3_500)) {
+          const allowedTeam = identity.team,
+            commandPayload = structuredClone(payload);
+          enqueueHostOperation(() => {
+          const game = gameRef.current;
+          for (const command of commandPayload.units.slice(0, 3_500)) {
             const unit = game.units.find((candidate) => candidate.id === command.id);
             if (
               !unit ||
@@ -1852,7 +1918,7 @@ export default function Game3D() {
             unit.pathIndex = undefined;
           }
           let sitesChanged = false;
-          for (const command of payload.sites.slice(0, 300)) {
+          for (const command of commandPayload.sites.slice(0, 300)) {
             const site = game.sites.find((candidate) => candidate.id === command.id);
             if (!site || site.destroyed) continue;
             if (site.team === allowedTeam) {
@@ -1896,6 +1962,7 @@ export default function Game3D() {
             sitesChanged = true;
           }
           if (sitesChanged) sceneApi.current?.sync();
+          });
           return;
         }
         if (payload.type === "client_action" && host) {
@@ -1909,7 +1976,8 @@ export default function Game3D() {
           recent.push(now);
           clientActionRateRef.current.set(channel, recent);
           const team = identity.team,
-            action = payload.action;
+            action = structuredClone(payload.action);
+          enqueueHostOperation(() => {
           if (action.kind === "research")
             beginResearch(action.id, team, true);
           if (action.kind === "production_start")
@@ -1926,6 +1994,7 @@ export default function Game3D() {
             Math.abs(action.z) <= 70
           )
             sceneApi.current?.buildCampAt(action.x, action.z, team);
+          });
           return;
         }
         if (
@@ -1962,8 +2031,18 @@ export default function Game3D() {
                   clientUnitCommandPendingSinceRef.current.get(existing.id) ??
                   (hasPendingLocalCommand ? Date.now() : 0),
                 keepPending =
-                  hasPendingLocalCommand && Date.now() - pendingSince < 3_000;
+                  hasPendingLocalCommand && Date.now() - pendingSince < 3_000,
+                previousX = existing.x,
+                previousZ = existing.z;
               Object.assign(existing, delta);
+              const correctionDistance = Math.hypot(
+                existing.x - previousX,
+                existing.z - previousZ,
+              );
+              if (correctionDistance < 1.8) {
+                existing.x = THREE.MathUtils.lerp(previousX, existing.x, 0.42);
+                existing.z = THREE.MathUtils.lerp(previousZ, existing.z, 0.42);
+              }
               const incomingSignature = `${existing.tx.toFixed(3)}/${existing.tz.toFixed(3)}/${existing.targetSiteId ?? ""}`;
               clientUnitCommandSignaturesRef.current.set(
                 existing.id,
@@ -2816,6 +2895,8 @@ export default function Game3D() {
   );
   useEffect(() => {
     const syncNetwork = () => {
+      if (lanHostRef.current && hostOperationQueueRef.current.length)
+        flushHostOperations();
       const openChannels = [...lanChannelsRef.current].filter(
         (channel) => channel.readyState === "open",
       );
@@ -2848,6 +2929,17 @@ export default function Game3D() {
             destroyed: site.destroyed,
             temporary: site.temporary,
           });
+      if (now - networkLastPingAtRef.current >= 1_000) {
+        networkLastPingAtRef.current = now;
+        for (const [id, startedAt] of networkPendingPingsRef.current)
+          if (now - startedAt > 10_000)
+            networkPendingPingsRef.current.delete(id);
+        openChannels.forEach((channel) => {
+          const id = crypto.randomUUID();
+          networkPendingPingsRef.current.set(id, performance.now());
+          sendToChannel(channel, { type: "ping", id, sentAt: Date.now() });
+        });
+      }
       if (role === "guest") {
         if (!guestHasAuthoritativeStateRef.current) return;
         const game = gameRef.current,
@@ -2906,7 +2998,7 @@ export default function Game3D() {
       }
       if (
         role === "host" &&
-        now - networkLastFullAtRef.current >= 10_000
+        now - networkLastFullAtRef.current >= 60_000
       ) {
         networkLastFullAtRef.current = now;
         const envelope: MultiplayerEnvelope = {
@@ -2924,6 +3016,16 @@ export default function Game3D() {
         return;
       }
       const game = gameRef.current,
+        maximumBufferedAmount = Math.max(
+          0,
+          ...openChannels.map((channel) => channel.bufferedAmount),
+        ),
+        unitBatchLimit =
+          maximumBufferedAmount > 1_000_000
+            ? 120
+            : maximumBufferedAmount > 400_000
+              ? 350
+              : 700,
         currentIds = new Set<number>(),
         units: UnitNetworkState[] = [];
       for (const unit of game.units) {
@@ -2931,6 +3033,7 @@ export default function Game3D() {
         const signature = signatureOf(unit);
         if (networkUnitSignaturesRef.current.get(unit.id) === signature)
           continue;
+        if (units.length >= unitBatchLimit) continue;
         networkUnitSignaturesRef.current.set(unit.id, signature);
         const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
         units.push(networkUnit);
@@ -2996,7 +3099,7 @@ export default function Game3D() {
         )
           return;
         syncNetwork();
-      }, 200),
+      }, 100),
       worker = dedicatedServerHost
         ? new Worker(
             new URL("../src/game/server-clock-worker.ts", import.meta.url),
@@ -3009,7 +3112,7 @@ export default function Game3D() {
         const now = performance.now();
         if (
           document.visibilityState !== "hidden" ||
-          now - lastWorkerSyncAt < 190
+          now - lastWorkerSyncAt < 90
         )
           return;
         lastWorkerSyncAt = now;

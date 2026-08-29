@@ -275,6 +275,8 @@ export type ClientSiteCommand = {
   displayName?: string;
 };
 export type MultiplayerEnvelope =
+  | { type: "ping"; id: string; sentAt: number }
+  | { type: "pong"; id: string; sentAt: number }
   | {
       type: "network_chunk";
       transferId: string;

@@ -24,6 +24,12 @@ export function PerformanceHud({
       <span>模拟 {metrics.simulationMs.toFixed(1)} ms</span>
       <span>寻路 {metrics.pathfindingMs.toFixed(1)} ms</span>
       <span>存档 {metrics.saveMs.toFixed(1)} ms</span>
+      <span>
+        延迟 {metrics.latencyMs > 0 ? `${metrics.latencyMs.toFixed(0)} ms` : "--"}
+      </span>
+      <span>
+        抖动 {metrics.jitterMs > 0 ? `${metrics.jitterMs.toFixed(0)} ms` : "--"}
+      </span>
       <small>
         {metrics.quality} · DPR {pixelRatio}
       </small>
