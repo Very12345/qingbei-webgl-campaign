@@ -93,6 +93,10 @@ type BattlefieldEngineContext = {
   beginDecision: (decisionId: string, team: Team, silent?: boolean) => boolean;
   beginResearch: (id: ResearchId, team: Team, silent?: boolean) => boolean;
   beginProduction: (id: ResearchId, team: Team, silent?: boolean) => boolean;
+  recordServerLog: (
+    category: "system" | "player" | "chat" | "battle" | "command",
+    text: string,
+  ) => void;
 };
 
 export function useBattlefieldEngine(context: BattlefieldEngineContext) {
@@ -132,7 +136,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     showControl,
     beginDecision,
     beginResearch,
-    beginProduction
+    beginProduction,
+    recordServerLog
   } = context;
   useEffect(() => {
     if (screen !== "game") {
@@ -4215,6 +4220,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         campaign.firedEvents.push(id);
         apply?.();
         pushEvent({ id, ...card });
+        recordServerLog("system", `事件触发：${card.title}`);
         return true;
       },
       addTimedStatus = (
@@ -4621,6 +4627,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           reason,
           atHour: campaign.elapsedHours,
         };
+        recordServerLog(
+          "battle",
+          `战役结果：${winner === "pku" ? "北大" : campaign.thuFactionName}胜利，${reason}`,
+        );
         setVictoryBroadcast({
           winner,
           title:

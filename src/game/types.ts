@@ -220,6 +220,12 @@ export type ServerPlayer = {
   team: Team;
   host: boolean;
 };
+export type ServerLogEntry = {
+  id: string;
+  at: number;
+  category: "system" | "player" | "chat" | "battle" | "command";
+  text: string;
+};
 
 export type ServerRecord = {
   id: string;
@@ -231,6 +237,7 @@ export type ServerRecord = {
   allowSameTeam: boolean;
   map: Snapshot;
   players: ServerPlayer[];
+  logs?: ServerLogEntry[];
 };
 
 export type ServerConfigurationDraft = {

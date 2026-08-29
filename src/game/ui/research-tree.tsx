@@ -20,11 +20,64 @@ export function ResearchTree({
   const [tab, setTab] = useState<"research" | "production">("research");
   const active = campaign.research.active[team];
   const production = campaign.research.production[team];
+  const branches: ResearchId[][] = [
+    ["bike", "ebike"],
+    ["bus", "armored_bus"],
+  ];
+  const renderResearchNode = (id: ResearchId) => {
+    const definition = RESEARCH_DEFINITIONS[id],
+      completed = campaign.research.completed[team].includes(id),
+      researching = active?.id === id,
+      progress = researching
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              (campaign.elapsedHours - active.startedAt) /
+                (active.completesAt - active.startedAt),
+            ),
+          )
+        : completed
+          ? 1
+          : 0;
+    return (
+      <article
+        className={`research-node ${id} ${completed ? "completed" : ""}`}
+        key={id}
+      >
+        <div className={`research-vehicle-icon ${id}`} aria-hidden="true" />
+        <div className="research-node-copy">
+          <h3>{definition.title}</h3>
+          <p>{definition.description}</p>
+        </div>
+        <dl>
+          <div><dt>研发</dt><dd>{definition.cost} / {definition.hours}时</dd></div>
+          <div><dt>生产</dt><dd>{definition.deploymentCost} / {definition.productionHours}时</dd></div>
+        </dl>
+        <div className="research-progress"><i style={{ width: `${progress * 100}%` }} /></div>
+        <button
+          disabled={
+            completed ||
+            !!active ||
+            resources < definition.cost ||
+            !definition.requires.every((required) =>
+              campaign.research.completed[team].includes(required),
+            )
+          }
+          onClick={() => onStart(id)}
+        >
+          {completed ? "已完成" : researching ? "研发中" : "研发"}
+        </button>
+      </article>
+    );
+  };
   return (
     <div className={`focus-tree-screen research-tree-screen ${team}`}>
       <header className="focus-tree-topbar">
         <div className="focus-tree-school-mark">
-          <span>研</span>
+          <span className="research-header-emblem" aria-hidden="true">
+            <i />
+          </span>
           <div>
             <h2>校园装备研发</h2>
             <small>研发完成后，装备会按道路条件和冷却时间配置到据点</small>
@@ -46,51 +99,15 @@ export function ResearchTree({
         </button>
       </nav>
       {tab === "research" ? (
-      <main className="research-tree-canvas">
-        {(Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]).map((id) => {
-          const definition = RESEARCH_DEFINITIONS[id],
-            completed = campaign.research.completed[team].includes(id),
-            researching = active?.id === id,
-            progress = researching
-              ? Math.max(
-                  0,
-                  Math.min(
-                    1,
-                    (campaign.elapsedHours - active.startedAt) /
-                      (active.completesAt - active.startedAt),
-                  ),
-                )
-              : completed
-                ? 1
-                : 0;
-          return (
-            <article className={`research-node ${id} ${completed ? "completed" : ""}`} key={id}>
-              <div className={`research-vehicle-icon ${id}`} aria-hidden="true" />
-              <h3>{definition.title}</h3>
-              <p>{definition.description}</p>
-              <dl>
-                <div><dt>研发</dt><dd>{definition.cost}资源 / {definition.hours}小时</dd></div>
-                <div><dt>配置</dt><dd>{definition.deploymentCost}资源</dd></div>
-                <div><dt>冷却</dt><dd>{definition.cooldownHours}小时</dd></div>
-              </dl>
-              <div className="research-progress"><i style={{ width: `${progress * 100}%` }} /></div>
-              <button
-                disabled={
-                  completed ||
-                  !!active ||
-                  resources < definition.cost ||
-                  !definition.requires.every((required) =>
-                    campaign.research.completed[team].includes(required),
-                  )
-                }
-                onClick={() => onStart(id)}
-              >
-                {completed ? "已完成" : researching ? "研发中" : "开始研发"}
-              </button>
-            </article>
-          );
-        })}
-      </main>
+        <main className="research-tree-canvas">
+          {branches.map((branch) => (
+            <section className="research-branch" key={branch[0]}>
+              {renderResearchNode(branch[0])}
+              <i className="research-branch-line" aria-hidden="true" />
+              {renderResearchNode(branch[1])}
+            </section>
+          ))}
+        </main>
       ) : (
         <main className="research-tree-canvas production-tree-canvas">
           {(Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]).map((id) => {

@@ -27,7 +27,7 @@ import type {
   Snapshot,
   Stance,
   ServerRecord,
-  ServerConfigurationDraft,
+  ServerLogEntry,
   Team,
   UnitNetworkState,
   UnitState,
@@ -52,6 +52,11 @@ import {
   RESEARCH_DEFINITIONS,
   type ResearchId,
 } from "../src/game/research";
+import {
+  SERVER_ADMIN_CHANNEL,
+  type ServerAdminMessage,
+  type ServerBattleSummary,
+} from "../src/game/server-admin-protocol";
 import {
   AcademicYearOverlay,
   EventBatchOverlay,
@@ -98,6 +103,7 @@ export default function Game3D() {
   const [serverSaves, setServerSaves] = useState<ServerRecord[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const activeServerIdRef = useRef<string | null>(null);
+  const adminChannelRef = useRef<BroadcastChannel | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [screen, setScreen] = useState<GameScreen>("home");
   const screenRef = useRef<GameScreen>("home");
@@ -319,6 +325,27 @@ export default function Game3D() {
     },
     [],
   );
+  const recordServerLog = useCallback(
+    (category: ServerLogEntry["category"], text: string) => {
+      const serverId = activeServerIdRef.current;
+      if (!serverId) return;
+      const server = readServerSaves().find((record) => record.id === serverId);
+      if (!server) return;
+      const entry: ServerLogEntry = {
+          id: crypto.randomUUID(),
+          at: Date.now(),
+          category,
+          text,
+        },
+        next = upsertServerSave({
+          ...server,
+          updatedAt: Date.now(),
+          logs: [...(server.logs ?? []), entry].slice(-300),
+        });
+      setServerSaves(next);
+    },
+    [],
+  );
   const refreshSaves = useCallback(
     () => {
       setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt));
@@ -473,7 +500,8 @@ export default function Game3D() {
     showControl,
     beginDecision,
     beginResearch,
-    beginProduction
+    beginProduction,
+    recordServerLog
   });
 
   const snapshotCurrentGame = (name: string): Snapshot => {
@@ -576,13 +604,15 @@ export default function Game3D() {
       setNotice("服务器战局已保存到独立服务器存档");
       return true;
     }
-    const name =
+    const baseName =
         saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
+      existingNames = new Set(readSaves().map((save) => save.name));
+    let name = baseName,
+      suffix = 1;
+    while (existingNames.has(name)) name = `${baseName} (${suffix++})`;
+    const
       snapshot = snapshotCurrentGame(name),
-      next = [snapshot, ...readSaves().filter((s) => s.name !== name)].slice(
-        0,
-        6,
-      );
+      next = [snapshot, ...readSaves()].slice(0, 12);
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(next));
       clearUnfinishedGame();
@@ -650,36 +680,35 @@ export default function Game3D() {
     localStorage.setItem(SAVE_KEY, JSON.stringify(next));
     setSaves(next);
   };
-  const saveServerConfiguration = (draft: ServerConfigurationDraft) => {
-    const existing = draft.id
-        ? readServerSaves().find((record) => record.id === draft.id)
-        : undefined,
-      selectedMap =
-        draft.mapSavedAt == null
-          ? existing?.map
-          : saves.find((save) => save.savedAt === draft.mapSavedAt),
-      fresh = makeFreshGame(),
-      fallbackMap: Snapshot = {
-        version: 4,
-        name: "新服务器地图",
-        savedAt: Date.now(),
-        ...fresh,
-      },
-      now = Date.now(),
-      record: ServerRecord = {
-        id: existing?.id ?? crypto.randomUUID(),
-        name: draft.name.trim().slice(0, 24) || "清北联机服务器",
-        createdAt: existing?.createdAt ?? now,
+  const openServerAdmin = (existing?: ServerRecord) => {
+    let server = existing;
+    if (!server) {
+      const fresh = makeFreshGame(),
+        now = Date.now();
+      server = {
+        id: crypto.randomUUID(),
+        name: "清北联机服务器",
+        createdAt: now,
         updatedAt: now,
-        hostTeam: draft.hostTeam,
-        maxPlayers: Math.min(8, Math.max(2, draft.maxPlayers || 2)),
-        allowSameTeam: draft.allowSameTeam,
-        map: structuredClone(selectedMap ?? fallbackMap),
-        players: existing?.players ?? [],
+        hostTeam: "pku",
+        maxPlayers: 4,
+        allowSameTeam: true,
+        map: {
+          version: 4,
+          name: "新服务器地图",
+          savedAt: now,
+          ...fresh,
+        },
+        players: [],
+        logs: [],
       };
-    setServerSaves(upsertServerSave(record));
-    setHomePage("servers");
-    setNotice(`服务器“${record.name}”配置已保存`);
+      setServerSaves(upsertServerSave(server));
+    }
+    window.open(
+      `${import.meta.env.BASE_URL}server.html?id=${encodeURIComponent(server.id)}`,
+      `qingbei-server-${server.id}`,
+      "popup=yes,width=1440,height=900",
+    );
   };
   const removeServer = (id: string) => setServerSaves(deleteServerSave(id));
   const exportServer = (server: ServerRecord) =>
@@ -1074,6 +1103,10 @@ export default function Game3D() {
   };
   const relayChatMessage = (message: ChatMessage) => {
     appendChatMessage(message);
+    recordServerLog(
+      message.channel === "system" ? "system" : "chat",
+      `${message.senderName}: ${message.text}`,
+    );
     lanChannelsRef.current.forEach((channel) => {
       const identity = lanChannelIdentityRef.current.get(channel);
       if (
@@ -1269,6 +1302,7 @@ export default function Game3D() {
       setLanStatus(
         lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭",
       );
+      recordServerLog("player", "一名玩家离开服务器");
     };
     channel.onmessage = (event) => {
       try {
@@ -1289,6 +1323,10 @@ export default function Game3D() {
           }
           lanChannelIdentityRef.current.set(channel, identity);
           updateActiveServerPlayers();
+          recordServerLog(
+            "player",
+            `${identity.nickname}进入服务器并选择${identity.team === "pku" ? "北大" : "清华"}`,
+          );
           if (host) {
             const allowed = chatMessagesRef.current.filter(
               (message) =>
@@ -1492,6 +1530,172 @@ export default function Game3D() {
       setLanStatus("回应码无效");
     }
   };
+  const buildServerSummary = (serverId: string): ServerBattleSummary => {
+    const server = readServerSaves().find((record) => record.id === serverId),
+      game = gameRef.current,
+      units = { pku: 0, thu: 0 },
+      sites = { pku: 0, thu: 0 };
+    for (const unit of game.units) units[unit.team] += unit.strength;
+    for (const site of game.sites)
+      if (!site.destroyed) sites[site.team]++;
+    const date = new Date(
+        new Date(game.campaign.startDateISO).getTime() +
+          game.campaign.elapsedHours * 3_600_000,
+      ),
+      players =
+        activeServerIdRef.current === serverId
+          ? [
+              {
+                id: playerIdRef.current,
+                nickname: playerNickname.trim().slice(0, 16) || "主机",
+                team: playerTeamRef.current,
+                host: true,
+              },
+              ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
+                ...identity,
+                host: false,
+              })),
+            ]
+          : server?.players ?? [];
+    return {
+      online: activeServerIdRef.current === serverId,
+      clock: date.toLocaleString("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      players,
+      units,
+      sites,
+      deaths: { ...game.deaths },
+      resources: { ...game.resources },
+      outcome: game.campaign.outcome
+        ? `${game.campaign.outcome.winner === "pku" ? "北大" : game.campaign.thuFactionName}胜利：${game.campaign.outcome.reason}`
+        : undefined,
+      logs: server?.logs ?? [],
+      inviteCode: activeServerIdRef.current === serverId ? lanOutput : undefined,
+      connectionStatus:
+        activeServerIdRef.current === serverId ? lanStatus : "服务器离线",
+    };
+  };
+  const publishServerAdminState = (serverId: string) => {
+    adminChannelRef.current?.postMessage({
+      type: "state",
+      serverId,
+      summary: buildServerSummary(serverId),
+    } satisfies ServerAdminMessage);
+  };
+  const executeServerAdminCommand = async (raw: string) => {
+    const normalized = raw.trim(),
+      withoutApi = normalized.startsWith("api ")
+        ? normalized.slice(4).trim()
+        : normalized,
+      splitAt = withoutApi.indexOf(" "),
+      action = (splitAt < 0 ? withoutApi : withoutApi.slice(0, splitAt)).toLowerCase(),
+      rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
+      args = rest.split(/\s+/).filter(Boolean);
+    if (action === "help")
+      return "API: status | players | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <回应JSON>";
+    if (action === "status")
+      return JSON.stringify(buildServerSummary(activeServerIdRef.current ?? ""));
+    if (action === "players")
+      return buildServerSummary(activeServerIdRef.current ?? "").players
+        .map((player) => `${player.nickname}:${player.team}${player.host ? ":host" : ""}`)
+        .join(", ");
+    if (!activeServerIdRef.current) throw new Error("服务器尚未在原窗口启动");
+    if (action === "timescale") {
+      const value = Math.min(16, Math.max(0.5, Number(args[0])));
+      if (!Number.isFinite(value)) throw new Error("倍率必须是数字");
+      setTimeScale(value);
+      return `时间倍率已设为 ${value}×`;
+    }
+    if (action === "resource") {
+      const team = args[0] as Team,
+        amount = Number(args[1]);
+      if (!(["pku", "thu"] as string[]).includes(team) || !Number.isFinite(amount))
+        throw new Error("用法：resource <pku|thu> <数量>");
+      gameRef.current.resources[team] += amount;
+      return `${team}资源变更 ${amount >= 0 ? "+" : ""}${amount}`;
+    }
+    if (action === "mobilize") {
+      const team = args[0] as Team,
+        stance = args[1] as Stance;
+      if (!(["pku", "thu"] as string[]).includes(team) || !(["defend", "guard", "standby"] as string[]).includes(stance))
+        throw new Error("用法：mobilize <pku|thu> <defend|guard|standby>");
+      sceneApi.current?.mobilizeAll(team, stance);
+      return `${team}已执行总动员：${stance}`;
+    }
+    if (action === "say") {
+      relayChatMessage({
+        id: crypto.randomUUID(),
+        senderId: "server-console",
+        senderName: "服务器",
+        senderTeam: playerTeamRef.current,
+        channel: "system",
+        text: rest.slice(0, 200),
+        sentAt: Date.now(),
+      });
+      return "系统消息已广播";
+    }
+    if (action === "save") {
+      saveUnfinishedGame(true);
+      return "服务器战局已保存";
+    }
+    if (action === "accept") {
+      await lanPeerRef.current?.setRemoteDescription(JSON.parse(rest));
+      setLanStatus("正在接纳玩家；连接成功后会出现在玩家列表");
+      return "玩家回应已接纳";
+    }
+    throw new Error(`未知指令：${action || "(空)"}`);
+  };
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(SERVER_ADMIN_CHANNEL);
+    adminChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent<ServerAdminMessage>) => {
+      const message = event.data;
+      if (message.type === "request-state")
+        publishServerAdminState(message.serverId);
+      if (message.type === "launch") {
+        const server = readServerSaves().find(
+          (record) => record.id === message.serverId,
+        );
+        if (server) {
+          launchServer(server);
+          recordServerLog("system", "服务器由独立控制台启动");
+          window.setTimeout(() => publishServerAdminState(server.id), 500);
+        }
+      }
+      if (message.type === "command")
+        void executeServerAdminCommand(message.command)
+          .then((output) => {
+            recordServerLog("command", `${message.command} → ${output}`);
+            channel.postMessage({
+              type: "command-result",
+              serverId: message.serverId,
+              requestId: message.requestId,
+              ok: true,
+              output,
+            } satisfies ServerAdminMessage);
+            publishServerAdminState(message.serverId);
+          })
+          .catch((error) =>
+            channel.postMessage({
+              type: "command-result",
+              serverId: message.serverId,
+              requestId: message.requestId,
+              ok: false,
+              output: error instanceof Error ? error.message : "指令执行失败",
+            } satisfies ServerAdminMessage),
+          );
+    };
+    return () => {
+      channel.close();
+      adminChannelRef.current = null;
+    };
+  }, [lanOutput, lanStatus, playerNickname]);
   useEffect(() => {
     const timer = window.setInterval(() => {
       const openChannels = [...lanChannelsRef.current].filter(
@@ -1934,12 +2138,12 @@ export default function Game3D() {
           renameSave={renameSave}
           changeSaveIcon={changeSaveIcon}
           servers={serverSaves}
-          saveServerConfiguration={saveServerConfiguration}
           launchServer={launchServer}
           deleteServer={removeServer}
           exportServer={exportServer}
           importServer={(file) => void importServer(file)}
           forcedLanTeam={forcedLanTeam}
+          openServerAdmin={openServerAdmin}
         />
       )}
       <header className="hud-top">

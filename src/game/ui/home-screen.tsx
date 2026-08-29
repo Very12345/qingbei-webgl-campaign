@@ -1,7 +1,5 @@
-import { useState } from "react";
 import type {
   AiDifficulty,
-  ServerConfigurationDraft,
   ServerRecord,
   Snapshot,
   Team,
@@ -11,7 +9,6 @@ export type HomePage =
   | "menu"
   | "new"
   | "servers"
-  | "server-config"
   | "join-server"
   | "settings";
 
@@ -53,12 +50,12 @@ type HomeScreenProps = {
   renameSave: (savedAt: number, name: string) => void;
   changeSaveIcon: (savedAt: number) => void;
   servers: ServerRecord[];
-  saveServerConfiguration: (draft: ServerConfigurationDraft) => void;
   launchServer: (server: ServerRecord) => void;
   deleteServer: (id: string) => void;
   exportServer: (server: ServerRecord) => void;
   importServer: (file: File) => void;
   forcedLanTeam: Team | null;
+  openServerAdmin: (server?: ServerRecord) => void;
 };
 
 export function HomeScreen(props: HomeScreenProps) {
@@ -100,28 +97,13 @@ export function HomeScreen(props: HomeScreenProps) {
     renameSave,
     changeSaveIcon,
     servers,
-    saveServerConfiguration,
     launchServer,
     deleteServer,
     exportServer,
     importServer,
     forcedLanTeam,
+    openServerAdmin,
   } = props;
-  const [editingServer, setEditingServer] = useState<ServerRecord | null>(null);
-  const [serverName, setServerName] = useState("清北联机服务器");
-  const [serverHostTeam, setServerHostTeam] = useState<Team>("pku");
-  const [serverMaxPlayers, setServerMaxPlayers] = useState(4);
-  const [serverAllowSameTeam, setServerAllowSameTeam] = useState(true);
-  const [serverMapSavedAt, setServerMapSavedAt] = useState<number | undefined>();
-  const openServerConfiguration = (server?: ServerRecord) => {
-    setEditingServer(server ?? null);
-    setServerName(server?.name ?? "清北联机服务器");
-    setServerHostTeam(server?.hostTeam ?? "pku");
-    setServerMaxPlayers(server?.maxPlayers ?? 4);
-    setServerAllowSameTeam(server?.allowSameTeam ?? true);
-    setServerMapSavedAt(undefined);
-    setPage("server-config");
-  };
 
   return (
     <section
@@ -155,7 +137,7 @@ export function HomeScreen(props: HomeScreenProps) {
           <div className="lan-panel home-server-page">
             <h2>服务器</h2>
             <div className="server-page-actions">
-              <button onClick={() => openServerConfiguration()}>创建服务器</button>
+              <button onClick={() => openServerAdmin()}>创建服务器</button>
               <button onClick={() => setPage("join-server")}>进入服务器</button>
               <label className="file-action">
                 上传服务器文件
@@ -187,8 +169,8 @@ export function HomeScreen(props: HomeScreenProps) {
                     <button onClick={() => launchServer(server)}>
                       快捷邀请自己并启动
                     </button>
-                    <button onClick={() => openServerConfiguration(server)}>
-                      配置
+                    <button onClick={() => openServerAdmin(server)}>
+                      管理控制台
                     </button>
                     <button onClick={() => exportServer(server)}>导出</button>
                     <button className="delete" onClick={() => deleteServer(server.id)}>
@@ -200,109 +182,6 @@ export function HomeScreen(props: HomeScreenProps) {
                 <p>尚未创建服务器。</p>
               )}
             </div>
-            <section className="server-invite-panel">
-              <strong>邀请与接纳玩家</strong>
-              <textarea
-                readOnly
-                value={lanOutput}
-                placeholder="启动服务器后，邀请代码会显示在这里"
-              />
-              <textarea
-                value={lanInput}
-                onChange={(event) => setLanInput(event.target.value)}
-                placeholder="粘贴玩家发回的回应代码"
-              />
-              <button onClick={() => void acceptLanAnswer()}>接纳回应玩家</button>
-            </section>
-          </div>
-        )}
-        {page === "server-config" && (
-          <div className="world-settings server-config-page">
-            <h2>{editingServer ? "服务器配置" : "创建服务器"}</h2>
-            <p>此页面仅管理服务器，不显示或运行具体战局。</p>
-            <label>
-              <span>服务器名称</span>
-              <input
-                value={serverName}
-                maxLength={24}
-                onChange={(event) => setServerName(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>主机阵营</span>
-              <select
-                value={serverHostTeam}
-                onChange={(event) => setServerHostTeam(event.target.value as Team)}
-              >
-                <option value="pku">北京大学</option>
-                <option value="thu">清华大学</option>
-              </select>
-            </label>
-            <label>
-              <span>最大玩家数</span>
-              <input
-                type="number"
-                min={2}
-                max={8}
-                value={serverMaxPlayers}
-                onChange={(event) => setServerMaxPlayers(Number(event.target.value))}
-              />
-            </label>
-            <label>
-              <span>导入玩家存档作为地图</span>
-              <select
-                value={serverMapSavedAt ?? "fresh"}
-                onChange={(event) =>
-                  setServerMapSavedAt(
-                    event.target.value === "fresh"
-                      ? undefined
-                      : Number(event.target.value),
-                  )
-                }
-              >
-                <option value="fresh">新战局地图</option>
-                {saves.map((save) => (
-                  <option key={save.savedAt} value={save.savedAt}>
-                    {save.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>后续玩家可同阵营</span>
-              <input
-                type="checkbox"
-                checked={serverAllowSameTeam}
-                onChange={(event) => setServerAllowSameTeam(event.target.checked)}
-              />
-            </label>
-            <section className="server-player-list">
-              <strong>当前玩家</strong>
-              {editingServer?.players.length ? (
-                editingServer.players.map((player) => (
-                  <span key={player.id}>
-                    {player.nickname} · {player.team === "pku" ? "北大" : "清华"}
-                    {player.host ? " · 主机" : ""}
-                  </span>
-                ))
-              ) : (
-                <span>服务器尚未启动。</span>
-              )}
-            </section>
-            <button
-              onClick={() =>
-                saveServerConfiguration({
-                  id: editingServer?.id,
-                  name: serverName,
-                  hostTeam: serverHostTeam,
-                  maxPlayers: serverMaxPlayers,
-                  allowSameTeam: serverAllowSameTeam,
-                  mapSavedAt: serverMapSavedAt,
-                })
-              }
-            >
-              保存服务器配置
-            </button>
           </div>
         )}
         {page === "join-server" && (
