@@ -274,6 +274,11 @@ export const DECISIONS: DecisionDefinition[] = [
   decision("pku","后勤治理","pku_market_dispatch","市场调度","提高资源收入。",7,120,["pku_dorm_organization"],{resourceIncome:1.2},["resource"],["pku_ration_system"]),
   decision("pku","后勤治理","pku_ration_system","配给体系","降低补给消耗但牺牲移动。",7,120,["pku_dorm_organization"],{supplyUse:.85,movement:.95},["supply"],["pku_market_dispatch"]),
   decision("pku","后勤治理","pku_total_mobilization","燕园总动员","完成后勤与人口动员。",10,180,["pku_market_dispatch|pku_ration_system"],{production:1.15,populationCap:1.05},["production","population"]),
+  decision("pku","校友与城市网络","pku_alumni_liaison","校友联络站","建立长期校友资源网络。",5,90,[],{resourceIncome:1.1},["resource"]),
+  decision("pku","校友与城市网络","pku_haidian_routes","海淀交通网","整合校园外围道路与机动力量。",7,125,["pku_alumni_liaison"],{movement:1.08,dispatch:1.05},["mobility","reinforce"]),
+  decision("pku","校友与城市网络","pku_medical_volunteers","医疗志愿队","把校友医疗力量纳入战地救护。",7,130,["pku_haidian_routes"],{healing:1.2,defense:1.04},["healing"],["pku_public_opinion_network"]),
+  decision("pku","校友与城市网络","pku_public_opinion_network","公共传播网","强化快速动员，但提高补给压力。",7,130,["pku_haidian_routes"],{morale:1.1,dispatch:1.08,supplyUse:1.03},["morale","aggression"],["pku_medical_volunteers"]),
+  decision("pku","校友与城市网络","pku_regional_alliance","区域协同体系","形成校内外资源、机动和人口协同。",10,190,["pku_medical_volunteers|pku_public_opinion_network"],{resourceIncome:1.08,movement:1.05,populationCap:1.04},["resource","mobility"]),
 
   decision("thu","工程体系","thu_engineering_training","工程训练","强化越野行动。",5,80,[],{movement:1.05},["mobility"]),
   decision("thu","工程体系","thu_engineer_cradle","工程师的摇篮","改善工程据点防务与资源。",7,120,["thu_engineering_training"],{defense:1.05,resourceIncome:1.05},["defense","resource"]),
@@ -295,11 +300,16 @@ export const DECISIONS: DecisionDefinition[] = [
   decision("thu","后勤健康","thu_sports_mobilization","体育动员","提高机动与意志。",7,120,["thu_white_front"],{movement:1.15,attack:.97},["mobility"],["thu_precision_ration"]),
   decision("thu","后勤健康","thu_precision_ration","精细配给","降低补给消耗。",7,120,["thu_white_front"],{supplyUse:.85,movement:.95},["supply"],["thu_sports_mobilization"]),
   decision("thu","后勤健康","thu_total_mobilization","清华总动员","完成后勤与人口动员。",10,180,["thu_sports_mobilization|thu_precision_ration"],{production:1.15,populationCap:1.05},["production","population"]),
+  decision("thu","系统工程与机动","thu_vehicle_lab","车辆工程试验组","建立校园载具与道路实验能力。",5,90,[],{movement:1.05,resourceIncome:1.04},["engineering","mobility"]),
+  decision("thu","系统工程与机动","thu_road_survey","全路网测绘","提高道路机动和增援规划效率。",7,125,["thu_vehicle_lab"],{movement:1.08,dispatch:1.06},["mobility","ai"]),
+  decision("thu","系统工程与机动","thu_smart_logistics","智能后勤","用自动调度降低补给消耗。",7,130,["thu_road_survey"],{supplyUse:.88,production:1.05},["supply","production"],["thu_hardened_convoys"]),
+  decision("thu","系统工程与机动","thu_hardened_convoys","强化车队","强化机动纵队的进攻与防护。",7,130,["thu_road_survey"],{attack:1.07,defense:1.06,supplyUse:1.03},["aggression","defense"],["thu_smart_logistics"]),
+  decision("thu","系统工程与机动","thu_system_command","系统总指挥","将工程、AI与机动体系合并为统一指挥网。",10,190,["thu_smart_logistics|thu_hardened_convoys"],{movement:1.05,dispatch:1.08,defense:1.04},["engineering","ai"]),
 ];
 
 export const DECISION_BRANCHES = [
   "思想与校园动员", "基础科学", "燕园防务", "后勤治理",
-  "工程体系", "学堂传统", "校园防务", "后勤健康",
+  "校友与城市网络", "工程体系", "学堂传统", "校园防务", "后勤健康", "系统工程与机动",
 ] as const;
 
 export const registerCampaignDecision = (definition: DecisionDefinition) => {

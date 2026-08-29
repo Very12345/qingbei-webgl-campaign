@@ -62,6 +62,8 @@ import {
 import { HomeScreen, type HomePage } from "../src/game/ui/home-screen";
 import { FocusTree } from "../src/game/ui/focus-tree";
 import { ResearchTree } from "../src/game/ui/research-tree";
+import { ToolsPanel } from "../src/game/ui/tools-panel";
+import type { BattlefieldToolMode } from "../src/game/engine/contracts";
 import {
   ChatPanel,
   DecisionVoteToast,
@@ -171,6 +173,9 @@ export default function Game3D() {
   const [eventLogOpen, setEventLogOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [activeToolMode, setActiveToolMode] =
+    useState<BattlefieldToolMode>(null);
   const [decisionZoom, setDecisionZoom] = useState(1);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("standard");
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
@@ -263,7 +268,10 @@ export default function Game3D() {
         definition = RESEARCH_DEFINITIONS[id];
       if (
         campaign.research.active[team] ||
-        campaign.research.completed[team].includes(id)
+        campaign.research.completed[team].includes(id) ||
+        !definition.requires.every((required) =>
+          campaign.research.completed[team].includes(required),
+        )
       )
         return false;
       if (game.resources[team] < definition.cost) {
@@ -279,6 +287,34 @@ export default function Game3D() {
       };
       if (!silent)
         setNotice(`${definition.title}开始研发，预计${definition.hours}小时完成`);
+      return true;
+    },
+    [],
+  );
+  const beginProduction = useCallback(
+    (id: ResearchId, team: Team, silent = false) => {
+      const game = gameRef.current,
+        campaign = game.campaign,
+        definition = RESEARCH_DEFINITIONS[id];
+      if (
+        campaign.research.production[team] ||
+        !campaign.research.completed[team].includes(id)
+      )
+        return false;
+      if (game.resources[team] < definition.deploymentCost) {
+        if (!silent)
+          setNotice(`生产资源不足：需要${definition.deploymentCost}`);
+        return false;
+      }
+      game.resources[team] -= definition.deploymentCost;
+      campaign.research.production[team] = {
+        id: crypto.randomUUID(),
+        researchId: id,
+        startedAt: campaign.elapsedHours,
+        completesAt: campaign.elapsedHours + definition.productionHours,
+      };
+      if (!silent)
+        setNotice(`${definition.title}投入生产，预计${definition.productionHours}小时完成`);
       return true;
     },
     [],
@@ -436,7 +472,8 @@ export default function Game3D() {
     showSites,
     showControl,
     beginDecision,
-    beginResearch
+    beginResearch,
+    beginProduction
   });
 
   const snapshotCurrentGame = (name: string): Snapshot => {
@@ -768,6 +805,20 @@ export default function Game3D() {
       normalizedCampaign.research ??= defaults.research;
       normalizedCampaign.research.active ??= { pku: null, thu: null };
       normalizedCampaign.research.completed ??= { pku: [], thu: [] };
+      normalizedCampaign.research.production ??= { pku: null, thu: null };
+      normalizedCampaign.research.stockpile ??= {
+        pku: { bike: 0, ebike: 0, bus: 0, armored_bus: 0 },
+        thu: { bike: 0, ebike: 0, bus: 0, armored_bus: 0 },
+      };
+      for (const team of ["pku", "thu"] as Team[]) {
+        const stockpile = normalizedCampaign.research.stockpile[team];
+        normalizedCampaign.research.stockpile[team] = {
+          bike: stockpile.bike ?? 0,
+          ebike: stockpile.ebike ?? 0,
+          bus: stockpile.bus ?? 0,
+          armored_bus: stockpile.armored_bus ?? 0,
+        };
+      }
       normalizedCampaign.research.lastBusAllocation ??= {
         pku: -999,
         thu: -999,
@@ -937,6 +988,7 @@ export default function Game3D() {
         )
         .reduce((sum, unit) => sum + unit.strength, 0)
     : 0;
+  const timeScaleLocked = connectedPlayers > 0 && !lanHostRef.current;
   const setStance = (s: Stance) => {
     if (!selectedSite || selectedSite.team !== playerTeam) return;
     selectedSite.stance = s;
@@ -1346,6 +1398,7 @@ export default function Game3D() {
           }
           if (!host) {
             game.timeOfDay = payload.timeOfDay;
+            setTimeScale(payload.timeScale);
             game.campaign.elapsedHours = payload.elapsedHours;
             game.resources = payload.resources;
             game.deaths = payload.deaths;
@@ -1500,6 +1553,7 @@ export default function Game3D() {
         units,
         removedUnitIds,
         timeOfDay: game.timeOfDay,
+        timeScale: timeScaleRef.current,
         elapsedHours: game.campaign.elapsedHours,
         resources: game.resources,
         deaths: game.deaths,
@@ -1637,7 +1691,23 @@ export default function Game3D() {
                 setSettingsOpen(false);
               }}
             >
-              研
+              <span className="research-nav-icon" aria-hidden="true">
+                <i />
+              </span>
+            </button>
+            <button
+              aria-label="打开工具"
+              title="工具"
+              className={toolsOpen || activeToolMode ? "active" : ""}
+              onClick={() => {
+                setToolsOpen(true);
+                setResearchOpen(false);
+                setDecisionOpen(false);
+                setMoreOpen(false);
+                setSettingsOpen(false);
+              }}
+            >
+              <span className="tools-nav-icon" aria-hidden="true"><i /></span>
             </button>
             <button
               aria-label="更多"
@@ -1719,6 +1789,7 @@ export default function Game3D() {
               timeScale={timeScale}
               qualityMode={qualityMode}
               showPerformance={showPerformance}
+              timeScaleLocked={timeScaleLocked}
               onShowSites={setShowSites}
               onShowControl={setShowControl}
               onAutoDay={setAutoDay}
@@ -1782,6 +1853,7 @@ export default function Game3D() {
                         max="16"
                         step="0.1"
                         value={timeScale}
+                        disabled={timeScaleLocked}
                         onChange={(event) =>
                           setTimeScale(
                             Math.min(
@@ -2016,6 +2088,7 @@ export default function Game3D() {
         timeOfDay={gameRef.current.timeOfDay}
         timeScale={timeScale}
         onTimeScale={setTimeScale}
+        locked={timeScaleLocked}
       />
       <div className="map-attribution">
         道路与建筑 © OpenStreetMap contributors · 高程 Open-Meteo
@@ -2038,7 +2111,23 @@ export default function Game3D() {
           campaign={gameRef.current.campaign}
           resources={gameRef.current.resources[playerTeam]}
           onStart={(id) => beginResearch(id, playerTeam)}
+          onProduce={(id) => beginProduction(id, playerTeam)}
           onClose={() => setResearchOpen(false)}
+        />
+      )}
+      {toolsOpen && (
+        <ToolsPanel
+          activeTool={activeToolMode}
+          onTool={(mode) => {
+            setActiveToolMode(mode);
+            sceneApi.current?.setToolMode(mode);
+            if (mode) setToolsOpen(false);
+          }}
+          onMobilize={(stance) => {
+            sceneApi.current?.mobilizeAll(playerTeam, stance);
+            setToolsOpen(false);
+          }}
+          onClose={() => setToolsOpen(false)}
         />
       )}
       {eventLogOpen && (

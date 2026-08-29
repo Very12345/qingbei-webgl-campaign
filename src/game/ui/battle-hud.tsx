@@ -133,10 +133,12 @@ export function DayScaleControl({
   timeOfDay,
   timeScale,
   onTimeScale,
+  locked = false,
 }: {
   timeOfDay: number;
   timeScale: number;
   onTimeScale: (value: number) => void;
+  locked?: boolean;
 }) {
   return (
     <div className="day-slider">
@@ -153,6 +155,7 @@ export function DayScaleControl({
       <select
         aria-label="时间流逝倍率"
         value={timeScale}
+        disabled={locked}
         onChange={(event) => onTimeScale(Number(event.target.value))}
       >
         {![0.5, 1, 2, 4, 8, 16].includes(timeScale) && (

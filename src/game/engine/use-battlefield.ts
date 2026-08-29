@@ -42,6 +42,7 @@ import type {
 } from "../types";
 import type {
   BattlefieldSceneApi,
+  BattlefieldToolMode,
   BattleStats,
   CampContext,
   GameScreen,
@@ -91,6 +92,7 @@ type BattlefieldEngineContext = {
   showControl: boolean;
   beginDecision: (decisionId: string, team: Team, silent?: boolean) => boolean;
   beginResearch: (id: ResearchId, team: Team, silent?: boolean) => boolean;
+  beginProduction: (id: ResearchId, team: Team, silent?: boolean) => boolean;
 };
 
 export function useBattlefieldEngine(context: BattlefieldEngineContext) {
@@ -129,7 +131,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     showSites,
     showControl,
     beginDecision,
-    beginResearch
+    beginResearch,
+    beginProduction
   } = context;
   useEffect(() => {
     if (screen !== "game") {
@@ -1582,6 +1585,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const selectedUnitIds = new Set<number>();
     const directKeys = new Set<string>();
     let directControlActive = false,
+      activeToolMode: BattlefieldToolMode = null,
       directLeaderId: number | null = null,
       nextDirectFollowerPathAt = 0,
       cameraBeforeDirect: {
@@ -3018,8 +3022,28 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       transportMeshes = {
         busPku: new THREE.InstancedMesh(busGeometry, busMaterials.pku, 160),
         busThu: new THREE.InstancedMesh(busGeometry, busMaterials.thu, 160),
+        armoredPku: new THREE.InstancedMesh(
+          busGeometry,
+          new THREE.MeshStandardMaterial({ color: 0x61202a, metalness: 0.35 }),
+          160,
+        ),
+        armoredThu: new THREE.InstancedMesh(
+          busGeometry,
+          new THREE.MeshStandardMaterial({ color: 0x443052, metalness: 0.35 }),
+          160,
+        ),
         bikePku: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.pku, 3200),
         bikeThu: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.thu, 3200),
+        ebikePku: new THREE.InstancedMesh(
+          bikeGeometry,
+          new THREE.MeshStandardMaterial({ color: 0xff9f31, emissive: 0x5b2700 }),
+          3200,
+        ),
+        ebikeThu: new THREE.InstancedMesh(
+          bikeGeometry,
+          new THREE.MeshStandardMaterial({ color: 0x62c8ff, emissive: 0x143a55 }),
+          3200,
+        ),
       },
       transportDummy = new THREE.Object3D();
     Object.values(transportMeshes).forEach((mesh) => {
@@ -3223,7 +3247,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           mesh.instanceMatrix.needsUpdate = true;
         },
       );
-      const transportCounts = { busPku: 0, busThu: 0, bikePku: 0, bikeThu: 0 },
+      const transportCounts = {
+          busPku: 0,
+          busThu: 0,
+          armoredPku: 0,
+          armoredThu: 0,
+          bikePku: 0,
+          bikeThu: 0,
+          ebikePku: 0,
+          ebikeThu: 0,
+        },
         busLeaders = new Map<string, UnitState>();
       for (const unit of gameRef.current.units) {
         if (unit.transport === "bus" && unit.transportGroupId) {
@@ -3232,7 +3265,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           continue;
         }
         if (unit.transport !== "bike") continue;
-        const key = unit.team === "pku" ? "bikePku" : "bikeThu",
+        const key =
+            unit.transportModel === "ebike"
+              ? unit.team === "pku"
+                ? "ebikePku"
+                : "ebikeThu"
+              : unit.team === "pku"
+                ? "bikePku"
+                : "bikeThu",
           index = transportCounts[key]++;
         transportDummy.position.set(
           unit.x,
@@ -3245,7 +3285,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         transportMeshes[key].setMatrixAt(index, transportDummy.matrix);
       }
       for (const leader of busLeaders.values()) {
-        const key = leader.team === "pku" ? "busPku" : "busThu",
+        const key =
+            leader.transportModel === "armored_bus"
+              ? leader.team === "pku"
+                ? "armoredPku"
+                : "armoredThu"
+              : leader.team === "pku"
+                ? "busPku"
+                : "busThu",
           index = transportCounts[key]++;
         transportDummy.position.set(
           leader.x,
@@ -3257,7 +3304,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           Math.atan2(leader.tx - leader.x, leader.tz - leader.z),
           0,
         );
-        transportDummy.scale.set(1, 1, 1);
+        transportDummy.scale.setScalar(
+          leader.transportModel === "armored_bus" ? 1.15 : 1,
+        );
         transportDummy.updateMatrix();
         transportMeshes[key].setMatrixAt(index, transportDummy.matrix);
       }
@@ -3485,12 +3534,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         site?: number;
         sourceSite?: number;
         selection?: boolean;
+        tool?: boolean;
       } | null = null,
       previewLine: THREE.Object3D | null = null,
       rightGesture: {
         x: number;
         y: number;
         moved: boolean;
+        erase: boolean;
+        erased: Set<number>;
       } | null = null;
     const setRay = (ev: MouseEvent) => {
       const r = renderer.domElement.getBoundingClientRect();
@@ -3666,6 +3718,87 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         });
         setRouteUnitMarkers(closest?.sourceId);
       };
+    const commandSourceAt = (event: MouseEvent) => {
+        setRay(event);
+        const hit = ray
+          .intersectObjects(commandGroup.children, true)
+          .find((item) => item.object.userData.commandSourceId != null);
+        return hit?.object.userData.commandSourceId as number | undefined;
+      },
+      removeCommandLine = (sourceId?: number) => {
+        if (sourceId == null) return false;
+        const source = gameRef.current.sites[sourceId];
+        if (!source || source.orderTarget == null) return false;
+        source.orderTarget = undefined;
+        source.orderPath = undefined;
+        gameRef.current.units
+          .filter((unit) => unit.siteId === sourceId)
+          .forEach((unit) => {
+            unit.targetSiteId = undefined;
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+            unit.tx = unit.x;
+            unit.tz = unit.z;
+          });
+        rebuildCommandLines();
+        rebuildBuildings();
+        return true;
+      },
+      simplifyCommandChain = (sourceId?: number) => {
+        if (sourceId == null) return false;
+        const game = gameRef.current,
+          source = game.sites[sourceId];
+        if (!source || source.orderTarget == null) return false;
+        const chain: SiteState[] = [source],
+          visited = new Set([source.id]);
+        let cursor = source;
+        while (cursor.orderTarget != null) {
+          const next = game.sites[cursor.orderTarget];
+          if (!next || next.destroyed || visited.has(next.id)) break;
+          chain.push(next);
+          visited.add(next.id);
+          cursor = next;
+        }
+        if (chain.length < 3) return false;
+        const terminal = chain.at(-1)!;
+        source.orderTarget = terminal.id;
+        source.orderPath = findPath(
+          source.navX ?? source.x,
+          source.navZ ?? source.z,
+          terminal.navX ?? terminal.x,
+          terminal.navZ ?? terminal.z,
+        );
+        chain.slice(1, -1).forEach((site) => {
+          site.orderTarget = undefined;
+          site.orderPath = undefined;
+        });
+        game.units
+          .filter(
+            (unit) =>
+              unit.team === source.team &&
+              unit.targetSiteId != null &&
+              visited.has(unit.targetSiteId),
+          )
+          .forEach((unit) => {
+            const path = findPath(
+              unit.x,
+              unit.z,
+              terminal.navX ?? terminal.x,
+              terminal.navZ ?? terminal.z,
+            );
+            if (!path.length) return;
+            unit.targetSiteId = terminal.id;
+            unit.path = path;
+            unit.pathIndex = 0;
+            [unit.tx, unit.tz] = path.at(-1)!;
+          });
+        rebuildCommandLines();
+        refreshRouteHighlights();
+        setNotice(
+          `兵线已简化：${source.displayName ?? source.name} → ${terminal.displayName ?? terminal.name}`,
+        );
+        return true;
+      };
     const buildCampAt = (point: THREE.Vector3) => {
       const g = gameRef.current,
         index = navIndex(navGrid, point.x, point.z),
@@ -3791,6 +3924,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           x: e.clientX,
           y: e.clientY,
           moved: false,
+          erase: e.shiftKey,
+          erased: new Set<number>(),
         };
         down = null;
         return;
@@ -3798,10 +3933,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const site = hitSite(e),
         sourceSite = hitSiteNode(e, 0.9),
         screenUnit = site == null ? hitFriendlyUnitOnScreen(e) : undefined,
-        selection = !!screenUnit && selectedUnitIds.has(screenUnit.id);
-      down = { x: e.clientX, y: e.clientY, site, sourceSite, selection };
+        selection = !!screenUnit && selectedUnitIds.has(screenUnit.id),
+        tool = activeToolMode === "simplify-lines";
+      down = { x: e.clientX, y: e.clientY, site, sourceSite, selection, tool };
       if (site == null) setSelected(null);
-      if (sourceSite != null || selection) {
+      if (sourceSite != null || selection || tool) {
         controls.enabled = false;
         renderer.domElement.setPointerCapture(e.pointerId);
       }
@@ -3812,6 +3948,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           Math.hypot(e.clientX - rightGesture.x, e.clientY - rightGesture.y) > 7
         )
           rightGesture.moved = true;
+        if (rightGesture.erase) {
+          const sourceId = commandSourceAt(e);
+          if (
+            sourceId != null &&
+            !rightGesture.erased.has(sourceId) &&
+            removeCommandLine(sourceId)
+          ) {
+            rightGesture.erased.add(sourceId);
+            setNotice("Shift右键擦除经过的兵线");
+          }
+        }
         return;
       }
       if (!down) {
@@ -3820,6 +3967,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       hideCommandLabels();
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8) return;
+      if (down.tool) {
+        const sourceId = commandSourceAt(e);
+        if (sourceId != null) simplifyCommandChain(sourceId);
+        return;
+      }
       const p = groundAt(e);
       if (!p) return;
       if (previewLine) {
@@ -3867,6 +4019,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       setHoveredSite(null);
       const end = hitSite(e),
         moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8;
+      if (down.tool) {
+        down = null;
+        return;
+      }
       if (moved && down.selection) {
         const target = end != null ? gameRef.current.sites[end] : null,
           point = groundAt(e),
@@ -3991,29 +4147,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         rightGesture = null;
         return;
       }
-      setRay(e);
-      const hit = ray
-          .intersectObjects(commandGroup.children, true)
-          .find((item) => item.object.userData.commandSourceId != null),
-        sourceId = hit?.object.userData.commandSourceId as number | undefined;
+      const sourceId = commandSourceAt(e);
       if (sourceId != null) {
         const source = gameRef.current.sites[sourceId];
         rightGesture = null;
         if (!source) return;
-        source.orderTarget = undefined;
-        source.orderPath = undefined;
-        gameRef.current.units
-          .filter((unit) => unit.siteId === sourceId)
-          .forEach((unit) => {
-            unit.targetSiteId = undefined;
-            unit.path = undefined;
-            unit.pathIndex = undefined;
-            unit.tx = unit.x;
-            unit.tz = unit.z;
-          });
-        rebuildCommandLines();
-        rebuildBuildings();
+        removeCommandLine(sourceId);
         setNotice(`已右键取消 ${source.displayName ?? source.name} 的持续兵线`);
+        return;
+      }
+      if (rightGesture?.erase) {
+        rightGesture = null;
         return;
       }
       const point = groundAt(e);
@@ -4574,11 +4718,37 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           unitWaterPenalty = insideWater(unit.x, unit.z) ? 0.5 : 1,
           enemyWaterPenalty = insideWater(enemy.x, enemy.z) ? 0.5 : 1,
           unitTransportAttack =
-            unit.transport === "bus" ? 1.5 : unit.transport === "bike" ? 1.1 : 1,
+            unit.transportModel === "armored_bus"
+              ? 1.8
+              : unit.transport === "bus"
+                ? 1.5
+                : unit.transportModel === "ebike"
+                  ? 1.2
+                  : unit.transport === "bike"
+                    ? 1.1
+                    : 1,
           enemyTransportAttack =
-            enemy.transport === "bus" ? 1.5 : enemy.transport === "bike" ? 1.1 : 1,
-          unitTransportDefense = unit.transport === "bus" ? 0.5 : 1,
-          enemyTransportDefense = enemy.transport === "bus" ? 0.5 : 1,
+            enemy.transportModel === "armored_bus"
+              ? 1.8
+              : enemy.transport === "bus"
+                ? 1.5
+                : enemy.transportModel === "ebike"
+                  ? 1.2
+                  : enemy.transport === "bike"
+                    ? 1.1
+                    : 1,
+          unitTransportDefense =
+            unit.transportModel === "armored_bus"
+              ? 1 / 3
+              : unit.transport === "bus"
+                ? 0.5
+                : 1,
+          enemyTransportDefense =
+            enemy.transportModel === "armored_bus"
+              ? 1 / 3
+              : enemy.transport === "bus"
+                ? 0.5
+                : 1,
           unitMorale = Math.min(
             150,
             (unit.morale ?? 100) * unitStatus.morale * (unitDecision.morale ?? 1),
@@ -4621,11 +4791,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             effectiveCombatScale;
         if (unit.transport === "bike") {
           unit.transport = undefined;
+          unit.transportModel = undefined;
           const home = g.sites[unit.siteId];
           if (home) home.bikeCooldownUntil = g.campaign.elapsedHours + 1;
         }
         if (enemy.transport === "bike") {
           enemy.transport = undefined;
+          enemy.transportModel = undefined;
           const home = g.sites[enemy.siteId];
           if (home) home.bikeCooldownUntil = g.campaign.elapsedHours + 1;
         }
@@ -4971,16 +5143,19 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       allocateTransport = (team: Team, kind: ResearchId) => {
         const game = gameRef.current,
           campaign = game.campaign,
-          definition = RESEARCH_DEFINITIONS[kind];
+          definition = RESEARCH_DEFINITIONS[kind],
+          isBus = kind === "bus" || kind === "armored_bus",
+          equipmentRequired = isBus ? 1 : 10;
         if (!hasResearch(campaign, team, kind)) return false;
-        if (game.resources[team] < definition.deploymentCost) return false;
-        const peopleRequired = kind === "bus" ? 40 : 10,
+        if (campaign.research.stockpile[team][kind] < equipmentRequired)
+          return false;
+        const peopleRequired = kind === "armored_bus" ? 50 : isBus ? 40 : 10,
           sites = game.sites.filter(
             (site) =>
               site.team === team &&
               !site.destroyed &&
-              (kind !== "bus" || siteTouchesRoad(site)) &&
-              (kind === "bus"
+              (!isBus || siteTouchesRoad(site)) &&
+              (isBus
                 ? (site.busCooldownUntil ?? 0) <= campaign.elapsedHours
                 : (site.bikeCooldownUntil ?? 0) <= campaign.elapsedHours),
           ),
@@ -5002,7 +5177,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             .filter((candidate) => candidate.idle.length >= peopleRequired);
         if (!candidates.length) return false;
         let chosen = candidates[0];
-        if (kind === "bike") {
+        if (!isBus) {
           const totalWeight = candidates.reduce(
               (sum, candidate) => sum + candidate.idle.length,
               0,
@@ -5018,12 +5193,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         } else chosen = candidates[Math.floor(Math.random() * candidates.length)];
         const { site, idle } = chosen;
-        game.resources[team] -= definition.deploymentCost;
-        if (kind === "bus") {
+        campaign.research.stockpile[team][kind] -= equipmentRequired;
+        if (isBus) {
           const groupId = `bus-${team}-${Math.floor(campaign.elapsedHours)}-${site.id}`;
-          idle.slice(0, 40).forEach((unit) => {
+          idle.slice(0, peopleRequired).forEach((unit) => {
             unit.transport = "bus";
             unit.transportGroupId = groupId;
+            unit.transportModel = kind;
           });
           site.busCooldownUntil =
             campaign.elapsedHours + definition.cooldownHours;
@@ -5032,6 +5208,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           idle.slice(0, 10).forEach((unit) => {
             unit.transport = "bike";
             unit.transportGroupId = undefined;
+            unit.transportModel = kind;
           });
           site.bikeCooldownUntil =
             campaign.elapsedHours + definition.cooldownHours;
@@ -5047,6 +5224,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           .forEach((unit) => {
             unit.transport = undefined;
             unit.transportGroupId = undefined;
+            unit.transportModel = undefined;
           });
       };
     const campaignTimer = window.setInterval(() => {
@@ -5129,19 +5307,38 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           `${team === "pku" ? "北大" : campaign.thuFactionName}研发完成：${RESEARCH_DEFINITIONS[active.id].title}`,
         );
       }
+      for (const team of ["pku", "thu"] as Team[]) {
+        const production = campaign.research.production[team];
+        if (!production || production.completesAt > campaign.elapsedHours)
+          continue;
+        const definition = RESEARCH_DEFINITIONS[production.researchId];
+        campaign.research.stockpile[team][production.researchId] +=
+          definition.productionQuantity;
+        campaign.research.production[team] = null;
+        setNotice(
+          `${team === "pku" ? "北大" : campaign.thuFactionName}生产完成：${definition.title} × ${definition.productionQuantity}`,
+        );
+      }
       for (const team of ["pku", "thu"] as Team[])
-        for (const kind of ["bike", "bus"] as ResearchId[]) {
+        for (const kind of [
+          "armored_bus",
+          "ebike",
+          "bus",
+          "bike",
+        ] as ResearchId[]) {
           if (!hasResearch(campaign, team, kind)) continue;
+          if (campaign.research.stockpile[team][kind] <= 0) continue;
           const definition = RESEARCH_DEFINITIONS[kind],
+            isBus = kind === "bus" || kind === "armored_bus",
             last =
-              kind === "bus"
+              isBus
                 ? campaign.research.lastBusAllocation[team]
                 : campaign.research.lastBikeAllocation[team];
           if (campaign.elapsedHours - last < definition.cooldownHours) continue;
-          if (kind === "bus")
+          if (isBus)
             campaign.research.lastBusAllocation[team] = campaign.elapsedHours;
           else campaign.research.lastBikeAllocation[team] = campaign.elapsedHours;
-          if (Math.random() < (kind === "bus" ? 0.32 : 0.62))
+          if (Math.random() < (isBus ? 0.32 : 0.62))
             allocateTransport(team, kind);
         }
       if (campaign.warUnlocked)
@@ -5788,9 +5985,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         routeLimit = aiTeam === "thu" ? 10 : 8,
         waveLimit = aiTeam === "thu" ? 4 : 3;
       if (!g.campaign.research.active[aiTeam]) {
-        const researchChoices = (["bike", "bus"] as ResearchId[]).filter(
+        const researchChoices = (
+          Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]
+        ).filter(
           (id) =>
             !hasResearch(g.campaign, aiTeam, id) &&
+            RESEARCH_DEFINITIONS[id].requires.every((required) =>
+              hasResearch(g.campaign, aiTeam, required),
+            ) &&
             g.resources[aiTeam] >= RESEARCH_DEFINITIONS[id].cost,
         );
         if (researchChoices.length) {
@@ -5800,6 +6002,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               : researchChoices[Math.floor(random() * researchChoices.length)];
           beginResearch(preferred, aiTeam, true);
         }
+      }
+      if (!g.campaign.research.production[aiTeam]) {
+        const productionChoices = g.campaign.research.completed[aiTeam].filter(
+          (id) =>
+            g.resources[aiTeam] >= RESEARCH_DEFINITIONS[id].deploymentCost &&
+            g.campaign.research.stockpile[aiTeam][id] <
+              RESEARCH_DEFINITIONS[id].productionQuantity * 2,
+        );
+        if (productionChoices.length)
+          beginProduction(
+            productionChoices[Math.floor(random() * productionChoices.length)],
+            aiTeam,
+            true,
+          );
       }
       if (g.campaign.elapsedHours >= aiState.nextStrategicAt[aiTeam]) {
         aiState.nextStrategicAt[aiTeam] =
@@ -6460,7 +6676,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 ? 0.68
                 : 1,
             transportSpeed =
-              u.transport === "bus" ? 10 : u.transport === "bike" ? 5 : 1,
+              u.transportModel === "armored_bus"
+                ? 8
+                : u.transport === "bus"
+                  ? 10
+                  : u.transportModel === "ebike"
+                    ? 7
+                    : u.transport === "bike"
+                      ? 5
+                      : 1,
             s =
               roadSpeed *
               terrainSpeed *
@@ -6830,6 +7054,27 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       enterDirectControl,
       exitDirectControl,
       refreshSiteStance,
+      setToolMode: (mode) => {
+        activeToolMode = mode;
+        setNotice(
+          mode === "simplify-lines"
+            ? "兵线简化工具：按住左键划过链式兵线"
+            : "已退出战场工具",
+        );
+      },
+      mobilizeAll: (team, stance) => {
+        const ratio = stance === "defend" ? 0.4 : stance === "guard" ? 0.7 : 1;
+        gameRef.current.sites
+          .filter((site) => site.team === team && !site.destroyed)
+          .forEach((site) => {
+            site.stance = stance;
+            site.dispatchRatio = ratio;
+          });
+        rebuildSiteNodeBatches();
+        setNotice(
+          `${team === "pku" ? "北大" : gameRef.current.campaign.thuFactionName}全部据点已切换为${stance === "defend" ? "防守" : stance === "guard" ? "守卫" : "待命"}`,
+        );
+      },
     };
     sceneApi.current.setLayers(showSites, showControl);
     sceneApi.current.setPerspective(playerTeamRef.current);

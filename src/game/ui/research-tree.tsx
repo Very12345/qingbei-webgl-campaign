@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { RESEARCH_DEFINITIONS, type ResearchId } from "../research";
 import type { CampaignState, Team } from "../types";
 
@@ -6,15 +7,19 @@ export function ResearchTree({
   campaign,
   resources,
   onStart,
+  onProduce,
   onClose,
 }: {
   team: Team;
   campaign: CampaignState;
   resources: number;
   onStart: (id: ResearchId) => void;
+  onProduce: (id: ResearchId) => void;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<"research" | "production">("research");
   const active = campaign.research.active[team];
+  const production = campaign.research.production[team];
   return (
     <div className={`focus-tree-screen research-tree-screen ${team}`}>
       <header className="focus-tree-topbar">
@@ -32,6 +37,15 @@ export function ResearchTree({
         </div>
         <button className="focus-tree-close" onClick={onClose}>关闭</button>
       </header>
+      <nav className="research-tabs">
+        <button className={tab === "research" ? "active" : ""} onClick={() => setTab("research")}>
+          科技研发
+        </button>
+        <button className={tab === "production" ? "active" : ""} onClick={() => setTab("production")}>
+          装备生产
+        </button>
+      </nav>
+      {tab === "research" ? (
       <main className="research-tree-canvas">
         {(Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]).map((id) => {
           const definition = RESEARCH_DEFINITIONS[id],
@@ -61,7 +75,14 @@ export function ResearchTree({
               </dl>
               <div className="research-progress"><i style={{ width: `${progress * 100}%` }} /></div>
               <button
-                disabled={completed || !!active || resources < definition.cost}
+                disabled={
+                  completed ||
+                  !!active ||
+                  resources < definition.cost ||
+                  !definition.requires.every((required) =>
+                    campaign.research.completed[team].includes(required),
+                  )
+                }
                 onClick={() => onStart(id)}
               >
                 {completed ? "已完成" : researching ? "研发中" : "开始研发"}
@@ -70,6 +91,43 @@ export function ResearchTree({
           );
         })}
       </main>
+      ) : (
+        <main className="research-tree-canvas production-tree-canvas">
+          {(Object.keys(RESEARCH_DEFINITIONS) as ResearchId[]).map((id) => {
+            const definition = RESEARCH_DEFINITIONS[id],
+              unlocked = campaign.research.completed[team].includes(id),
+              producing = production?.researchId === id,
+              progress = producing
+                ? Math.max(
+                    0,
+                    Math.min(
+                      1,
+                      (campaign.elapsedHours - production.startedAt) /
+                        (production.completesAt - production.startedAt),
+                    ),
+                  )
+                : 0;
+            return (
+              <article className={`research-node production-node ${id}`} key={id}>
+                <div className={`research-vehicle-icon ${id}`} aria-hidden="true" />
+                <h3>{definition.title}</h3>
+                <p>库存：{campaign.research.stockpile[team][id]}</p>
+                <p>
+                  每批消耗 {definition.deploymentCost} 资源，耗时 {definition.productionHours} 小时，
+                  产出 {definition.productionQuantity} 件。
+                </p>
+                <div className="research-progress"><i style={{ width: `${progress * 100}%` }} /></div>
+                <button
+                  disabled={!unlocked || !!production || resources < definition.deploymentCost}
+                  onClick={() => onProduce(id)}
+                >
+                  {!unlocked ? "尚未研发" : producing ? "生产中" : "加入生产"}
+                </button>
+              </article>
+            );
+          })}
+        </main>
+      )}
     </div>
   );
 }

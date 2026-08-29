@@ -1,6 +1,7 @@
 import type { RegionId, Team } from "../types";
 
 export type GameScreen = "home" | "game";
+export type BattlefieldToolMode = "simplify-lines" | null;
 
 export type BattlefieldSceneApi = {
   sync: () => void;
@@ -13,6 +14,8 @@ export type BattlefieldSceneApi = {
   enterDirectControl: () => boolean;
   exitDirectControl: () => void;
   refreshSiteStance: (siteId: number) => void;
+  setToolMode: (mode: BattlefieldToolMode) => void;
+  mobilizeAll: (team: Team, stance: import("../types").Stance) => void;
 };
 
 export type CampContext = {

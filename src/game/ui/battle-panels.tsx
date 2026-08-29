@@ -63,6 +63,7 @@ export function SettingsDrawer({
   timeScale,
   qualityMode,
   showPerformance,
+  timeScaleLocked,
   onShowSites,
   onShowControl,
   onAutoDay,
@@ -76,6 +77,7 @@ export function SettingsDrawer({
   timeScale: number;
   qualityMode: QualityMode;
   showPerformance: boolean;
+  timeScaleLocked: boolean;
   onShowSites: (value: boolean) => void;
   onShowControl: (value: boolean) => void;
   onAutoDay: (value: boolean) => void;
@@ -118,12 +120,14 @@ export function SettingsDrawer({
           max="16"
           step="0.1"
           value={timeScale}
+          disabled={timeScaleLocked}
           onChange={(event) =>
             onTimeScale(
               Math.min(16, Math.max(0.5, Number(event.target.value) || 0.5)),
             )
           }
         />
+        {timeScaleLocked && <small>联机时间倍率由主机控制</small>}
       </label>
       <label>
         <span>画质模式</span>

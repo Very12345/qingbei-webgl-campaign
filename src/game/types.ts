@@ -60,6 +60,7 @@ export type UnitState = {
   skin?: "ustc" | "zju";
   transport?: TransportKind;
   transportGroupId?: string;
+  transportModel?: import("./research").ResearchId;
 };
 
 export type TimedStatus = {
@@ -105,14 +106,28 @@ export type DecisionState = {
   locked: string[];
 };
 export type ResearchProgress = {
-  id: "bus" | "bike";
+  id: import("./research").ResearchId;
   team: Team;
   startedAt: number;
   completesAt: number;
 };
 export type ResearchState = {
   active: Record<Team, ResearchProgress | null>;
-  completed: Record<Team, ("bus" | "bike")[]>;
+  completed: Record<Team, import("./research").ResearchId[]>;
+  production: Record<
+    Team,
+    | {
+        id: string;
+        researchId: import("./research").ResearchId;
+        startedAt: number;
+        completesAt: number;
+      }
+    | null
+  >;
+  stockpile: Record<
+    Team,
+    Record<import("./research").ResearchId, number>
+  >;
   lastBusAllocation: Record<Team, number>;
   lastBikeAllocation: Record<Team, number>;
 };
@@ -237,6 +252,7 @@ export type MultiplayerEnvelope =
       units: UnitNetworkState[];
       removedUnitIds: number[];
       timeOfDay: number;
+      timeScale: number;
       elapsedHours: number;
       resources: Record<Team, number>;
       deaths: Record<Team, number>;
