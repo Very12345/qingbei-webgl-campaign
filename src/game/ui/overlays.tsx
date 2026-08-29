@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { PerformanceMetrics } from "../../performance-controller";
+import { decisionEffectsFor } from "../decisions";
 import type {
   AcademicYearOutcome,
   CampaignState,
@@ -56,6 +57,47 @@ export function EventLogOverlay({
       </span>
     );
   };
+  const aggregateFor = (team: Team) => {
+    const statuses = (campaign.statuses ?? []).filter(
+        (status) => status.team === team && status.until > campaign.elapsedHours,
+      ),
+      decision = decisionEffectsFor(campaign, team),
+      caution =
+        (campaign.cautionUntil ?? 0) > campaign.elapsedHours ? 0.9 : 1,
+      morning =
+        (campaign.morningPenaltyUntil ?? 0) > campaign.elapsedHours ? 0.72 : 1,
+      total = statuses.reduce(
+        (value, status) => ({
+          attack: value.attack * status.attack,
+          movement: value.movement * status.movement,
+          morale: value.morale * status.morale,
+          production: value.production * (status.production ?? 1),
+          defense: value.defense * (status.defense ?? 1),
+          supplyUse: value.supplyUse * (status.supplyUse ?? 1),
+          healing: value.healing * (status.healing ?? 1),
+          riverMovement: value.riverMovement * (status.riverMovement ?? 1),
+        }),
+        {
+          attack:
+            campaign.attackBonus[team] *
+            (decision.attack ?? 1) *
+            caution *
+            morning,
+          movement: (decision.movement ?? 1) * morning,
+          morale: decision.morale ?? 1,
+          production: decision.production ?? 1,
+          defense: decision.defense ?? 1,
+          supplyUse: decision.supplyUse ?? 1,
+          healing: decision.healing ?? 1,
+          riverMovement: 1,
+        },
+      ),
+      nextChange = statuses.length
+        ? Math.min(...statuses.map((status) => status.until)) -
+          campaign.elapsedHours
+        : null;
+    return { statuses, total, nextChange };
+  };
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
@@ -70,40 +112,42 @@ export function EventLogOverlay({
           <button onClick={onClose}>关闭</button>
         </header>
         <h3>当前状态</h3>
-        <div className="faction-base-status">
-          <article className="pku">
-            <strong>北大全局</strong>
-            <span>攻击 {Math.round(campaign.attackBonus.pku * 100)}%</span>
-          </article>
-          <article className="thu">
-            <strong>{campaign.thuFactionName}全局</strong>
-            <span>攻击 {Math.round(campaign.attackBonus.thu * 100)}%</span>
-          </article>
-        </div>
-        <div className="active-status-list">
-          {(campaign.statuses ?? []).length ? (
-            campaign.statuses.map((status) => (
-              <article key={status.id} className={status.team}>
+        <div className="active-status-list aggregated-status-list">
+          {(["pku", "thu"] as Team[]).map((team) => {
+            const { statuses, total, nextChange } = aggregateFor(team);
+            return (
+              <article key={team} className={team}>
                 <header>
-                  <strong>{status.team === "pku" ? "北大状态" : `${campaign.thuFactionName}状态`}</strong>
-                  <small>剩余 {Math.max(0, status.until - campaign.elapsedHours).toFixed(1)} 小时</small>
+                  <strong>{team === "pku" ? "北大当前总加成" : `${campaign.thuFactionName}当前总加成`}</strong>
+                  <small>
+                    {statuses.length
+                      ? `${statuses.length}项状态叠加 · ${nextChange!.toFixed(1)}小时后变化`
+                      : "当前无临时状态"}
+                  </small>
                 </header>
                 <div className="status-effect-chips">
-                  {modifier("攻击", status.attack)}
-                  {modifier("移动", status.movement)}
-                  {modifier("意志", status.morale)}
-                  {modifier("生产", status.production)}
-                  {modifier("防守", status.defense)}
-                  {modifier("治疗", status.healing)}
-                  {modifier("补给消耗", status.supplyUse, true)}
-                  {modifier("渡河", status.riverMovement)}
+                  {modifier("攻击", total.attack)}
+                  {modifier("移动", total.movement)}
+                  {modifier("意志", total.morale)}
+                  {modifier("生产", total.production)}
+                  {modifier("防守", total.defense)}
+                  {modifier("治疗", total.healing)}
+                  {modifier("补给消耗", total.supplyUse, true)}
+                  {modifier("渡河", total.riverMovement)}
+                  {Math.abs(total.attack - 1) < .001 &&
+                  Math.abs(total.movement - 1) < .001 &&
+                  Math.abs(total.morale - 1) < .001 &&
+                  Math.abs(total.production - 1) < .001 &&
+                  Math.abs(total.defense - 1) < .001 &&
+                  Math.abs(total.healing - 1) < .001 &&
+                  Math.abs(total.supplyUse - 1) < .001 &&
+                  Math.abs(total.riverMovement - 1) < .001 ? (
+                    <span>无数值修正</span>
+                  ) : null}
                 </div>
-                <small className="status-origin">状态来源：{status.title}</small>
               </article>
-            ))
-          ) : (
-            <p>当前没有限时状态。</p>
-          )}
+            );
+          })}
         </div>
         <h3>历史事件</h3>
         <div className="event-history-browser">

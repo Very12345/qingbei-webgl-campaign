@@ -12,6 +12,7 @@ export function ResearchTree({
   resources,
   onStart,
   onProduce,
+  onStopProduction,
   onClose,
 }: {
   team: Team;
@@ -19,11 +20,12 @@ export function ResearchTree({
   resources: number;
   onStart: (id: ResearchId) => void;
   onProduce: (id: ResearchId) => void;
+  onStopProduction: (id: ResearchId) => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"research" | "production">("research");
   const active = campaign.research.active[team];
-  const production = campaign.research.production[team];
+  const productionLines = campaign.research.production[team];
   const branches: { root: ResearchId; children: ResearchId[] }[] =
     team === "pku"
       ? [
@@ -139,7 +141,8 @@ export function ResearchTree({
           {researchIdsForTeam(team).map((id) => {
             const definition = RESEARCH_DEFINITIONS[id],
               unlocked = campaign.research.completed[team].includes(id),
-              producing = production?.researchId === id,
+              production = productionLines[id],
+              producing = !!production,
               progress = producing
                 ? Math.max(
                     0,
@@ -151,20 +154,25 @@ export function ResearchTree({
                   )
                 : 0;
             return (
-              <article className={`research-node production-node ${id}`} key={id}>
-                <div className={`research-vehicle-icon ${id}`} aria-hidden="true" />
-                <h3>{definition.title}</h3>
-                <p>库存：{campaign.research.stockpile[team][id]}</p>
-                <p>
-                  每批消耗 {definition.deploymentCost} 资源，耗时 {definition.productionHours} 小时，
-                  产出 {definition.productionQuantity} 件。
-                </p>
+              <article className={`research-node production-node ${id} ${producing ? "producing" : ""}`} key={id}>
+                <header className="production-node-header">
+                  <div className={`research-vehicle-icon ${id}`} aria-hidden="true" />
+                  <div>
+                    <h3>{definition.title}</h3>
+                    <strong>库存 {campaign.research.stockpile[team][id]}</strong>
+                  </div>
+                </header>
+                <dl className="production-specs">
+                  <div><dt>每批消耗</dt><dd>{definition.deploymentCost} 资源</dd></div>
+                  <div><dt>生产周期</dt><dd>{definition.productionHours} 小时</dd></div>
+                  <div><dt>每批产量</dt><dd>{definition.productionQuantity} 件</dd></div>
+                </dl>
                 <div className="research-progress"><i style={{ width: `${progress * 100}%` }} /></div>
                 <button
-                  disabled={!unlocked || !!production || resources < definition.deploymentCost}
-                  onClick={() => onProduce(id)}
+                  disabled={!producing && (!unlocked || resources < definition.deploymentCost)}
+                  onClick={() => producing ? onStopProduction(id) : onProduce(id)}
                 >
-                  {!unlocked ? "尚未研发" : producing ? "生产中" : "加入生产"}
+                  {!unlocked ? "尚未研发" : producing ? "停止连续生产" : "开始连续生产"}
                 </button>
               </article>
             );

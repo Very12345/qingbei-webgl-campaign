@@ -28,6 +28,8 @@ export type SiteState = {
   supply: number;
   orderTarget?: number;
   orderPath?: [number, number][];
+  plannedOrderTargets?: Partial<Record<Team, number>>;
+  plannedOrderPaths?: Partial<Record<Team, [number, number][]>>;
   dispatchRatio?: number;
   osmKey?: string;
   temporary?: boolean;
@@ -117,13 +119,17 @@ export type ResearchState = {
   completed: Record<Team, import("./research").ResearchId[]>;
   production: Record<
     Team,
-    | {
-        id: string;
-        researchId: import("./research").ResearchId;
-        startedAt: number;
-        completesAt: number;
-      }
-    | null
+    Partial<
+      Record<
+        import("./research").ResearchId,
+        {
+          id: string;
+          researchId: import("./research").ResearchId;
+          startedAt: number;
+          completesAt: number;
+        }
+      >
+    >
   >;
   stockpile: Record<
     Team,

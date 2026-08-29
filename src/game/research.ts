@@ -105,7 +105,7 @@ const emptyStockpile = (): Record<ResearchId, number> => ({
 export const defaultResearchState = (): CampaignState["research"] => ({
   active: { pku: null, thu: null },
   completed: { pku: [], thu: [] },
-  production: { pku: null, thu: null },
+  production: { pku: {}, thu: {} },
   stockpile: { pku: emptyStockpile(), thu: emptyStockpile() },
   lastBusAllocation: { pku: -999, thu: -999 },
   lastBikeAllocation: { pku: -999, thu: -999 },

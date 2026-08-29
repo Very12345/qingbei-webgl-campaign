@@ -9,6 +9,7 @@ export type QualityProfile = {
   windowDetails: boolean;
   roofDetails: boolean;
   combatParticles: number;
+  combatParticleIntervalMs: number;
   shadowIntervalMs: number;
 };
 
@@ -34,6 +35,7 @@ export const QUALITY_PROFILES: Record<QualityLevel, QualityProfile> = {
     windowDetails: true,
     roofDetails: true,
     combatParticles: 24,
+    combatParticleIntervalMs: 260,
     shadowIntervalMs: 2200,
   },
   medium: {
@@ -44,6 +46,7 @@ export const QUALITY_PROFILES: Record<QualityLevel, QualityProfile> = {
     windowDetails: true,
     roofDetails: false,
     combatParticles: 14,
+    combatParticleIntervalMs: 460,
     shadowIntervalMs: 3200,
   },
   low: {
@@ -54,6 +57,7 @@ export const QUALITY_PROFILES: Record<QualityLevel, QualityProfile> = {
     windowDetails: false,
     roofDetails: false,
     combatParticles: 8,
+    combatParticleIntervalMs: 780,
     shadowIntervalMs: 4500,
   },
 };

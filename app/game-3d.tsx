@@ -329,7 +329,7 @@ export default function Game3D() {
         campaign = game.campaign,
         definition = RESEARCH_DEFINITIONS[id];
       if (
-        campaign.research.production[team] ||
+        campaign.research.production[team][id] ||
         !campaign.research.completed[team].includes(id) ||
         (definition.team !== "both" && definition.team !== team)
       )
@@ -340,7 +340,7 @@ export default function Game3D() {
         return false;
       }
       game.resources[team] -= definition.deploymentCost;
-      campaign.research.production[team] = {
+      campaign.research.production[team][id] = {
         id: crypto.randomUUID(),
         researchId: id,
         startedAt: campaign.elapsedHours,
@@ -352,6 +352,12 @@ export default function Game3D() {
     },
     [],
   );
+  const stopProduction = useCallback((id: ResearchId, team: Team) => {
+    const production = gameRef.current.campaign.research.production[team][id];
+    if (!production) return;
+    delete gameRef.current.campaign.research.production[team][id];
+    setNotice(`${RESEARCH_DEFINITIONS[id].title}已停止生产`);
+  }, []);
   const recordServerLog = useCallback(
     (category: ServerLogEntry["category"], text: string) => {
       const serverId = activeServerIdRef.current;
@@ -853,7 +859,7 @@ export default function Game3D() {
       normalizedCampaign.research ??= defaults.research;
       normalizedCampaign.research.active ??= { pku: null, thu: null };
       normalizedCampaign.research.completed ??= { pku: [], thu: [] };
-      normalizedCampaign.research.production ??= { pku: null, thu: null };
+      normalizedCampaign.research.production ??= { pku: {}, thu: {} };
       normalizedCampaign.research.stockpile ??= defaults.research.stockpile;
       const migrateResearchId = (id: string, team: Team): ResearchId => {
         if (id === "bike") return team === "pku" ? "pku_bike" : "thu_bike";
@@ -863,6 +869,7 @@ export default function Game3D() {
         return id as ResearchId;
       };
       for (const team of ["pku", "thu"] as Team[]) {
+        normalizedCampaign.research.production[team] ??= {};
         const stockpile = normalizedCampaign.research.stockpile[team] as unknown as Record<string, number>,
           migratedCompleted = (normalizedCampaign.research.completed[team] as unknown as string[]).map(
             (id) => migrateResearchId(id, team),
@@ -872,12 +879,37 @@ export default function Game3D() {
         ];
         const active = normalizedCampaign.research.active[team];
         if (active) active.id = migrateResearchId(active.id, team);
-        const production = normalizedCampaign.research.production[team];
-        if (production)
-          production.researchId = migrateResearchId(
-            production.researchId,
-            team,
-          );
+        const legacyProduction = normalizedCampaign.research.production[team] as unknown as
+          | { id: string; researchId: string; startedAt: number; completesAt: number }
+          | Record<string, { id: string; researchId: string; startedAt: number; completesAt: number }>
+          | null;
+        if (
+          legacyProduction &&
+          typeof (legacyProduction as { researchId?: unknown }).researchId ===
+            "string"
+        ) {
+          const legacySingle = legacyProduction as {
+              id: string;
+              researchId: string;
+              startedAt: number;
+              completesAt: number;
+            },
+            migratedId = migrateResearchId(legacySingle.researchId, team);
+          normalizedCampaign.research.production[team] = {
+            [migratedId]: { ...legacySingle, researchId: migratedId },
+          };
+        } else {
+          const migratedProduction: CampaignState["research"]["production"][Team] = {};
+          for (const production of Object.values(legacyProduction ?? {})) {
+            if (!production) continue;
+            const migratedId = migrateResearchId(production.researchId, team);
+            migratedProduction[migratedId] = {
+              ...production,
+              researchId: migratedId,
+            };
+          }
+          normalizedCampaign.research.production[team] = migratedProduction;
+        }
         normalizedCampaign.research.stockpile[team] = {
           pku_bike: team === "pku" ? stockpile.pku_bike ?? stockpile.bike ?? 0 : 0,
           pku_slogan_bike: stockpile.pku_slogan_bike ?? 0,
@@ -2422,6 +2454,7 @@ export default function Game3D() {
           resources={gameRef.current.resources[playerTeam]}
           onStart={(id) => beginResearch(id, playerTeam)}
           onProduce={(id) => beginProduction(id, playerTeam)}
+          onStopProduction={(id) => stopProduction(id, playerTeam)}
           onClose={() => setResearchOpen(false)}
         />
       )}
