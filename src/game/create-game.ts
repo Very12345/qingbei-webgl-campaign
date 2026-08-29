@@ -1,5 +1,6 @@
 import { osmRegions } from "../osm-map-data";
 import type { GameData, SiteState, Team, UnitState } from "./types";
+import { defaultResearchState } from "./research";
 
 const seeds: Omit<SiteState, "id" | "stance" | "supply">[] = [
   { name: "北大西门", team: "pku", x: -43, z: 26, type: "gate" },
@@ -389,6 +390,7 @@ export function makeFreshGame(): GameData {
     sites,
     units,
     campaign: {
+      rulesVersion: 2,
       startDateISO: "2026-08-16T08:00:00+08:00",
       elapsedHours: 0,
       firedEvents: [],
@@ -422,6 +424,7 @@ export function makeFreshGame(): GameData {
         completed: [],
         locked: [],
       },
+      research: defaultResearchState(),
       ai: {
         difficulty: "standard",
         seed: aiSeed,

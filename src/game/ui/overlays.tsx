@@ -169,16 +169,6 @@ export function EventBatchOverlay({
                 <h2>{event.title}</h2>
                 <p>{event.body}</p>
                 <div className="event-effect">机制效果：{event.effect}</div>
-                {event.sourceUrl && (
-                  <a
-                    className="event-source"
-                    href={event.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    查看事件来源
-                  </a>
-                )}
               </section>
             ))}
           </div>

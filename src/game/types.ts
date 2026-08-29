@@ -33,7 +33,11 @@ export type SiteState = {
   temporary?: boolean;
   destroyed?: boolean;
   generated?: boolean;
+  busCooldownUntil?: number;
+  bikeCooldownUntil?: number;
 };
+
+export type TransportKind = "bus" | "bike";
 
 export type UnitState = {
   id: number;
@@ -54,6 +58,8 @@ export type UnitState = {
   morale?: number;
   retreating?: boolean;
   skin?: "ustc" | "zju";
+  transport?: TransportKind;
+  transportGroupId?: string;
 };
 
 export type TimedStatus = {
@@ -98,6 +104,18 @@ export type DecisionState = {
   completed: string[];
   locked: string[];
 };
+export type ResearchProgress = {
+  id: "bus" | "bike";
+  team: Team;
+  startedAt: number;
+  completesAt: number;
+};
+export type ResearchState = {
+  active: Record<Team, ResearchProgress | null>;
+  completed: Record<Team, ("bus" | "bike")[]>;
+  lastBusAllocation: Record<Team, number>;
+  lastBikeAllocation: Record<Team, number>;
+};
 export type AiState = {
   difficulty: AiDifficulty;
   seed: number;
@@ -138,6 +156,7 @@ export type DecisionVote = {
 };
 
 export type CampaignState = {
+  rulesVersion: number;
   startDateISO: string;
   elapsedHours: number;
   firedEvents: string[];
@@ -159,6 +178,7 @@ export type CampaignState = {
   initialPkuSites: number;
   initialProductionSites: Record<Team, number>;
   decisions: DecisionState;
+  research: ResearchState;
   ai: AiState;
   academicYearOutcome?: AcademicYearOutcome;
 };
@@ -176,6 +196,35 @@ export type Snapshot = GameData & {
   version: 1 | 2 | 3 | 4;
   name: string;
   savedAt: number;
+  icon?: "map" | "tower" | "book" | "shield";
+};
+
+export type ServerPlayer = {
+  id: string;
+  nickname: string;
+  team: Team;
+  host: boolean;
+};
+
+export type ServerRecord = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  hostTeam: Team;
+  maxPlayers: number;
+  allowSameTeam: boolean;
+  map: Snapshot;
+  players: ServerPlayer[];
+};
+
+export type ServerConfigurationDraft = {
+  id?: string;
+  name: string;
+  hostTeam: Team;
+  maxPlayers: number;
+  allowSameTeam: boolean;
+  mapSavedAt?: number;
 };
 
 export type UnitNetworkState = Omit<UnitState, "path" | "pathIndex">;

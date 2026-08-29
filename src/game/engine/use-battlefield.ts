@@ -17,6 +17,11 @@ import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
 import { EVENT_CARDS } from "../events/event-cards";
 import { pointInPolygon } from "../create-game";
+import {
+  RESEARCH_DEFINITIONS,
+  hasResearch,
+  type ResearchId,
+} from "../research";
 import { BASE_TEAM_UNIT_CAP, INITIAL_PRODUCTION_POPULATION_BUDGET, TEAM_COLOR, productionSlots } from "../config";
 import {
   decisionAvailable,
@@ -85,6 +90,7 @@ type BattlefieldEngineContext = {
   showSites: boolean;
   showControl: boolean;
   beginDecision: (decisionId: string, team: Team, silent?: boolean) => boolean;
+  beginResearch: (id: ResearchId, team: Team, silent?: boolean) => boolean;
 };
 
 export function useBattlefieldEngine(context: BattlefieldEngineContext) {
@@ -122,7 +128,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     setRenameDraft,
     showSites,
     showControl,
-    beginDecision
+    beginDecision,
+    beginResearch
   } = context;
   useEffect(() => {
     if (screen !== "game") {
@@ -2030,10 +2037,26 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 source.dispatchRatio *
                 (decisionEffectsFor(gameRef.current.campaign, team).dispatch ?? 1),
             ),
-        moving = idle.slice(
+        initialMoving = idle.slice(
           0,
           Math.max(0, Math.min(desired, idle.length - reserve)),
         );
+      const moving = [...initialMoving],
+        movingIds = new Set(moving.map((unit) => unit.id)),
+        busGroups = new Set(
+          moving
+            .filter((unit) => unit.transport === "bus" && unit.transportGroupId)
+            .map((unit) => unit.transportGroupId!),
+        );
+      for (const unit of idle)
+        if (
+          unit.transportGroupId &&
+          busGroups.has(unit.transportGroupId) &&
+          !movingIds.has(unit.id)
+        ) {
+          moving.push(unit);
+          movingIds.add(unit.id);
+        }
       const targetX = target.navX ?? target.x,
         targetZ = target.navZ ?? target.z,
         sharedPath = findPath(
@@ -2291,6 +2314,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         gameRef.current.units.reduce(
           (sum, unit) =>
             unit.team === site.team &&
+            unit.siteId === site.id &&
             Math.hypot(
               unit.x - (site.navX ?? site.x),
               unit.z - (site.navZ ?? site.z),
@@ -2981,6 +3005,30 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         mesh.receiveShadow = false;
         unitGroup.add(mesh);
       });
+    const busGeometry = new THREE.BoxGeometry(1.5, 0.62, 0.68),
+      bikeGeometry = new THREE.BoxGeometry(0.58, 0.08, 0.28),
+      busMaterials = {
+        pku: new THREE.MeshStandardMaterial({ color: 0xb71934, roughness: 0.48 }),
+        thu: new THREE.MeshStandardMaterial({ color: 0x704096, roughness: 0.48 }),
+      },
+      bikeMaterials = {
+        pku: new THREE.MeshStandardMaterial({ color: 0xff405d, roughness: 0.42 }),
+        thu: new THREE.MeshStandardMaterial({ color: 0xb97ae4, roughness: 0.42 }),
+      },
+      transportMeshes = {
+        busPku: new THREE.InstancedMesh(busGeometry, busMaterials.pku, 160),
+        busThu: new THREE.InstancedMesh(busGeometry, busMaterials.thu, 160),
+        bikePku: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.pku, 3200),
+        bikeThu: new THREE.InstancedMesh(bikeGeometry, bikeMaterials.thu, 3200),
+      },
+      transportDummy = new THREE.Object3D();
+    Object.values(transportMeshes).forEach((mesh) => {
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.castShadow = false;
+      unitGroup.add(mesh);
+    });
     const disposeUnitObject = (object: THREE.Object3D) => {
       const geometries = new Set<THREE.BufferGeometry>(),
         materials = new Set<THREE.Material>();
@@ -3096,12 +3144,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         });
         unitObjects.clear();
         detailedUnitIds.clear();
-        gameRef.current.units.forEach(createDetailedUnitObject);
+        gameRef.current.units
+          .filter((unit) => unit.transport !== "bus")
+          .forEach(createDetailedUnitObject);
         return;
       }
       const cap = activeQualityProfile.detailedUnits,
         closeView = camera.position.distanceTo(controls.target) < 20,
         candidates = gameRef.current.units
+          .filter((unit) => unit.transport !== "bus")
           .map((unit) => {
             const priority =
                 selectedUnitIds.has(unit.id) || unit.id === directLeaderId
@@ -3148,6 +3199,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       if (useLegacyUnitRenderer) return;
       const counts = { pku: 0, thu: 0, ustc: 0, zju: 0 };
       for (const unit of gameRef.current.units) {
+        if (unit.transport === "bus") continue;
         if (detailedUnitIds.has(unit.id)) continue;
         const key = (unit.skin ?? unit.team) as keyof typeof farUnitMeshes,
           index = counts[key]++;
@@ -3169,6 +3221,50 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           const mesh = farUnitMeshes[key];
           mesh.count = Math.min(counts[key], unitInstanceCapacity);
           mesh.instanceMatrix.needsUpdate = true;
+        },
+      );
+      const transportCounts = { busPku: 0, busThu: 0, bikePku: 0, bikeThu: 0 },
+        busLeaders = new Map<string, UnitState>();
+      for (const unit of gameRef.current.units) {
+        if (unit.transport === "bus" && unit.transportGroupId) {
+          if (!busLeaders.has(unit.transportGroupId))
+            busLeaders.set(unit.transportGroupId, unit);
+          continue;
+        }
+        if (unit.transport !== "bike") continue;
+        const key = unit.team === "pku" ? "bikePku" : "bikeThu",
+          index = transportCounts[key]++;
+        transportDummy.position.set(
+          unit.x,
+          terrainHeight(regionForX(unit.x), unit.x, unit.z) + 0.18,
+          unit.z,
+        );
+        transportDummy.rotation.set(0, Math.atan2(unit.tx - unit.x, unit.tz - unit.z), 0);
+        transportDummy.scale.set(1, 1, 1);
+        transportDummy.updateMatrix();
+        transportMeshes[key].setMatrixAt(index, transportDummy.matrix);
+      }
+      for (const leader of busLeaders.values()) {
+        const key = leader.team === "pku" ? "busPku" : "busThu",
+          index = transportCounts[key]++;
+        transportDummy.position.set(
+          leader.x,
+          terrainHeight(regionForX(leader.x), leader.x, leader.z) + 0.34,
+          leader.z,
+        );
+        transportDummy.rotation.set(
+          0,
+          Math.atan2(leader.tx - leader.x, leader.tz - leader.z),
+          0,
+        );
+        transportDummy.scale.set(1, 1, 1);
+        transportDummy.updateMatrix();
+        transportMeshes[key].setMatrixAt(index, transportDummy.matrix);
+      }
+      (Object.keys(transportMeshes) as (keyof typeof transportMeshes)[]).forEach(
+        (key) => {
+          transportMeshes[key].count = transportCounts[key];
+          transportMeshes[key].instanceMatrix.needsUpdate = true;
         },
       );
     };
@@ -4406,6 +4502,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       refreshDynamicUnitIndex();
       const aliveByTeam = { pku: 0, thu: 0 };
       for (const unit of g.units) aliveByTeam[unit.team]++;
+      const combatStride =
+          g.units.length >= 2400 ? 3 : g.units.length >= 1600 ? 2 : 1,
+        effectiveCombatScale = combatTimeScale * combatStride;
       const activeSitesByTeam: Record<Team, SiteState[]> = {
         pku: [],
         thu: [],
@@ -4415,6 +4514,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       for (const unit of g.units) {
         if (!g.campaign.warUnlocked) break;
         if (used.has(unit.id) || unit.hp <= 0) continue;
+        if ((unit.id + combatPulse) % combatStride !== 0) continue;
         let enemy: UnitState | undefined,
           best = 1.35;
         for (const candidate of unitsNearPoint(unit.x, unit.z, 1.35)) {
@@ -4473,6 +4573,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           enemyDecision = decisionEffectsFor(g.campaign, enemy.team),
           unitWaterPenalty = insideWater(unit.x, unit.z) ? 0.5 : 1,
           enemyWaterPenalty = insideWater(enemy.x, enemy.z) ? 0.5 : 1,
+          unitTransportAttack =
+            unit.transport === "bus" ? 1.5 : unit.transport === "bike" ? 1.1 : 1,
+          enemyTransportAttack =
+            enemy.transport === "bus" ? 1.5 : enemy.transport === "bike" ? 1.1 : 1,
+          unitTransportDefense = unit.transport === "bus" ? 0.5 : 1,
+          enemyTransportDefense = enemy.transport === "bus" ? 0.5 : 1,
           unitMorale = Math.min(
             150,
             (unit.morale ?? 100) * unitStatus.morale * (unitDecision.morale ?? 1),
@@ -4483,6 +4589,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           ),
           unitPower =
             (unit.attackModifier ?? 1) *
+            unitTransportAttack *
             unitWaterPenalty *
             unitStatus.attack *
             (unitDecision.attack ?? 1) *
@@ -4493,6 +4600,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             unitDefense.attack,
           enemyPower =
             (enemy.attackModifier ?? 1) *
+            enemyTransportAttack *
             enemyWaterPenalty *
             enemyStatus.attack *
             (enemyDecision.attack ?? 1) *
@@ -4504,11 +4612,23 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const unitDamage =
             (((1.25 + enemy.supply * 0.007) * enemyPower * unitDefense.taken) /
               ((unitDecision.defense ?? 1) * unitStatus.defense)) *
-            combatTimeScale,
+            unitTransportDefense *
+            effectiveCombatScale,
           enemyDamage =
             (((1.25 + unit.supply * 0.007) * unitPower * enemyDefense.taken) /
               ((enemyDecision.defense ?? 1) * enemyStatus.defense)) *
-            combatTimeScale;
+            enemyTransportDefense *
+            effectiveCombatScale;
+        if (unit.transport === "bike") {
+          unit.transport = undefined;
+          const home = g.sites[unit.siteId];
+          if (home) home.bikeCooldownUntil = g.campaign.elapsedHours + 1;
+        }
+        if (enemy.transport === "bike") {
+          enemy.transport = undefined;
+          const home = g.sites[enemy.siteId];
+          if (home) home.bikeCooldownUntil = g.campaign.elapsedHours + 1;
+        }
         unit.hp -= unitDamage;
         enemy.hp -= enemyDamage;
         unit.morale = Math.max(0, (unit.morale ?? 100) - unitDamage * 0.72);
@@ -4541,6 +4661,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       for (const unit of g.units) {
         if (dead.has(unit.id) || unit.retreating) continue;
+        if ((unit.id + combatPulse) % combatStride !== 0) continue;
         const status = unitStatusModifiers(unit),
           effectiveMorale = Math.min(150, (unit.morale ?? 100) * status.morale),
           alive = aliveByTeam[unit.team],
@@ -4688,6 +4809,43 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (defenders.length) continue;
         const newTeam = attackers[0].team,
           oldTeam = site.team;
+        if (
+          site.type === "target" &&
+          newTeam === "pku" &&
+          !g.campaign.firedEvents.includes("qz_captured")
+        ) {
+          fireEvent("qz_captured", () => {
+            site.team = "thu";
+            site.supply = Math.max(65, site.supply);
+            site.stance = "defend";
+            site.dispatchRatio = 0.4;
+            site.displayName = site.name;
+            g.units
+              .filter(
+                (unit) =>
+                  unit.team === "pku" &&
+                  Math.hypot(unit.x - site.x, unit.z - site.z) < 6,
+              )
+              .forEach((unit, index) => {
+                unit.team = "thu";
+                unit.skin = undefined;
+                unit.siteId = site.id;
+                unit.targetSiteId = undefined;
+                unit.path = undefined;
+                unit.pathIndex = undefined;
+                const angle = (index / Math.max(1, attackers.length)) * Math.PI * 2;
+                unit.tx = siteX + Math.cos(angle) * 0.9;
+                unit.tz = siteZ + Math.sin(angle) * 0.9;
+              });
+            site.orderTarget = undefined;
+            site.orderPath = undefined;
+            rebuildUnits();
+            rebuildBuildings();
+            rebuildCommandLines();
+          });
+          setNotice("求真书院的首次攻势被事件拦截；据点仍由清华控制");
+          continue;
+        }
         if (site.type === "camp") {
           site.destroyed = true;
           site.orderTarget = undefined;
@@ -4773,25 +4931,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           rebuildBuildings();
           rebuildCommandLines();
           setOutcome("pku", "攻克求真书院");
-          fireEvent("qz_captured", () => {
-            g.units
-              .filter(
-                (unit) =>
-                  unit.team === "pku" &&
-                  Math.hypot(unit.x - site.x, unit.z - site.z) < 6,
-              )
-              .forEach((unit) => {
-                unit.team = "thu";
-                unit.siteId = site.id;
-                unit.targetSiteId = undefined;
-                unit.path = undefined;
-                unit.pathIndex = undefined;
-              });
-            rebuildUnits();
-          });
         }
-        if (site.type === "capital" && oldTeam === "pku" && newTeam === "thu") {
-          setOutcome("thu", "元培学院失守");
+        if (
+          (site.type === "capital" || site.name.includes("元培学院")) &&
+          oldTeam === "pku" &&
+          newTeam === "thu"
+        ) {
+          setOutcome("thu", "清华攻克元培学院");
           fireEvent("yuanpei_fallen");
         }
         if (!(site.type === "target" && newTeam === "pku")) {
@@ -4805,6 +4951,104 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
       }
     }, 120);
+    const siteTouchesRoad = (site: SiteState) => {
+        const centerX = site.navX ?? site.x,
+          centerZ = site.navZ ?? site.z,
+          center = navIndex(navGrid, centerX, centerZ);
+        if (center < 0) return false;
+        const gridX = center % navGrid.cols,
+          gridZ = Math.floor(center / navGrid.cols);
+        for (let offsetX = -3; offsetX <= 3; offsetX++)
+          for (let offsetZ = -3; offsetZ <= 3; offsetZ++) {
+            const x = gridX + offsetX,
+              z = gridZ + offsetZ;
+            if (x < 0 || z < 0 || x >= navGrid.cols || z >= navGrid.rows)
+              continue;
+            if (navGrid.road[z * navGrid.cols + x]) return true;
+          }
+        return false;
+      },
+      allocateTransport = (team: Team, kind: ResearchId) => {
+        const game = gameRef.current,
+          campaign = game.campaign,
+          definition = RESEARCH_DEFINITIONS[kind];
+        if (!hasResearch(campaign, team, kind)) return false;
+        if (game.resources[team] < definition.deploymentCost) return false;
+        const peopleRequired = kind === "bus" ? 40 : 10,
+          sites = game.sites.filter(
+            (site) =>
+              site.team === team &&
+              !site.destroyed &&
+              (kind !== "bus" || siteTouchesRoad(site)) &&
+              (kind === "bus"
+                ? (site.busCooldownUntil ?? 0) <= campaign.elapsedHours
+                : (site.bikeCooldownUntil ?? 0) <= campaign.elapsedHours),
+          ),
+          candidates = sites
+            .map((site) => ({
+              site,
+              idle: game.units.filter(
+                (unit) =>
+                  unit.team === team &&
+                  unit.siteId === site.id &&
+                  unit.targetSiteId == null &&
+                  !unit.transport &&
+                  Math.hypot(
+                    unit.x - (site.navX ?? site.x),
+                    unit.z - (site.navZ ?? site.z),
+                  ) < 3.2,
+              ),
+            }))
+            .filter((candidate) => candidate.idle.length >= peopleRequired);
+        if (!candidates.length) return false;
+        let chosen = candidates[0];
+        if (kind === "bike") {
+          const totalWeight = candidates.reduce(
+              (sum, candidate) => sum + candidate.idle.length,
+              0,
+            ),
+            roll = Math.random() * totalWeight;
+          let cursor = 0;
+          for (const candidate of candidates) {
+            cursor += candidate.idle.length;
+            if (roll <= cursor) {
+              chosen = candidate;
+              break;
+            }
+          }
+        } else chosen = candidates[Math.floor(Math.random() * candidates.length)];
+        const { site, idle } = chosen;
+        game.resources[team] -= definition.deploymentCost;
+        if (kind === "bus") {
+          const groupId = `bus-${team}-${Math.floor(campaign.elapsedHours)}-${site.id}`;
+          idle.slice(0, 40).forEach((unit) => {
+            unit.transport = "bus";
+            unit.transportGroupId = groupId;
+          });
+          site.busCooldownUntil =
+            campaign.elapsedHours + definition.cooldownHours;
+          campaign.research.lastBusAllocation[team] = campaign.elapsedHours;
+        } else {
+          idle.slice(0, 10).forEach((unit) => {
+            unit.transport = "bike";
+            unit.transportGroupId = undefined;
+          });
+          site.bikeCooldownUntil =
+            campaign.elapsedHours + definition.cooldownHours;
+          campaign.research.lastBikeAllocation[team] = campaign.elapsedHours;
+        }
+        rebuildUnits();
+        return true;
+      },
+      disembarkBusGroup = (groupId?: string) => {
+        if (!groupId) return;
+        gameRef.current.units
+          .filter((unit) => unit.transportGroupId === groupId)
+          .forEach((unit) => {
+            unit.transport = undefined;
+            unit.transportGroupId = undefined;
+          });
+      };
     const campaignTimer = window.setInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
@@ -4875,6 +5119,31 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         campaign.decisions.active[team] = null;
         setNotice(`${team === "pku" ? "北大" : campaign.thuFactionName}决策完成：${definition.title}`);
       }
+      for (const team of ["pku", "thu"] as Team[]) {
+        const active = campaign.research.active[team];
+        if (!active || active.completesAt > campaign.elapsedHours) continue;
+        if (!campaign.research.completed[team].includes(active.id))
+          campaign.research.completed[team].push(active.id);
+        campaign.research.active[team] = null;
+        setNotice(
+          `${team === "pku" ? "北大" : campaign.thuFactionName}研发完成：${RESEARCH_DEFINITIONS[active.id].title}`,
+        );
+      }
+      for (const team of ["pku", "thu"] as Team[])
+        for (const kind of ["bike", "bus"] as ResearchId[]) {
+          if (!hasResearch(campaign, team, kind)) continue;
+          const definition = RESEARCH_DEFINITIONS[kind],
+            last =
+              kind === "bus"
+                ? campaign.research.lastBusAllocation[team]
+                : campaign.research.lastBikeAllocation[team];
+          if (campaign.elapsedHours - last < definition.cooldownHours) continue;
+          if (kind === "bus")
+            campaign.research.lastBusAllocation[team] = campaign.elapsedHours;
+          else campaign.research.lastBikeAllocation[team] = campaign.elapsedHours;
+          if (Math.random() < (kind === "bus" ? 0.32 : 0.62))
+            allocateTransport(team, kind);
+        }
       if (campaign.warUnlocked)
         for (const definition of TACTICAL_EVENTS) {
           if (campaign.firedEvents.includes(definition.id)) continue;
@@ -5294,6 +5563,19 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       if (thuSites * 2 < (campaign.initialThuSites ?? 80))
         fireEvent("thu_ustc", () => {
           campaign.thuFactionName = "中科大";
+          busMaterials.thu.color.set(0x2879bd);
+          bikeMaterials.thu.color.set(0x4aa4df);
+          campaign.attackBonus.thu *= 1.12;
+          addTimedStatus(
+            "ustc_transition_bonus",
+            "科大化整编",
+            "thu",
+            24 * 365,
+            1.12,
+            1.1,
+            1.25,
+            { production: 1.15, defense: 1.1 },
+          );
           g.units
             .filter((unit) => unit.team === "thu")
             .forEach((unit) => (unit.skin = "ustc"));
@@ -5505,6 +5787,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         ).length,
         routeLimit = aiTeam === "thu" ? 10 : 8,
         waveLimit = aiTeam === "thu" ? 4 : 3;
+      if (!g.campaign.research.active[aiTeam]) {
+        const researchChoices = (["bike", "bus"] as ResearchId[]).filter(
+          (id) =>
+            !hasResearch(g.campaign, aiTeam, id) &&
+            g.resources[aiTeam] >= RESEARCH_DEFINITIONS[id].cost,
+        );
+        if (researchChoices.length) {
+          const preferred =
+            personality.includes("工程") && researchChoices.includes("bus")
+              ? "bus"
+              : researchChoices[Math.floor(random() * researchChoices.length)];
+          beginResearch(preferred, aiTeam, true);
+        }
+      }
       if (g.campaign.elapsedHours >= aiState.nextStrategicAt[aiTeam]) {
         aiState.nextStrategicAt[aiTeam] =
           g.campaign.elapsedHours + strategicInterval;
@@ -6140,6 +6436,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         if (dist > 0.18) {
           if (g.campaign.freezeUntil[u.team] > g.campaign.elapsedHours) return;
+          if (u.transport === "bus") {
+            const currentIndex = navIndex(navGrid, u.x, u.z);
+            if (
+              currentIndex < 0 ||
+              !navGrid.road[currentIndex] ||
+              navGrid.water[currentIndex] ||
+              navGrid.building[currentIndex]
+            )
+              disembarkBusGroup(u.transportGroupId);
+          }
           const gridIndex = navIndex(navGrid, u.x, u.z),
             unitStatus = unitStatusModifiers(u),
             unitDecision = decisionEffectsFor(g.campaign, u.team),
@@ -6153,9 +6459,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               (g.campaign.morningPenaltyUntil ?? 0) > g.campaign.elapsedHours
                 ? 0.68
                 : 1,
+            transportSpeed =
+              u.transport === "bus" ? 10 : u.transport === "bike" ? 5 : 1,
             s =
               roadSpeed *
               terrainSpeed *
+              transportSpeed *
               (u.moveModifier ?? 1) *
               morningMove *
               unitStatus.movement *
@@ -6197,6 +6506,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
           const nextX = u.x + (moveX / moveLength) * s,
             nextZ = u.z + (moveZ / moveLength) * s;
+          if (u.transport === "bus") {
+            const nextIndex = navIndex(navGrid, nextX, nextZ);
+            if (
+              nextIndex < 0 ||
+              !navGrid.road[nextIndex] ||
+              navGrid.water[nextIndex] ||
+              navGrid.building[nextIndex]
+            ) {
+              disembarkBusGroup(u.transportGroupId);
+              return;
+            }
+          }
           let resolvedX = nextX,
             resolvedZ = nextZ;
           if (!pointWalkable(nextX, nextZ, u.team)) {
@@ -6246,38 +6567,47 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           pkuSiteCount = 0,
           thuSiteCount = 0;
         const populationCellSize = 4,
-          populationGrid = new Map<string, UnitState[]>(),
+          sitePopulationGrid = new Map<string, SiteState[]>(),
           populationKey = (x: number, z: number) =>
             `${Math.floor(x / populationCellSize)}/${Math.floor(z / populationCellSize)}`;
-        for (const unit of g.units) {
-          if (unit.team === "pku") pkuPopulation += unit.strength;
-          else thuPopulation += unit.strength;
-          const key = populationKey(unit.x, unit.z),
-            bucket = populationGrid.get(key);
-          if (bucket) bucket.push(unit);
-          else populationGrid.set(key, [unit]);
-        }
         nearbyPopulationCache.clear();
         for (const site of g.sites) {
           if (site.destroyed) continue;
           if (site.team === "pku") pkuSiteCount++;
           else thuSiteCount++;
-          const siteX = site.navX ?? site.x,
-            siteZ = site.navZ ?? site.z,
-            gridX = Math.floor(siteX / populationCellSize),
-            gridZ = Math.floor(siteZ / populationCellSize);
-          let nearby = 0;
+          nearbyPopulationCache.set(site.id, 0);
+          const key = populationKey(site.navX ?? site.x, site.navZ ?? site.z),
+            bucket = sitePopulationGrid.get(key);
+          if (bucket) bucket.push(site);
+          else sitePopulationGrid.set(key, [site]);
+        }
+        for (const unit of g.units) {
+          if (unit.team === "pku") pkuPopulation += unit.strength;
+          else thuPopulation += unit.strength;
+          const gridX = Math.floor(unit.x / populationCellSize),
+            gridZ = Math.floor(unit.z / populationCellSize);
+          let nearestSite: SiteState | undefined,
+            nearestDistance = 3.4;
           for (let offsetX = -1; offsetX <= 1; offsetX++)
             for (let offsetZ = -1; offsetZ <= 1; offsetZ++)
-              for (const unit of
-                populationGrid.get(`${gridX + offsetX}/${gridZ + offsetZ}`) ??
+              for (const site of
+                sitePopulationGrid.get(`${gridX + offsetX}/${gridZ + offsetZ}`) ??
                 [])
-                if (
-                  unit.team === site.team &&
-                  Math.hypot(unit.x - siteX, unit.z - siteZ) < 3.4
-                )
-                  nearby += unit.strength;
-          nearbyPopulationCache.set(site.id, nearby);
+                if (site.team === unit.team) {
+                  const distance = Math.hypot(
+                    unit.x - (site.navX ?? site.x),
+                    unit.z - (site.navZ ?? site.z),
+                  );
+                  if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestSite = site;
+                  }
+                }
+          if (nearestSite)
+            nearbyPopulationCache.set(
+              nearestSite.id,
+              (nearbyPopulationCache.get(nearestSite.id) ?? 0) + unit.strength,
+            );
         }
         setStats({
           pku: pkuPopulation,

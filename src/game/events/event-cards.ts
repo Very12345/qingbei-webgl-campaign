@@ -65,8 +65,8 @@ export const EVENT_CARDS = defineEventCatalog({
   },
   qz_captured: {
     title: "我宣布你們已經不是我的學生了",
-    body: "求真书院失守，但一场戏剧性的身份重组随即发生，前线队伍陷入混乱。",
-    effect: "求真书院附近一部分北大单位转为清华单位；胜利结果保持不变。",
+    body: "北大攻势即将完成占领时，一场戏剧性的身份重组提前发生，前线队伍陷入混乱。",
+    effect: "首次攻势被阻止；求真书院仍归清华，附近北大单位转为清华单位。",
     quadrant: "classroom",
     date: "终局广播",
     sourceType: "war_scenario",
@@ -104,7 +104,7 @@ export const EVENT_CARDS = defineEventCatalog({
   thu_ustc: {
     title: "清华转进中科大",
     body: "持续的进攻使清华战时委员会作出惊人决定：剩余防线以“中科大远征校区”的名义继续作战。",
-    effect: "清华阵营更名为中科大，单位外观与据点名称同步变化。",
+    effect: "清华阵营更名为中科大；攻击、移动、防守、意志与生产获得长期加成。",
     quadrant: "march",
     date: "特别彩蛋",
     sourceType: "easter_egg",

@@ -26,10 +26,17 @@ import type {
   RegionId,
   Snapshot,
   Stance,
+  ServerRecord,
+  ServerConfigurationDraft,
   Team,
   UnitNetworkState,
   UnitState,
 } from "../src/game/types";
+import {
+  deleteServerSave,
+  readServerSaves,
+  upsertServerSave,
+} from "../src/game/server-storage";
 import {
   AUTOSAVE_KEY,
   SAVE_KEY,
@@ -42,6 +49,10 @@ import { decisionAvailable } from "../src/game/decisions";
 import { EVENT_CARDS } from "../src/game/events/event-cards";
 import { makeFreshGame } from "../src/game/create-game";
 import {
+  RESEARCH_DEFINITIONS,
+  type ResearchId,
+} from "../src/game/research";
+import {
   AcademicYearOverlay,
   EventBatchOverlay,
   EventLogOverlay,
@@ -50,6 +61,7 @@ import {
 } from "../src/game/ui/overlays";
 import { HomeScreen, type HomePage } from "../src/game/ui/home-screen";
 import { FocusTree } from "../src/game/ui/focus-tree";
+import { ResearchTree } from "../src/game/ui/research-tree";
 import {
   ChatPanel,
   DecisionVoteToast,
@@ -81,6 +93,9 @@ export default function Game3D() {
   const sceneApi = useRef<BattlefieldSceneApi | null>(null);
   const [saves, setSaves] = useState<Snapshot[]>([]);
   const [autosave, setAutosave] = useState<Snapshot | null>(null);
+  const [serverSaves, setServerSaves] = useState<ServerRecord[]>([]);
+  const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const activeServerIdRef = useRef<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [screen, setScreen] = useState<GameScreen>("home");
   const screenRef = useRef<GameScreen>("home");
@@ -99,6 +114,7 @@ export default function Game3D() {
   const [lanStatus, setLanStatus] = useState("未连接");
   const [lanMode, setLanMode] = useState<"host" | "join">("host");
   const [lanTeam, setLanTeam] = useState<Team>("pku");
+  const [forcedLanTeam, setForcedLanTeam] = useState<Team | null>(null);
   const lanTeamRef = useRef<Team>("pku");
   const [connectedPlayers, setConnectedPlayers] = useState(0);
   const lanPeerRef = useRef<RTCPeerConnection | null>(null);
@@ -154,6 +170,7 @@ export default function Game3D() {
   const [assetOpen, setAssetOpen] = useState(false);
   const [eventLogOpen, setEventLogOpen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
+  const [researchOpen, setResearchOpen] = useState(false);
   const [decisionZoom, setDecisionZoom] = useState(1);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("standard");
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
@@ -239,9 +256,39 @@ export default function Game3D() {
     gameRef.current.campaign.decisions.active[team] = null;
     setNotice("决策已取消，返还50%战略资源");
   }, []);
+  const beginResearch = useCallback(
+    (id: ResearchId, team: Team, silent = false) => {
+      const game = gameRef.current,
+        campaign = game.campaign,
+        definition = RESEARCH_DEFINITIONS[id];
+      if (
+        campaign.research.active[team] ||
+        campaign.research.completed[team].includes(id)
+      )
+        return false;
+      if (game.resources[team] < definition.cost) {
+        if (!silent) setNotice(`研发资源不足：需要${definition.cost}`);
+        return false;
+      }
+      game.resources[team] -= definition.cost;
+      campaign.research.active[team] = {
+        id,
+        team,
+        startedAt: campaign.elapsedHours,
+        completesAt: campaign.elapsedHours + definition.hours,
+      };
+      if (!silent)
+        setNotice(`${definition.title}开始研发，预计${definition.hours}小时完成`);
+      return true;
+    },
+    [],
+  );
   const refreshSaves = useCallback(
     () => {
       setSaves(readSaves().sort((a, b) => b.savedAt - a.savedAt));
+      setServerSaves(
+        readServerSaves().sort((a, b) => b.updatedAt - a.updatedAt),
+      );
       const legacyAutosave = readAutosave();
       setAutosave(legacyAutosave);
       void readIndexedSnapshot(AUTOSAVE_KEY).then((indexedAutosave) => {
@@ -264,6 +311,9 @@ export default function Game3D() {
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
+  useEffect(() => {
+    activeServerIdRef.current = activeServerId;
+  }, [activeServerId]);
   useEffect(() => {
     pauseOpenRef.current = pauseOpen;
   }, [pauseOpen]);
@@ -385,7 +435,8 @@ export default function Game3D() {
     setRenameDraft,
     showSites,
     showControl,
-    beginDecision
+    beginDecision,
+    beginResearch
   });
 
   const snapshotCurrentGame = (name: string): Snapshot => {
@@ -422,6 +473,30 @@ export default function Game3D() {
       try {
         const snapshot = snapshotCurrentGame("未完成战局"),
           worker = saveWorkerRef.current;
+        const serverId = activeServerIdRef.current;
+        if (serverId) {
+          const server = readServerSaves().find(
+            (record) => record.id === serverId,
+          );
+          if (server) {
+            const next = upsertServerSave({
+              ...server,
+              updatedAt: Date.now(),
+              map: { ...snapshot, name: server.map.name || server.name },
+              players: [
+                {
+                  id: playerIdRef.current,
+                  nickname: playerNickname.trim().slice(0, 16) || "主机",
+                  team: playerTeamRef.current,
+                  host: true,
+                },
+                ...[...lanChannelIdentityRef.current.values()],
+              ],
+            });
+            setServerSaves(next);
+          }
+          return;
+        }
         if (worker)
           worker.postMessage({
             type: "put",
@@ -459,6 +534,11 @@ export default function Game3D() {
     setAutosave(null);
   };
   const saveGame = () => {
+    if (activeServerIdRef.current) {
+      saveUnfinishedGame(true);
+      setNotice("服务器战局已保存到独立服务器存档");
+      return true;
+    }
     const name =
         saveName.trim() || `存档 ${new Date().toLocaleString("zh-CN")}`,
       snapshot = snapshotCurrentGame(name),
@@ -476,6 +556,130 @@ export default function Game3D() {
       setNotice("存档空间不足，请删除旧存档或恢复默认材质后重试");
       return false;
     }
+  };
+  const downloadJson = (value: unknown, filename: string) => {
+    const blob = new Blob([JSON.stringify(value)], {
+        type: "application/json;charset=utf-8",
+      }),
+      url = URL.createObjectURL(blob),
+      anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename.replace(/[\\/:*?"<>|]/g, "_");
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportSave = (save: Snapshot) =>
+    downloadJson(save, `${save.name || "解放清华园"}.qingbei-save.json`);
+  const importPlayerSave = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as Snapshot;
+      if (!parsed?.sites?.length || !parsed?.units || !parsed?.campaign)
+        throw new Error("invalid save");
+      const imported: Snapshot = {
+        ...parsed,
+        version: 4,
+        name: parsed.name || file.name.replace(/\.[^.]+$/, ""),
+        savedAt: Date.now(),
+      };
+      const next = [imported, ...readSaves()].slice(0, 12);
+      localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+      setSaves(next);
+      setNotice(`已导入存档“${imported.name}”`);
+    } catch {
+      setNotice("存档文件无效或版本不兼容");
+    }
+  };
+  const renameSave = (savedAt: number, name: string) => {
+    const next = readSaves().map((save) =>
+      save.savedAt === savedAt
+        ? { ...save, name: name.trim().slice(0, 24) || save.name }
+        : save,
+    );
+    localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+    setSaves(next);
+  };
+  const changeSaveIcon = (savedAt: number) => {
+    const icons: NonNullable<Snapshot["icon"]>[] = [
+        "map",
+        "tower",
+        "book",
+        "shield",
+      ],
+      next = readSaves().map((save) => {
+        if (save.savedAt !== savedAt) return save;
+        const index = icons.indexOf(save.icon ?? "map");
+        return { ...save, icon: icons[(index + 1) % icons.length] };
+      });
+    localStorage.setItem(SAVE_KEY, JSON.stringify(next));
+    setSaves(next);
+  };
+  const saveServerConfiguration = (draft: ServerConfigurationDraft) => {
+    const existing = draft.id
+        ? readServerSaves().find((record) => record.id === draft.id)
+        : undefined,
+      selectedMap =
+        draft.mapSavedAt == null
+          ? existing?.map
+          : saves.find((save) => save.savedAt === draft.mapSavedAt),
+      fresh = makeFreshGame(),
+      fallbackMap: Snapshot = {
+        version: 4,
+        name: "新服务器地图",
+        savedAt: Date.now(),
+        ...fresh,
+      },
+      now = Date.now(),
+      record: ServerRecord = {
+        id: existing?.id ?? crypto.randomUUID(),
+        name: draft.name.trim().slice(0, 24) || "清北联机服务器",
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        hostTeam: draft.hostTeam,
+        maxPlayers: Math.min(8, Math.max(2, draft.maxPlayers || 2)),
+        allowSameTeam: draft.allowSameTeam,
+        map: structuredClone(selectedMap ?? fallbackMap),
+        players: existing?.players ?? [],
+      };
+    setServerSaves(upsertServerSave(record));
+    setHomePage("servers");
+    setNotice(`服务器“${record.name}”配置已保存`);
+  };
+  const removeServer = (id: string) => setServerSaves(deleteServerSave(id));
+  const exportServer = (server: ServerRecord) =>
+    downloadJson(server, `${server.name}.qingbei-server.json`);
+  const importServer = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as ServerRecord;
+      if (!parsed?.map?.sites?.length || !parsed?.name)
+        throw new Error("invalid server");
+      const imported: ServerRecord = {
+        ...parsed,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        players: [],
+      };
+      setServerSaves(upsertServerSave(imported));
+      setNotice(`已导入服务器“${imported.name}”`);
+    } catch {
+      setNotice("服务器文件无效或版本不兼容");
+    }
+  };
+  const launchServer = (server: ServerRecord) => {
+    const hostIdentity = {
+        id: playerIdRef.current,
+        nickname: playerNickname.trim().slice(0, 16) || "主机",
+        team: server.hostTeam,
+        host: true,
+      },
+      nextServer = {
+        ...server,
+        updatedAt: Date.now(),
+        players: [hostIdentity],
+      };
+    setServerSaves(upsertServerSave(nextServer));
+    loadGame(server.map, server.hostTeam, server.id);
+    window.setTimeout(() => void createLanHost(), 0);
   };
   useEffect(() => {
     if (screen !== "game") return;
@@ -496,18 +700,26 @@ export default function Game3D() {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [screen, saveName]);
-  const loadGame = (save: Snapshot, team: Team = playerTeam) => {
-    clearUnfinishedGame();
+  const loadGame = (
+    save: Snapshot,
+    team: Team = playerTeam,
+    serverId: string | null = null,
+  ) => {
+    if (!serverId) clearUnfinishedGame();
+    setActiveServerId(serverId);
+    activeServerIdRef.current = serverId;
     setPlayerTeam(team);
     playerTeamRef.current = team;
     if (save.version >= 3 && save.campaign) {
       const { timeOfDay, resources, deaths, sites, units, campaign } =
         structuredClone(save);
-      const defaults = makeFreshGame().campaign,
+      const legacyRulesVersion = campaign.rulesVersion ?? 1,
+        defaults = makeFreshGame().campaign,
         maxSiteId = sites.reduce((max, site) => Math.max(max, site.id), -1),
         normalizedCampaign: CampaignState = {
           ...defaults,
           ...campaign,
+          rulesVersion: 2,
           startDateISO: campaign.startDateISO || defaults.startDateISO,
           elapsedHours: Number.isFinite(campaign.elapsedHours)
             ? campaign.elapsedHours
@@ -553,9 +765,34 @@ export default function Game3D() {
       normalizedCampaign.decisions.active ??= { pku: null, thu: null };
       normalizedCampaign.decisions.completed ??= [];
       normalizedCampaign.decisions.locked ??= [];
+      normalizedCampaign.research ??= defaults.research;
+      normalizedCampaign.research.active ??= { pku: null, thu: null };
+      normalizedCampaign.research.completed ??= { pku: [], thu: [] };
+      normalizedCampaign.research.lastBusAllocation ??= {
+        pku: -999,
+        thu: -999,
+      };
+      normalizedCampaign.research.lastBikeAllocation ??= {
+        pku: -999,
+        thu: -999,
+      };
       normalizedCampaign.ai.difficulty ??= "standard";
       normalizedCampaign.ai.nextStrategicAt ??= { pku: 0, thu: 0 };
       normalizedCampaign.ai.failedGoals ??= {};
+      if (legacyRulesVersion < 2) {
+        const qz = sites.find((site) => site.name === "求真书院"),
+          legacyQzVictory =
+            normalizedCampaign.outcome?.winner === "pku" &&
+            normalizedCampaign.outcome.reason.includes("求真书院") &&
+            normalizedCampaign.firedEvents.includes("qz_captured");
+        if (qz && legacyQzVictory) {
+          normalizedCampaign.outcome = undefined;
+          qz.team = "thu";
+          qz.stance = "defend";
+          qz.dispatchRatio = 0.4;
+          qz.displayName = qz.name;
+        }
+      }
       sites.forEach((site) => {
         site.displayName ??= site.name;
         site.dispatchRatio ??=
@@ -664,6 +901,8 @@ export default function Game3D() {
   };
   const newGame = (team: Team = playerTeam) => {
     clearUnfinishedGame();
+    setActiveServerId(null);
+    activeServerIdRef.current = null;
     setPlayerTeam(team);
     playerTeamRef.current = team;
     gameRef.current = makeFreshGame();
@@ -690,6 +929,7 @@ export default function Game3D() {
         .filter(
           (unit) =>
             unit.team === selectedSite.team &&
+            unit.siteId === selectedSite.id &&
             Math.hypot(
               unit.x - (selectedSite.navX ?? selectedSite.x),
               unit.z - (selectedSite.navZ ?? selectedSite.z),
@@ -915,6 +1155,27 @@ export default function Game3D() {
     }
     setChatInput("");
   };
+  const updateActiveServerPlayers = () => {
+    const serverId = activeServerIdRef.current;
+    if (!serverId) return;
+    const server = readServerSaves().find((record) => record.id === serverId);
+    if (!server) return;
+    const players = [
+      {
+        id: playerIdRef.current,
+        nickname: playerNickname.trim().slice(0, 16) || "主机",
+        team: playerTeamRef.current,
+        host: true,
+      },
+      ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
+        ...identity,
+        host: false,
+      })),
+    ];
+    setServerSaves(
+      upsertServerSave({ ...server, updatedAt: Date.now(), players }),
+    );
+  };
   const bindLanChannel = (channel: RTCDataChannel, host: boolean) => {
     lanChannelsRef.current.add(channel);
     lanHostRef.current = host;
@@ -945,11 +1206,14 @@ export default function Game3D() {
           role: "host",
         });
       refreshConnectionCount();
+      updateActiveServerPlayers();
       setLanStatus(host ? "玩家已加入，可继续生成邀请" : "已加入战局");
     };
     channel.onclose = () => {
       lanChannelsRef.current.delete(channel);
+      lanChannelIdentityRef.current.delete(channel);
       refreshConnectionCount();
+      updateActiveServerPlayers();
       setLanStatus(
         lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭",
       );
@@ -972,6 +1236,7 @@ export default function Game3D() {
             }
           }
           lanChannelIdentityRef.current.set(channel, identity);
+          updateActiveServerPlayers();
           if (host) {
             const allowed = chatMessagesRef.current.filter(
               (message) =>
@@ -1113,16 +1378,51 @@ export default function Game3D() {
     bindLanChannel(channel, true);
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
-    setLanOutput(JSON.stringify(peer.localDescription));
+    const playerCount =
+      1 +
+      [...lanChannelsRef.current].filter(
+        (candidate) => candidate.readyState === "open",
+      ).length;
+    setLanOutput(
+      JSON.stringify({
+        kind: "qingbei-server-invite",
+        sdp: peer.localDescription,
+        playerCount,
+        hostTeam: playerTeamRef.current,
+        serverId: activeServerIdRef.current,
+      }),
+    );
     setLanStatus("邀请已生成：复制下方代码给一名玩家");
   };
   const joinLanHost = async () => {
     try {
-      const peer = new RTCPeerConnection({ iceServers: [] });
+      const parsed = JSON.parse(lanInput) as
+          | RTCSessionDescriptionInit
+          | {
+              kind: "qingbei-server-invite";
+              sdp: RTCSessionDescriptionInit;
+              playerCount: number;
+              hostTeam: Team;
+            },
+        invite = "kind" in parsed ? parsed : null,
+        forcedTeam =
+          invite?.playerCount === 1
+            ? invite.hostTeam === "pku"
+              ? "thu"
+              : "pku"
+            : null,
+        peer = new RTCPeerConnection({ iceServers: [] });
+      setForcedLanTeam(forcedTeam);
+      if (forcedTeam) {
+        setLanTeam(forcedTeam);
+        lanTeamRef.current = forcedTeam;
+      }
       lanPeerRef.current = peer;
       lanPeersRef.current.add(peer);
       peer.ondatachannel = (event) => bindLanChannel(event.channel, false);
-      await peer.setRemoteDescription(JSON.parse(lanInput));
+      await peer.setRemoteDescription(
+        invite ? invite.sdp : (parsed as RTCSessionDescriptionInit),
+      );
       await peer.setLocalDescription(await peer.createAnswer());
       await waitForIce(peer);
       setLanOutput(JSON.stringify(peer.localDescription));
@@ -1325,6 +1625,19 @@ export default function Game3D() {
                 <i />
                 <i />
               </span>
+            </button>
+            <button
+              aria-label="打开研发"
+              title="研发"
+              className={researchOpen ? "active" : ""}
+              onClick={() => {
+                setResearchOpen(true);
+                setDecisionOpen(false);
+                setMoreOpen(false);
+                setSettingsOpen(false);
+              }}
+            >
+              研
             </button>
             <button
               aria-label="更多"
@@ -1544,6 +1857,17 @@ export default function Game3D() {
           loadGame={loadGame}
           clearUnfinishedGame={clearUnfinishedGame}
           deleteSave={deleteSave}
+          exportSave={exportSave}
+          importPlayerSave={(file) => void importPlayerSave(file)}
+          renameSave={renameSave}
+          changeSaveIcon={changeSaveIcon}
+          servers={serverSaves}
+          saveServerConfiguration={saveServerConfiguration}
+          launchServer={launchServer}
+          deleteServer={removeServer}
+          exportServer={exportServer}
+          importServer={(file) => void importServer(file)}
+          forcedLanTeam={forcedLanTeam}
         />
       )}
       <header className="hud-top">
@@ -1706,6 +2030,15 @@ export default function Game3D() {
           renderNode={renderFocusNode}
           onCancelDecision={() => cancelDecision(playerTeam)}
           onClose={() => setDecisionOpen(false)}
+        />
+      )}
+      {researchOpen && (
+        <ResearchTree
+          team={playerTeam}
+          campaign={gameRef.current.campaign}
+          resources={gameRef.current.resources[playerTeam]}
+          onStart={(id) => beginResearch(id, playerTeam)}
+          onClose={() => setResearchOpen(false)}
         />
       )}
       {eventLogOpen && (
