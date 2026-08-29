@@ -262,7 +262,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       gameplayBuildingCache.set(r, filtered);
       return filtered;
     };
-    const terrainHeight = (r: any, x: number, z: number) => {
+    const terrainVerticalScale = 3.2,
+      terrainHeight = (r: any, x: number, z: number) => {
       const { cols, rows, heights } = r.terrain,
         u =
           THREE.MathUtils.clamp(
@@ -278,7 +279,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         fu = u - i,
         fv = v - j,
         at = (ii: number, jj: number) =>
-          heights[Math.min(rows - 1, jj) * cols + Math.min(cols - 1, ii)] || 0;
+          (heights[Math.min(rows - 1, jj) * cols + Math.min(cols - 1, ii)] ||
+            0) * terrainVerticalScale;
       return THREE.MathUtils.lerp(
         THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
         THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
@@ -295,6 +297,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       building: Uint8Array;
       water: Uint8Array;
       road: Uint8Array;
+      elevation: Float32Array;
       component: Int32Array;
       mainComponent: number;
     };
@@ -308,6 +311,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         building = new Uint8Array(cols * rows),
         water = new Uint8Array(cols * rows),
         road = new Uint8Array(cols * rows),
+        elevation = new Float32Array(cols * rows),
         markPolygons = (polygons: readonly any[], mask: Uint8Array) => {
           for (const polygon of polygons) {
             const xs = polygon.points.map((p: number[]) => p[0]),
@@ -335,6 +339,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         };
       markPolygons(gameplayBuildings(r), building);
       markPolygons(r.waters, water);
+      for (let gz = 0; gz < rows; gz++)
+        for (let gx = 0; gx < cols; gx++)
+          elevation[gz * cols + gx] = terrainHeight(
+            r,
+            minX + (gx + 0.5) * cell,
+            minZ + (gz + 0.5) * cell,
+          );
       for (const route of r.roads) {
         for (let i = 1; i < route.points.length; i++) {
           const [x1, z1] = route.points[i - 1],
@@ -394,6 +405,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         building,
         water,
         road,
+        elevation,
         component,
         mainComponent,
       };
@@ -596,7 +608,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 pathBlocked(nz * grid.cols + cx))
             )
               continue;
-            const stepCost =
+            const signedSlope =
+                (grid.elevation[next] - grid.elevation[current.index]) /
+                (grid.cell * Math.hypot(dx, dz)),
+              slopeCost =
+                signedSlope > 0
+                  ? 1 + signedSlope * 2.2
+                  : 1 + Math.abs(signedSlope) * 0.28,
+              stepCost =
                 Math.hypot(dx, dz) *
                 (grid.water[next]
                   ? 7.2
@@ -604,7 +623,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   ? 5.8
                   : grid.road[next]
                     ? 0.68
-                    : 1.18),
+                    : 1.18) *
+                slopeCost,
               nextCost = cost[current.index] + stepCost;
             if (nextCost >= cost[next]) continue;
             cost[next] = nextCost;
@@ -944,12 +964,39 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const addRegion = (r: any) => {
       const { cols, rows, heights } = r.terrain,
         pos: number[] = [],
+        terrainColors: number[] = [],
         idx: number[] = [];
+      const scaledHeights = heights.map(
+          (height: number) => height * terrainVerticalScale,
+        ),
+        minimumHeight = Math.min(...scaledHeights),
+        maximumHeight = Math.max(...scaledHeights),
+        heightRange = Math.max(0.001, maximumHeight - minimumHeight),
+        lowlandColor = new THREE.Color(0x587d49),
+        highlandColor = new THREE.Color(0x9a9866),
+        terrainTone = new THREE.Color(),
+        heightAt = (i: number, j: number) =>
+          scaledHeights[
+            THREE.MathUtils.clamp(j, 0, rows - 1) * cols +
+              THREE.MathUtils.clamp(i, 0, cols - 1)
+          ] ?? 0;
       for (let j = 0; j < rows; j++)
         for (let i = 0; i < cols; i++) {
           const x = r.offsetX - r.width / 2 + (i / (cols - 1)) * r.width,
-            z = r.depth / 2 - (j / (rows - 1)) * r.depth;
-          pos.push(x, heights[j * cols + i] || 0, z);
+            z = r.depth / 2 - (j / (rows - 1)) * r.depth,
+            height = heightAt(i, j),
+            normalizedHeight = (height - minimumHeight) / heightRange,
+            gradient = Math.hypot(
+              heightAt(i + 1, j) - heightAt(i - 1, j),
+              heightAt(i, j + 1) - heightAt(i, j - 1),
+            ),
+            slopeShade = THREE.MathUtils.clamp(1 - gradient * 0.13, 0.72, 1);
+          pos.push(x, height, z);
+          terrainTone
+            .copy(lowlandColor)
+            .lerp(highlandColor, normalizedHeight * 0.82)
+            .multiplyScalar(slopeShade);
+          terrainColors.push(terrainTone.r, terrainTone.g, terrainTone.b);
         }
       for (let j = 0; j < rows - 1; j++)
         for (let i = 0; i < cols - 1; i++) {
@@ -961,12 +1008,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(terrainColors, 3),
+      );
       geo.setIndex(idx);
       geo.computeVertexNormals();
       const terrain = new THREE.Mesh(
         geo,
         new THREE.MeshStandardMaterial({
-          color: r.offsetX ? 0x6d8955 : 0x718d58,
+          vertexColors: true,
           roughness: 0.98,
           side: THREE.FrontSide,
         }),
@@ -7485,10 +7536,26 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               (outsideCampusPenalty
                 ? transportDefinition?.outsideCampusMovement ?? 1
                 : 1),
+            slopeLookAhead = Math.min(0.9, dist),
+            elevationDelta =
+              terrainHeight(
+                regionForX(u.x),
+                u.x + (dx / dist) * slopeLookAhead,
+                u.z + (dz / dist) * slopeLookAhead,
+              ) - terrainHeight(regionForX(u.x), u.x, u.z),
+            slopeSpeed =
+              elevationDelta > 0
+                ? THREE.MathUtils.clamp(1 - elevationDelta * 1.85, 0.52, 1)
+                : THREE.MathUtils.clamp(
+                    1 + Math.abs(elevationDelta) * 0.38,
+                    1,
+                    1.16,
+                  ),
             s =
               roadSpeed *
               terrainSpeed *
               transportSpeed *
+              slopeSpeed *
               (u.moveModifier ?? 1) *
               morningMove *
               unitStatus.movement *
