@@ -1,3 +1,5 @@
+import type { Team } from "./types";
+
 const SIGNALING_BASE_URL = (
   import.meta.env.VITE_SIGNALING_BASE_URL || "https://ntfy.sh"
 ).replace(/\/$/, "");
@@ -22,6 +24,7 @@ export type AutomaticSignalMessage =
       senderId: string;
       clientId: string;
       sdp: RTCSessionDescriptionInit;
+      team: Team;
       sentAt: number;
     }
   | {

@@ -4016,13 +4016,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
         return true;
       };
-    const buildCampAt = (point: THREE.Vector3) => {
+    const buildCampAt = (
+      point: THREE.Vector3,
+      requestedTeam = playerTeamRef.current,
+    ) => {
       const g = gameRef.current,
         index = navIndex(navGrid, point.x, point.z),
         activeCamps = g.sites.filter(
           (site) => site.type === "camp" && !site.destroyed,
         );
-      const campTeam = playerTeamRef.current;
+      const campTeam = requestedTeam;
       if (g.resources[campTeam] < 80)
         return (setNotice("建立营地需要80战略资源"), false);
       if (activeCamps.length >= 4)
@@ -7535,9 +7538,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         camera.lookAt(target);
         controls.update();
       },
-      buildCampAt: (x, z) =>
+      buildCampAt: (x, z, team) =>
         buildCampAt(
           new THREE.Vector3(x, terrainHeight(regionForX(x), x, z), z),
+          team,
         ),
       enterDirectControl,
       exitDirectControl,

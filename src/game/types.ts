@@ -259,6 +259,21 @@ export type ServerConfigurationDraft = {
 };
 
 export type UnitNetworkState = Omit<UnitState, "path" | "pathIndex">;
+export type ClientUnitCommand = {
+  id: number;
+  team: Team;
+  tx: number;
+  tz: number;
+  targetSiteId: number | null;
+};
+export type ClientSiteCommand = {
+  id: number;
+  stance: Stance;
+  dispatchRatio: number;
+  orderTarget: number | null;
+  plannedOrderTarget: number | null;
+  displayName?: string;
+};
 export type MultiplayerEnvelope =
   | {
       type: "network_chunk";
@@ -281,6 +296,21 @@ export type MultiplayerEnvelope =
       elapsedHours: number;
       resources: Record<Team, number>;
       deaths: Record<Team, number>;
+    }
+  | {
+      type: "client_commands";
+      revision: number;
+      units: ClientUnitCommand[];
+      sites: ClientSiteCommand[];
+    }
+  | {
+      type: "client_action";
+      action:
+        | { kind: "research"; id: import("./research").ResearchId }
+        | { kind: "production_start"; id: import("./research").ResearchId }
+        | { kind: "production_stop"; id: import("./research").ResearchId }
+        | { kind: "mobilize"; stance: Stance }
+        | { kind: "build_camp"; x: number; z: number };
     }
   | { type: "hello"; identity: PlayerIdentity }
   | { type: "chat_send"; channel: ChatChannel; text: string }

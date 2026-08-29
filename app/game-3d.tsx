@@ -18,6 +18,8 @@ import type {
   CampaignState,
   ChatChannel,
   ChatMessage,
+  ClientSiteCommand,
+  ClientUnitCommand,
   DecisionVote,
   EventCard,
   GameData,
@@ -105,6 +107,10 @@ type TeamSelectionState =
       counts: Record<Team, number>;
       forcedTeam: Team | null;
     };
+type ClientAction = Extract<
+  MultiplayerEnvelope,
+  { type: "client_action" }
+>["action"];
 import {
   ChatPanel,
   DecisionVoteToast,
@@ -176,6 +182,12 @@ export default function Game3D() {
   const automaticSignalSourceRef = useRef<EventSource | null>(null);
   const automaticHostCodeRef = useRef<string | null>(null);
   const automaticHostPeersRef = useRef(new Map<string, RTCPeerConnection>());
+  const automaticHostChannelsRef = useRef(
+    new Map<string, RTCDataChannel>(),
+  );
+  const expectedTeamByChannelRef = useRef(
+    new WeakMap<RTCDataChannel, Team>(),
+  );
   const automaticJoinRef = useRef<{
     roomCode: string;
     clientId: string;
@@ -184,11 +196,20 @@ export default function Game3D() {
   const lastAutomaticRoomCodeRef = useRef<string | null>(null);
   const lanConnectionTimeoutRef = useRef<number | null>(null);
   const signalingSenderIdRef = useRef(crypto.randomUUID());
+  const clientActionSenderRef = useRef<(action: ClientAction) => boolean>(
+    () => false,
+  );
   const networkRevisionRef = useRef(0);
   const networkLastFullAtRef = useRef(0);
   const networkUnitSignaturesRef = useRef(new Map<number, string>());
   const networkSiteSignaturesRef = useRef(new Map<number, string>());
   const networkCampaignSignatureRef = useRef("");
+  const clientUnitCommandSignaturesRef = useRef(new Map<number, string>());
+  const clientSiteCommandSignaturesRef = useRef(new Map<number, string>());
+  const guestHasAuthoritativeStateRef = useRef(false);
+  const clientActionRateRef = useRef(
+    new WeakMap<RTCDataChannel, number[]>(),
+  );
   const networkReceivedRevisionRef = useRef(
     new WeakMap<RTCDataChannel, number>(),
   );
@@ -334,6 +355,13 @@ export default function Game3D() {
   }, []);
   const beginResearch = useCallback(
     (id: ResearchId, team: Team, silent = false) => {
+      if (
+        team === playerTeamRef.current &&
+        clientActionSenderRef.current({ kind: "research", id })
+      ) {
+        if (!silent) setNotice("研发请求已发送给主机");
+        return true;
+      }
       const game = gameRef.current,
         campaign = game.campaign,
         definition = RESEARCH_DEFINITIONS[id];
@@ -365,6 +393,13 @@ export default function Game3D() {
   );
   const beginProduction = useCallback(
     (id: ResearchId, team: Team, silent = false) => {
+      if (
+        team === playerTeamRef.current &&
+        clientActionSenderRef.current({ kind: "production_start", id })
+      ) {
+        if (!silent) setNotice("生产启用请求已发送给主机");
+        return true;
+      }
       const game = gameRef.current,
         campaign = game.campaign,
         definition = RESEARCH_DEFINITIONS[id];
@@ -393,6 +428,13 @@ export default function Game3D() {
     [],
   );
   const stopProduction = useCallback((id: ResearchId, team: Team) => {
+    if (
+      team === playerTeamRef.current &&
+      clientActionSenderRef.current({ kind: "production_stop", id })
+    ) {
+      setNotice("停产请求已发送给主机");
+      return;
+    }
     const production = gameRef.current.campaign.research.production[team][id];
     if (!production) return;
     delete gameRef.current.campaign.research.production[team][id];
@@ -1306,6 +1348,16 @@ export default function Game3D() {
     };
     pump();
   };
+  clientActionSenderRef.current = (action) => {
+    if (lanHostRef.current || !guestHasAuthoritativeStateRef.current)
+      return false;
+    const hostChannel = [...lanChannelsRef.current].find(
+      (channel) => channel.readyState === "open",
+    );
+    if (!hostChannel) return false;
+    sendToChannel(hostChannel, { type: "client_action", action });
+    return true;
+  };
   const relayChatMessage = (message: ChatMessage) => {
     appendChatMessage(message);
     recordServerLog(
@@ -1528,6 +1580,7 @@ export default function Game3D() {
         lanChannelsRef.current.size ? "部分玩家已离开" : "连接已关闭",
       );
       recordServerLog("player", "一名玩家离开服务器");
+      if (!host) guestHasAuthoritativeStateRef.current = false;
     };
     channel.onmessage = (event) => {
       try {
@@ -1574,6 +1627,8 @@ export default function Game3D() {
         if (payload.type === "hello") {
           let identity = payload.identity;
           if (host) {
+            const expectedTeam = expectedTeamByChannelRef.current.get(channel);
+            if (expectedTeam) identity = { ...identity, team: expectedTeam };
             const usedNames = new Set(
                 [
                   playerNickname.trim().slice(0, 16) || "主机",
@@ -1650,17 +1705,21 @@ export default function Game3D() {
           return;
         }
         if (payload.type === "decision_vote_request" && host) {
+          const identity = lanChannelIdentityRef.current.get(channel);
+          if (!identity) return;
           startDecisionVote(
             payload.decisionId,
-            payload.team,
-            payload.voterId,
+            identity.team,
+            identity.id,
           );
           return;
         }
         if (payload.type === "decision_vote_cast" && host) {
           const vote = decisionVoteRef.current;
           if (!vote || vote.id !== payload.voteId) return;
-          vote.votes[payload.voterId] = payload.approve;
+          const identity = lanChannelIdentityRef.current.get(channel);
+          if (!identity || identity.team !== vote.team) return;
+          vote.votes[identity.id] = payload.approve;
           setDecisionVote({ ...vote, votes: { ...vote.votes } });
           broadcastEnvelope({ type: "decision_vote_state", vote });
           return;
@@ -1670,10 +1729,127 @@ export default function Game3D() {
           setDecisionVote(payload.vote);
           return;
         }
+        if (payload.type === "client_commands" && host) {
+          const identity = lanChannelIdentityRef.current.get(channel);
+          if (!identity) return;
+          const lastRevision =
+            networkReceivedRevisionRef.current.get(channel) ?? -1;
+          if (payload.revision <= lastRevision) return;
+          networkReceivedRevisionRef.current.set(channel, payload.revision);
+          const game = gameRef.current,
+            allowedTeam = identity.team;
+          for (const command of payload.units.slice(0, 3_500)) {
+            const unit = game.units.find((candidate) => candidate.id === command.id);
+            if (
+              !unit ||
+              unit.team !== allowedTeam ||
+              command.team !== allowedTeam ||
+              unit.retreating
+            )
+              continue;
+            if (
+              !Number.isFinite(command.tx) ||
+              !Number.isFinite(command.tz) ||
+              Math.abs(command.tx) > 70 ||
+              Math.abs(command.tz) > 70
+            )
+              continue;
+            const target =
+              command.targetSiteId == null
+                ? undefined
+                : game.sites.find(
+                    (site) =>
+                      site.id === command.targetSiteId &&
+                      !site.destroyed &&
+                      (site.team === allowedTeam || game.campaign.warUnlocked),
+                  );
+            unit.targetSiteId = target?.id;
+            unit.tx = command.tx;
+            unit.tz = command.tz;
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+          }
+          let sitesChanged = false;
+          for (const command of payload.sites.slice(0, 300)) {
+            const site = game.sites.find((candidate) => candidate.id === command.id);
+            if (!site || site.destroyed) continue;
+            if (site.team === allowedTeam) {
+              if (
+                (["defend", "guard", "standby"] as string[]).includes(
+                  command.stance,
+                )
+              )
+                site.stance = command.stance;
+              if (Number.isFinite(command.dispatchRatio))
+                site.dispatchRatio = THREE.MathUtils.clamp(
+                  command.dispatchRatio,
+                  0.1,
+                  1,
+                );
+              site.orderTarget =
+                command.orderTarget == null ||
+                !game.sites.some(
+                  (target) =>
+                    target.id === command.orderTarget && !target.destroyed,
+                )
+                  ? undefined
+                  : command.orderTarget;
+              site.orderPath = undefined;
+              if (command.displayName?.trim())
+                site.displayName = command.displayName.trim().slice(0, 24);
+              sitesChanged = true;
+            }
+            site.plannedOrderTargets ??= {};
+            site.plannedOrderPaths ??= {};
+            site.plannedOrderTargets[allowedTeam] =
+              command.plannedOrderTarget == null ||
+              !game.campaign.warUnlocked ||
+              !game.sites.some(
+                (target) =>
+                  target.id === command.plannedOrderTarget && !target.destroyed,
+              )
+                ? undefined
+                : command.plannedOrderTarget;
+            site.plannedOrderPaths[allowedTeam] = undefined;
+            sitesChanged = true;
+          }
+          if (sitesChanged) sceneApi.current?.sync();
+          return;
+        }
+        if (payload.type === "client_action" && host) {
+          const identity = lanChannelIdentityRef.current.get(channel);
+          if (!identity) return;
+          const now = Date.now(),
+            recent = (clientActionRateRef.current.get(channel) ?? []).filter(
+              (at) => now - at < 1_000,
+            );
+          if (recent.length >= 12) return;
+          recent.push(now);
+          clientActionRateRef.current.set(channel, recent);
+          const team = identity.team,
+            action = payload.action;
+          if (action.kind === "research")
+            beginResearch(action.id, team, true);
+          if (action.kind === "production_start")
+            beginProduction(action.id, team, true);
+          if (action.kind === "production_stop")
+            stopProduction(action.id, team);
+          if (action.kind === "mobilize")
+            sceneApi.current?.mobilizeAll(team, action.stance);
+          if (
+            action.kind === "build_camp" &&
+            Number.isFinite(action.x) &&
+            Number.isFinite(action.z) &&
+            Math.abs(action.x) <= 70 &&
+            Math.abs(action.z) <= 70
+          )
+            sceneApi.current?.buildCampAt(action.x, action.z, team);
+          return;
+        }
         if (
           payload.type === "state_delta" &&
-          ((host && payload.role === "guest") ||
-            (!host && payload.role === "host"))
+          !host &&
+          payload.role === "host"
         ) {
           const lastRevision =
             networkReceivedRevisionRef.current.get(channel) ?? -1;
@@ -1693,10 +1869,18 @@ export default function Game3D() {
                 existing.path = undefined;
                 existing.pathIndex = undefined;
               }
+              clientUnitCommandSignaturesRef.current.set(
+                existing.id,
+                `${existing.tx.toFixed(3)}/${existing.tz.toFixed(3)}/${existing.targetSiteId ?? ""}`,
+              );
             } else {
               const created: UnitState = { ...delta };
               game.units.push(created);
               unitsById.set(created.id, created);
+              clientUnitCommandSignaturesRef.current.set(
+                created.id,
+                `${created.tx.toFixed(3)}/${created.tz.toFixed(3)}/${created.targetSiteId ?? ""}`,
+              );
             }
           }
           if (payload.removedUnitIds.length) {
@@ -1724,6 +1908,23 @@ export default function Game3D() {
                 Object.assign(existing, structuredClone(incoming));
                 sitesChanged = true;
               }
+              clientSiteCommandSignaturesRef.current.set(
+                existing.id,
+                JSON.stringify({
+                  stance: existing.stance,
+                  dispatchRatio: existing.dispatchRatio,
+                  orderTarget:
+                    existing.team === lanTeamRef.current
+                      ? existing.orderTarget
+                      : null,
+                  plannedOrderTarget:
+                    existing.plannedOrderTargets?.[lanTeamRef.current] ?? null,
+                  displayName:
+                    existing.team === lanTeamRef.current
+                      ? existing.displayName
+                      : undefined,
+                }),
+              );
               continue;
             }
             if (!allowedTeam) continue;
@@ -1774,6 +1975,30 @@ export default function Game3D() {
           payload.role === "host"
         ) {
           gameRef.current = payload.game;
+          guestHasAuthoritativeStateRef.current = true;
+          clientUnitCommandSignaturesRef.current = new Map(
+            payload.game.units
+              .filter((unit) => unit.team === lanTeamRef.current)
+              .map((unit) => [
+                unit.id,
+                `${unit.tx.toFixed(3)}/${unit.tz.toFixed(3)}/${unit.targetSiteId ?? ""}`,
+              ]),
+          );
+          clientSiteCommandSignaturesRef.current = new Map(
+            payload.game.sites.map((site) => [
+              site.id,
+              JSON.stringify({
+                stance: site.stance,
+                dispatchRatio: site.dispatchRatio,
+                orderTarget:
+                  site.team === lanTeamRef.current ? site.orderTarget : null,
+                plannedOrderTarget:
+                  site.plannedOrderTargets?.[lanTeamRef.current] ?? null,
+                displayName:
+                  site.team === lanTeamRef.current ? site.displayName : undefined,
+              }),
+            ]),
+          );
           if (lanConnectionTimeoutRef.current != null) {
             window.clearTimeout(lanConnectionTimeoutRef.current);
             lanConnectionTimeoutRef.current = null;
@@ -1801,17 +2026,21 @@ export default function Game3D() {
     const peer = new RTCPeerConnection(LAN_PEER_CONFIGURATION),
       channel = peer.createDataChannel("qingbei-campaign");
     automaticHostPeersRef.current.set(request.clientId, peer);
+    automaticHostChannelsRef.current.set(request.clientId, channel);
     lanPeerRef.current = peer;
     lanPeersRef.current.add(peer);
     bindLanChannel(channel, true);
     peer.addEventListener("connectionstatechange", () => {
       if (["failed", "closed", "disconnected"].includes(peer.connectionState))
         automaticHostPeersRef.current.delete(request.clientId);
+      if (["failed", "closed", "disconnected"].includes(peer.connectionState))
+        automaticHostChannelsRef.current.delete(request.clientId);
     });
     window.setTimeout(() => {
       if (["connected", "closed"].includes(peer.connectionState)) return;
       peer.close();
       automaticHostPeersRef.current.delete(request.clientId);
+      automaticHostChannelsRef.current.delete(request.clientId);
     }, 25_000);
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
@@ -1855,8 +2084,28 @@ export default function Game3D() {
           ),
         );
       if (message.kind === "answer") {
-        const peer = automaticHostPeersRef.current.get(message.clientId);
-        if (!peer || peer.remoteDescription) return;
+        const peer = automaticHostPeersRef.current.get(message.clientId),
+          channel = automaticHostChannelsRef.current.get(message.clientId);
+        if (!peer || !channel || peer.remoteDescription) return;
+        if (message.team !== "pku" && message.team !== "thu") {
+          peer.close();
+          return;
+        }
+        const operatorCounts = { pku: 0, thu: 0 };
+        operatorCounts[playerTeamRef.current]++;
+        for (const identity of lanChannelIdentityRef.current.values())
+          operatorCounts[identity.team]++;
+        if (
+          operatorCounts.pku + operatorCounts.thu === 1 &&
+          operatorCounts[message.team] === 1
+        ) {
+          setLanStatus("该玩家必须选择另一阵营，已拒绝不合法的加入请求");
+          peer.close();
+          automaticHostPeersRef.current.delete(message.clientId);
+          automaticHostChannelsRef.current.delete(message.clientId);
+          return;
+        }
+        expectedTeamByChannelRef.current.set(channel, message.team);
         void peer
           .setRemoteDescription(message.sdp)
           .then(() => {
@@ -2017,6 +2266,7 @@ export default function Game3D() {
     team: Team,
   ) => {
     try {
+      guestHasAuthoritativeStateRef.current = false;
       if (
         lanPeerRef.current &&
         lanPeerRef.current.connectionState !== "connected"
@@ -2059,6 +2309,7 @@ export default function Game3D() {
           senderId: signalingSenderIdRef.current,
           clientId: automaticJoin.clientId,
           sdp: peer.localDescription!,
+          team,
           sentAt: Date.now(),
         });
         setLanOutput("");
@@ -2328,6 +2579,7 @@ export default function Game3D() {
       automaticSignalSourceRef.current = null;
       automaticHostPeersRef.current.forEach((peer) => peer.close());
       automaticHostPeersRef.current.clear();
+      automaticHostChannelsRef.current.clear();
     },
     [],
   );
@@ -2365,6 +2617,60 @@ export default function Game3D() {
             destroyed: site.destroyed,
             temporary: site.temporary,
           });
+      if (role === "guest") {
+        if (!guestHasAuthoritativeStateRef.current) return;
+        const game = gameRef.current,
+          units: ClientUnitCommand[] = [],
+          sites: ClientSiteCommand[] = [];
+        for (const unit of game.units) {
+          if (unit.team !== playerTeamRef.current) continue;
+          const signature = `${unit.tx.toFixed(3)}/${unit.tz.toFixed(3)}/${unit.targetSiteId ?? ""}`;
+          if (
+            clientUnitCommandSignaturesRef.current.get(unit.id) === signature
+          )
+            continue;
+          clientUnitCommandSignaturesRef.current.set(unit.id, signature);
+          units.push({
+            id: unit.id,
+            team: unit.team,
+            tx: unit.tx,
+            tz: unit.tz,
+            targetSiteId: unit.targetSiteId ?? null,
+          });
+        }
+        for (const site of game.sites) {
+          const command: ClientSiteCommand = {
+              id: site.id,
+              stance: site.stance,
+              dispatchRatio: site.dispatchRatio ?? 0.6,
+              orderTarget:
+                site.team === playerTeamRef.current
+                  ? site.orderTarget ?? null
+                  : null,
+              plannedOrderTarget:
+                site.plannedOrderTargets?.[playerTeamRef.current] ?? null,
+              displayName:
+                site.team === playerTeamRef.current
+                  ? site.displayName
+                  : undefined,
+            },
+            signature = JSON.stringify(command);
+          if (
+            clientSiteCommandSignaturesRef.current.get(site.id) === signature
+          )
+            continue;
+          clientSiteCommandSignaturesRef.current.set(site.id, signature);
+          sites.push(command);
+        }
+        if (units.length || sites.length)
+          sendToChannel(openChannels[0], {
+            type: "client_commands",
+            revision: ++networkRevisionRef.current,
+            units,
+            sites,
+          });
+        return;
+      }
       if (
         role === "host" &&
         now - networkLastFullAtRef.current >= 10_000
@@ -2961,6 +3267,17 @@ export default function Game3D() {
             <button
               onClick={() => {
                 if (
+                  clientActionSenderRef.current({
+                    kind: "build_camp",
+                    x: campContext.worldX,
+                    z: campContext.worldZ,
+                  })
+                ) {
+                  setNotice("建立营地请求已发送给主机");
+                  setCampContext(null);
+                  return;
+                }
+                if (
                   sceneApi.current?.buildCampAt(
                     campContext.worldX,
                     campContext.worldZ,
@@ -3040,7 +3357,11 @@ export default function Game3D() {
             if (mode) setToolsOpen(false);
           }}
           onMobilize={(stance) => {
-            sceneApi.current?.mobilizeAll(playerTeam, stance);
+            if (
+              clientActionSenderRef.current({ kind: "mobilize", stance })
+            )
+              setNotice("总动员命令已发送给主机");
+            else sceneApi.current?.mobilizeAll(playerTeam, stance);
             setToolsOpen(false);
           }}
           onClose={() => setToolsOpen(false)}
