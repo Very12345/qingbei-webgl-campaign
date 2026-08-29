@@ -3593,14 +3593,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         sourceSite?: number;
         selection?: boolean;
         tool?: boolean;
+        eraseLines?: boolean;
+        erasedLines?: Set<number>;
       } | null = null,
       previewLine: THREE.Object3D | null = null,
       rightGesture: {
         x: number;
         y: number;
         moved: boolean;
-        erase: boolean;
-        erased: Set<number>;
       } | null = null;
     const setRay = (ev: MouseEvent) => {
       const r = renderer.domElement.getBoundingClientRect();
@@ -3982,8 +3982,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           x: e.clientX,
           y: e.clientY,
           moved: false,
-          erase: e.shiftKey,
-          erased: new Set<number>(),
         };
         down = null;
         return;
@@ -3992,10 +3990,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         sourceSite = hitSiteNode(e, 0.9),
         screenUnit = site == null ? hitFriendlyUnitOnScreen(e) : undefined,
         selection = !!screenUnit && selectedUnitIds.has(screenUnit.id),
-        tool = activeToolMode === "simplify-lines";
-      down = { x: e.clientX, y: e.clientY, site, sourceSite, selection, tool };
+        eraseLines = e.shiftKey,
+        tool = activeToolMode === "simplify-lines" && !eraseLines;
+      down = {
+        x: e.clientX,
+        y: e.clientY,
+        site,
+        sourceSite,
+        selection,
+        tool,
+        eraseLines,
+        erasedLines: eraseLines ? new Set<number>() : undefined,
+      };
       if (site == null) setSelected(null);
-      if (sourceSite != null || selection || tool) {
+      if (sourceSite != null || selection || tool || eraseLines) {
         controls.enabled = false;
         renderer.domElement.setPointerCapture(e.pointerId);
       }
@@ -4006,17 +4014,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           Math.hypot(e.clientX - rightGesture.x, e.clientY - rightGesture.y) > 7
         )
           rightGesture.moved = true;
-        if (rightGesture.erase) {
-          const sourceId = commandSourceAt(e);
-          if (
-            sourceId != null &&
-            !rightGesture.erased.has(sourceId) &&
-            removeCommandLine(sourceId)
-          ) {
-            rightGesture.erased.add(sourceId);
-            setNotice("Shift右键擦除经过的兵线");
-          }
-        }
         return;
       }
       if (!down) {
@@ -4025,6 +4022,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       hideCommandLabels();
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 8) return;
+      if (down.eraseLines) {
+        const sourceId = commandSourceAt(e);
+        if (
+          sourceId != null &&
+          !down.erasedLines?.has(sourceId) &&
+          removeCommandLine(sourceId)
+        ) {
+          down.erasedLines?.add(sourceId);
+          setNotice("Shift左键擦除经过的兵线");
+        }
+        return;
+      }
       if (down.tool) {
         const sourceId = commandSourceAt(e);
         if (sourceId != null) simplifyCommandChain(sourceId);
@@ -4077,7 +4086,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       setHoveredSite(null);
       const end = hitSite(e),
         moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8;
-      if (down.tool) {
+      if (down.tool || down.eraseLines) {
         down = null;
         return;
       }
@@ -4212,10 +4221,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (!source) return;
         removeCommandLine(sourceId);
         setNotice(`已右键取消 ${source.displayName ?? source.name} 的持续兵线`);
-        return;
-      }
-      if (rightGesture?.erase) {
-        rightGesture = null;
         return;
       }
       const point = groundAt(e);

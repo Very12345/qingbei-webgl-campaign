@@ -123,10 +123,10 @@ export function EventLogOverlay({
           {selected ? (
             <article className="event-history-detail">
               <div
-                className="event-history-image"
+                className={`event-history-image ${selected.quadrant} event-${selected.id}`}
                 style={{
                   backgroundImage: `linear-gradient(#0002,#0005),url(${selected.image ? `${import.meta.env.BASE_URL}${selected.image}` : `${import.meta.env.BASE_URL}event-archive-sheet-v2.webp`})`,
-                  backgroundSize: selected.image ? "contain" : "cover",
+                  backgroundSize: selected.image ? "contain" : "400% 200%",
                 }}
               />
               <time>{selected.date}</time>

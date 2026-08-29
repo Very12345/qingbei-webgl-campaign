@@ -225,7 +225,7 @@ function generatedPkuDormSites(
     usedKeys = new Set(existing.map((site) => site.osmKey).filter(Boolean)),
     usedPoints = existing.map((site) => [site.x, site.z] as const),
     dormPattern =
-      /^(?:1[9]|2[0-4]|2[8-9]|3[0-5]|4[3-8])楼$|34A、34B楼|学生宿舍|学生公寓|宿舍楼|勺园.*楼/,
+      /^(?:1[9]|2[0-4]|2[8-9]|3[0-9]|4[0-8])楼$|^(?:34A、34B|36、37|38、39|40、41、42)楼$|学生宿舍|学生公寓|宿舍楼|勺园.*楼/,
     generated: Omit<SiteState, "id" | "stance" | "supply">[] = [];
   for (const item of main.landmarks) {
     const key = `${item.osmType}/${item.osmId}`;

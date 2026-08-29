@@ -2941,28 +2941,36 @@ input {
   background-position: center;
   filter: grayscale(1) contrast(1.14) blur(0.25px);
 }
-.event-photo.arrival {
+.event-photo.arrival,
+.event-history-image.arrival {
   background-position: 0 0;
 }
-.event-photo.march {
+.event-photo.march,
+.event-history-image.march {
   background-position: 100% 100%;
 }
-.event-photo.lake {
+.event-photo.lake,
+.event-history-image.lake {
   background-position: 66.667% 100%;
 }
-.event-photo.classroom {
+.event-photo.classroom,
+.event-history-image.classroom {
   background-position: 33.333% 0;
 }
-.event-photo.event-thu_morning_run {
+.event-photo.event-thu_morning_run,
+.event-history-image.event-thu_morning_run {
   background-position: 66.667% 0;
 }
-.event-photo.event-pku_librarian {
+.event-photo.event-pku_librarian,
+.event-history-image.event-pku_librarian {
   background-position: 100% 0;
 }
-.event-photo.event-two_bombs_one_satellite {
+.event-photo.event-two_bombs_one_satellite,
+.event-history-image.event-two_bombs_one_satellite {
   background-position: 0 100%;
 }
-.event-photo.event-chemistry_century {
+.event-photo.event-chemistry_century,
+.event-history-image.event-chemistry_century {
   background-position: 33.333% 100%;
 }
 .event-copy {
