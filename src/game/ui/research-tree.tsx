@@ -24,15 +24,18 @@ export function ResearchTree({
   const [tab, setTab] = useState<"research" | "production">("research");
   const active = campaign.research.active[team];
   const production = campaign.research.production[team];
-  const branches: ResearchId[][] =
+  const branches: { root: ResearchId; children: ResearchId[] }[] =
     team === "pku"
       ? [
-          ["pku_bike", "pku_slogan_bike", "pku_phone_bike"],
-          ["bus", "large_bus"],
+          {
+            root: "pku_bike",
+            children: ["pku_slogan_bike", "pku_phone_bike"],
+          },
+          { root: "bus", children: ["large_bus"] },
         ]
       : [
-          ["thu_bike", "thu_purple_bike"],
-          ["bus", "large_bus"],
+          { root: "thu_bike", children: ["thu_purple_bike"] },
+          { root: "bus", children: ["large_bus"] },
         ];
   const renderResearchNode = (id: ResearchId) => {
     const definition = RESEARCH_DEFINITIONS[id],
@@ -111,15 +114,23 @@ export function ResearchTree({
       {tab === "research" ? (
         <main className="research-tree-canvas">
           {branches.map((branch) => (
-            <section className="research-branch" key={branch[0]}>
-              {branch.map((id, index) => (
-                <div className="research-branch-step" key={id}>
-                  {index > 0 && (
-                    <i className="research-branch-line" aria-hidden="true" />
-                  )}
-                  {renderResearchNode(id)}
-                </div>
-              ))}
+            <section className="research-branch" key={branch.root}>
+              {renderResearchNode(branch.root)}
+              <i className="research-branch-line" aria-hidden="true" />
+              {branch.children.length > 1 ? (
+                <>
+                  <div className="research-fork-lines" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </div>
+                  <div className="research-fork-nodes">
+                    {branch.children.map(renderResearchNode)}
+                  </div>
+                </>
+              ) : (
+                renderResearchNode(branch.children[0])
+              )}
             </section>
           ))}
         </main>

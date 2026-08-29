@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { PerformanceMetrics } from "../../performance-controller";
 import type {
   AcademicYearOutcome,
@@ -36,6 +37,25 @@ export function EventLogOverlay({
   campaign: CampaignState;
   onClose: () => void;
 }) {
+  const history = [...(campaign.eventHistory ?? [])].reverse();
+  const [selectedId, setSelectedId] = useState<string | null>(
+    history[0]?.id ?? null,
+  );
+  const selected = history.find((entry) => entry.id === selectedId) ?? history[0];
+  const modifier = (
+    label: string,
+    value: number | undefined,
+    inverse = false,
+  ) => {
+    if (value == null || Math.abs(value - 1) < 0.001) return null;
+    const delta = Math.round((value - 1) * 100),
+      good = inverse ? delta < 0 : delta > 0;
+    return (
+      <span className={good ? "positive" : "negative"} key={label}>
+        {label} {delta > 0 ? "+" : ""}{delta}%
+      </span>
+    );
+  };
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section
@@ -50,20 +70,35 @@ export function EventLogOverlay({
           <button onClick={onClose}>关闭</button>
         </header>
         <h3>当前状态</h3>
+        <div className="faction-base-status">
+          <article className="pku">
+            <strong>北大全局</strong>
+            <span>攻击 {Math.round(campaign.attackBonus.pku * 100)}%</span>
+          </article>
+          <article className="thu">
+            <strong>{campaign.thuFactionName}全局</strong>
+            <span>攻击 {Math.round(campaign.attackBonus.thu * 100)}%</span>
+          </article>
+        </div>
         <div className="active-status-list">
           {(campaign.statuses ?? []).length ? (
             campaign.statuses.map((status) => (
               <article key={status.id} className={status.team}>
-                <strong>{status.title}</strong>
-                <span>
-                  {status.team === "pku" ? "北大" : "清华"} · 攻击
-                  {Math.round(status.attack * 100)}% · 移速
-                  {Math.round(status.movement * 100)}% · 意志
-                  {Math.round(status.morale * 100)}%
-                </span>
-                <small>
-                  剩余 {Math.max(0, status.until - campaign.elapsedHours).toFixed(1)} 小时
-                </small>
+                <header>
+                  <strong>{status.team === "pku" ? "北大状态" : `${campaign.thuFactionName}状态`}</strong>
+                  <small>剩余 {Math.max(0, status.until - campaign.elapsedHours).toFixed(1)} 小时</small>
+                </header>
+                <div className="status-effect-chips">
+                  {modifier("攻击", status.attack)}
+                  {modifier("移动", status.movement)}
+                  {modifier("意志", status.morale)}
+                  {modifier("生产", status.production)}
+                  {modifier("防守", status.defense)}
+                  {modifier("治疗", status.healing)}
+                  {modifier("补给消耗", status.supplyUse, true)}
+                  {modifier("渡河", status.riverMovement)}
+                </div>
+                <small className="status-origin">状态来源：{status.title}</small>
               </article>
             ))
           ) : (
@@ -71,14 +106,37 @@ export function EventLogOverlay({
           )}
         </div>
         <h3>历史事件</h3>
-        <div className="event-history-list">
-          {[...(campaign.eventHistory ?? [])].reverse().map((entry) => (
-            <article key={entry.id}>
-              <time>{entry.date}</time>
-              <strong>{entry.title}</strong>
-              <p>{entry.effect}</p>
+        <div className="event-history-browser">
+          <div className="event-history-list">
+            {history.map((entry) => (
+              <button
+                key={entry.id}
+                className={entry.id === selected?.id ? "active" : ""}
+                onClick={() => setSelectedId(entry.id)}
+              >
+                <time>{entry.date}</time>
+                <strong>{entry.title}</strong>
+                <small>{entry.effect}</small>
+              </button>
+            ))}
+          </div>
+          {selected ? (
+            <article className="event-history-detail">
+              <div
+                className="event-history-image"
+                style={{
+                  backgroundImage: `linear-gradient(#0002,#0005),url(${selected.image ? `${import.meta.env.BASE_URL}${selected.image}` : `${import.meta.env.BASE_URL}event-archive-sheet-v2.webp`})`,
+                  backgroundSize: selected.image ? "contain" : "cover",
+                }}
+              />
+              <time>{selected.date}</time>
+              <h2>{selected.title}</h2>
+              <p>{selected.body}</p>
+              <div className="event-effect">机制效果：{selected.effect}</div>
             </article>
-          ))}
+          ) : (
+            <p>尚未发生历史事件。</p>
+          )}
         </div>
       </section>
     </div>
