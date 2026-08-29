@@ -68,7 +68,31 @@ import { HomeScreen, type HomePage } from "../src/game/ui/home-screen";
 import { FocusTree } from "../src/game/ui/focus-tree";
 import { ResearchTree } from "../src/game/ui/research-tree";
 import { ToolsPanel } from "../src/game/ui/tools-panel";
+import { TeamLobby } from "../src/game/ui/team-lobby";
 import type { BattlefieldToolMode } from "../src/game/engine/contracts";
+
+type ServerInvitePayload = {
+  kind: "qingbei-server-invite";
+  sdp: RTCSessionDescriptionInit;
+  playerCount: number;
+  hostTeam: Team;
+  operatorCounts?: Record<Team, number>;
+  serverId?: string | null;
+};
+
+type TeamSelectionState =
+  | {
+      mode: "host";
+      server: ServerRecord;
+      counts: Record<Team, number>;
+      forcedTeam: null;
+    }
+  | {
+      mode: "guest";
+      invite: ServerInvitePayload;
+      counts: Record<Team, number>;
+      forcedTeam: Team | null;
+    };
 import {
   ChatPanel,
   DecisionVoteToast,
@@ -122,7 +146,8 @@ export default function Game3D() {
   const [lanStatus, setLanStatus] = useState("未连接");
   const [lanMode, setLanMode] = useState<"host" | "join">("host");
   const [lanTeam, setLanTeam] = useState<Team>("pku");
-  const [forcedLanTeam, setForcedLanTeam] = useState<Team | null>(null);
+  const [teamSelection, setTeamSelection] =
+    useState<TeamSelectionState | null>(null);
   const lanTeamRef = useRef<Team>("pku");
   const [connectedPlayers, setConnectedPlayers] = useState(0);
   const lanPeerRef = useRef<RTCPeerConnection | null>(null);
@@ -732,20 +757,12 @@ export default function Game3D() {
     }
   };
   const launchServer = (server: ServerRecord) => {
-    const hostIdentity = {
-        id: playerIdRef.current,
-        nickname: playerNickname.trim().slice(0, 16) || "主机",
-        team: server.hostTeam,
-        host: true,
-      },
-      nextServer = {
-        ...server,
-        updatedAt: Date.now(),
-        players: [hostIdentity],
-      };
-    setServerSaves(upsertServerSave(nextServer));
-    loadGame(server.map, server.hostTeam, server.id);
-    window.setTimeout(() => void createLanHost(), 0);
+    setTeamSelection({
+      mode: "host",
+      server,
+      counts: { pku: 0, thu: 0 },
+      forcedTeam: null,
+    });
   };
   useEffect(() => {
     if (screen !== "game") return;
@@ -1469,17 +1486,18 @@ export default function Game3D() {
     bindLanChannel(channel, true);
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
-    const playerCount =
-      1 +
-      [...lanChannelsRef.current].filter(
-        (candidate) => candidate.readyState === "open",
-      ).length;
+    const operatorCounts = { pku: 0, thu: 0 };
+    operatorCounts[playerTeamRef.current]++;
+    for (const identity of lanChannelIdentityRef.current.values())
+      operatorCounts[identity.team]++;
+    const playerCount = operatorCounts.pku + operatorCounts.thu;
     setLanOutput(
       JSON.stringify({
         kind: "qingbei-server-invite",
         sdp: peer.localDescription,
         playerCount,
         hostTeam: playerTeamRef.current,
+        operatorCounts,
         serverId: activeServerIdRef.current,
       }),
     );
@@ -1489,31 +1507,49 @@ export default function Game3D() {
     try {
       const parsed = JSON.parse(lanInput) as
           | RTCSessionDescriptionInit
-          | {
-              kind: "qingbei-server-invite";
-              sdp: RTCSessionDescriptionInit;
-              playerCount: number;
-              hostTeam: Team;
-            },
-        invite = "kind" in parsed ? parsed : null,
+          | ServerInvitePayload,
+        invite: ServerInvitePayload =
+          "kind" in parsed
+            ? parsed
+            : {
+                kind: "qingbei-server-invite",
+                sdp: parsed as RTCSessionDescriptionInit,
+                playerCount: 0,
+                hostTeam: "pku",
+                operatorCounts: { pku: 0, thu: 0 },
+              },
+        counts = invite.operatorCounts ?? {
+          pku: invite.hostTeam === "pku" ? invite.playerCount : 0,
+          thu: invite.hostTeam === "thu" ? invite.playerCount : 0,
+        },
         forcedTeam =
-          invite?.playerCount === 1
-            ? invite.hostTeam === "pku"
+          counts.pku + counts.thu === 1
+            ? counts.pku === 1
               ? "thu"
               : "pku"
-            : null,
-        peer = new RTCPeerConnection({ iceServers: [] });
-      setForcedLanTeam(forcedTeam);
-      if (forcedTeam) {
-        setLanTeam(forcedTeam);
-        lanTeamRef.current = forcedTeam;
-      }
+            : null;
+      setTeamSelection({
+        mode: "guest",
+        invite,
+        counts,
+        forcedTeam,
+      });
+    } catch {
+      setLanStatus("邀请码无效");
+    }
+  };
+  const connectToLanHost = async (
+    invite: ServerInvitePayload,
+    team: Team,
+  ) => {
+    try {
+      const peer = new RTCPeerConnection({ iceServers: [] });
+      setLanTeam(team);
+      lanTeamRef.current = team;
       lanPeerRef.current = peer;
       lanPeersRef.current.add(peer);
       peer.ondatachannel = (event) => bindLanChannel(event.channel, false);
-      await peer.setRemoteDescription(
-        invite ? invite.sdp : (parsed as RTCSessionDescriptionInit),
-      );
+      await peer.setRemoteDescription(invite.sdp);
       await peer.setLocalDescription(await peer.createAnswer());
       await waitForIce(peer);
       setLanOutput(JSON.stringify(peer.localDescription));
@@ -1521,6 +1557,29 @@ export default function Game3D() {
     } catch {
       setLanStatus("加入码无效");
     }
+  };
+  const confirmTeamSelection = (team: Team) => {
+    const selection = teamSelection;
+    if (!selection) return;
+    if (selection.forcedTeam && selection.forcedTeam !== team) return;
+    setTeamSelection(null);
+    if (selection.mode === "host") {
+      const hostIdentity = {
+          id: playerIdRef.current,
+          nickname: playerNickname.trim().slice(0, 16) || "主机",
+          team,
+          host: true,
+        },
+        server = {
+          ...selection.server,
+          hostTeam: team,
+          updatedAt: Date.now(),
+          players: [hostIdentity],
+        };
+      setServerSaves(upsertServerSave(server));
+      loadGame(server.map, team, server.id);
+      window.setTimeout(() => void createLanHost(), 0);
+    } else void connectToLanHost(selection.invite, team);
   };
   const acceptLanAnswer = async () => {
     try {
@@ -1597,7 +1656,7 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <回应JSON>";
+      return "API: status | players | invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <回应JSON>";
     if (action === "status")
       return JSON.stringify(buildServerSummary(activeServerIdRef.current ?? ""));
     if (action === "players")
@@ -1605,6 +1664,10 @@ export default function Game3D() {
         .map((player) => `${player.nickname}:${player.team}${player.host ? ":host" : ""}`)
         .join(", ");
     if (!activeServerIdRef.current) throw new Error("服务器尚未在原窗口启动");
+    if (action === "invite") {
+      await createLanHost();
+      return "已生成新的玩家邀请代码";
+    }
     if (action === "timescale") {
       const value = Math.min(16, Math.max(0.5, Number(args[0])));
       if (!Number.isFinite(value)) throw new Error("倍率必须是数字");
@@ -2111,8 +2174,6 @@ export default function Game3D() {
           setLanOutput={setLanOutput}
           lanMode={lanMode}
           setLanMode={setLanMode}
-          lanTeam={lanTeam}
-          setLanTeam={setLanTeam}
           connectedPlayers={connectedPlayers}
           playerNickname={playerNickname}
           setPlayerNickname={setPlayerNickname}
@@ -2142,8 +2203,16 @@ export default function Game3D() {
           deleteServer={removeServer}
           exportServer={exportServer}
           importServer={(file) => void importServer(file)}
-          forcedLanTeam={forcedLanTeam}
           openServerAdmin={openServerAdmin}
+        />
+      )}
+      {teamSelection && (
+        <TeamLobby
+          mode={teamSelection.mode}
+          counts={teamSelection.counts}
+          forcedTeam={teamSelection.forcedTeam}
+          onSelect={confirmTeamSelection}
+          onCancel={() => setTeamSelection(null)}
         />
       )}
       <header className="hud-top">

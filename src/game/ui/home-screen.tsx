@@ -23,8 +23,6 @@ type HomeScreenProps = {
   setLanOutput: (value: string) => void;
   lanMode: "host" | "join";
   setLanMode: (mode: "host" | "join") => void;
-  lanTeam: Team;
-  setLanTeam: (team: Team) => void;
   connectedPlayers: number;
   playerNickname: string;
   setPlayerNickname: (name: string) => void;
@@ -54,7 +52,6 @@ type HomeScreenProps = {
   deleteServer: (id: string) => void;
   exportServer: (server: ServerRecord) => void;
   importServer: (file: File) => void;
-  forcedLanTeam: Team | null;
   openServerAdmin: (server?: ServerRecord) => void;
 };
 
@@ -70,8 +67,6 @@ export function HomeScreen(props: HomeScreenProps) {
     setLanOutput,
     lanMode,
     setLanMode,
-    lanTeam,
-    setLanTeam,
     connectedPlayers,
     playerNickname,
     setPlayerNickname,
@@ -101,7 +96,6 @@ export function HomeScreen(props: HomeScreenProps) {
     deleteServer,
     exportServer,
     importServer,
-    forcedLanTeam,
     openServerAdmin,
   } = props;
 
@@ -200,23 +194,9 @@ export function HomeScreen(props: HomeScreenProps) {
               onChange={(event) => setLanInput(event.target.value)}
               placeholder="粘贴服务器邀请代码"
             />
-            <label className="lan-team-select">
-              <span>控制阵营</span>
-              <select
-                value={lanTeam}
-                disabled={forcedLanTeam != null}
-                onChange={(event) => setLanTeam(event.target.value as Team)}
-              >
-                <option value="pku">北京大学</option>
-                <option value="thu">清华大学</option>
-              </select>
-            </label>
-            {forcedLanTeam && (
-              <small>
-                服务器当前只有一名玩家，已强制选择另一阵营以保证对局开始。
-              </small>
-            )}
-            <button onClick={() => void joinLanHost()}>生成回应并加入</button>
+            <button onClick={() => void joinLanHost()}>
+              读取邀请并进入阵营大厅
+            </button>
             <textarea readOnly value={lanOutput} placeholder="将回应代码发回主机" />
           </div>
         )}

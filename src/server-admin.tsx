@@ -7,7 +7,7 @@ import {
 } from "./game/server-admin-protocol";
 import { readServerSaves, upsertServerSave } from "./game/server-storage";
 import { readSaves } from "./game/storage";
-import type { ServerRecord, Snapshot, Team } from "./game/types";
+import type { ServerRecord, Snapshot } from "./game/types";
 import "./server-admin.css";
 
 const serverIdFromUrl = () => new URLSearchParams(location.search).get("id");
@@ -121,18 +121,6 @@ function ServerAdmin() {
           />
         </label>
         <label>
-          <span>主机阵营</span>
-          <select
-            value={server.hostTeam}
-            onChange={(event) =>
-              setServer({ ...server, hostTeam: event.target.value as Team })
-            }
-          >
-            <option value="pku">北京大学</option>
-            <option value="thu">清华大学</option>
-          </select>
-        </label>
-        <label>
           <span>最大玩家</span>
           <input
             type="number"
@@ -179,6 +167,19 @@ function ServerAdmin() {
             value={summary?.inviteCode ?? ""}
             placeholder="启动后生成邀请代码"
           />
+          <button
+            onClick={() => {
+              const requestId = crypto.randomUUID();
+              channelRef.current?.postMessage({
+                type: "command",
+                serverId,
+                requestId,
+                command: "invite",
+              } satisfies ServerAdminMessage);
+            }}
+          >
+            生成新的常规邀请
+          </button>
           <textarea
             value={responseCode}
             onChange={(event) => setResponseCode(event.target.value)}
