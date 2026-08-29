@@ -146,6 +146,8 @@ export default function Game3D() {
   const [serverSaves, setServerSaves] = useState<ServerRecord[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const activeServerIdRef = useRef<string | null>(null);
+  const [dedicatedServerHost, setDedicatedServerHost] = useState(false);
+  const dedicatedServerHostRef = useRef(false);
   const pendingServerIdRef = useRef<string | null>(null);
   const adminChannelRef = useRef<BroadcastChannel | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -158,10 +160,16 @@ export default function Game3D() {
   const [pauseOpen, setPauseOpen] = useState(false);
   const pauseOpenRef = useRef(false);
   const [pauseSettingsOpen, setPauseSettingsOpen] = useState(false);
-  const [homePage, setHomePage] = useState<HomePage>("menu");
+  const [homePage, setHomePage] = useState<HomePage>(() =>
+    new URLSearchParams(location.search).get("join")
+      ? "join-server"
+      : "menu",
+  );
   const [newGameTeam, setNewGameTeam] = useState<Team>("pku");
   const [openToLan, setOpenToLan] = useState(false);
-  const [lanInput, setLanInput] = useState("");
+  const [lanInput, setLanInput] = useState(
+    () => new URLSearchParams(location.search).get("join") ?? "",
+  );
   const [lanOutput, setLanOutput] = useState("");
   const [lanStatus, setLanStatus] = useState("未连接");
   const [lanMode, setLanMode] = useState<"host" | "join">("host");
@@ -601,6 +609,7 @@ export default function Game3D() {
     lanChannelsRef,
     lanChannelIdentityRef,
     lanHostRef,
+    dedicatedServerHostRef,
     timeScaleRef,
     autoDayRef,
     setVictoryBroadcast,
@@ -667,13 +676,18 @@ export default function Game3D() {
               updatedAt: Date.now(),
               map: { ...snapshot, name: server.map.name || server.name },
               players: [
-                {
-                  id: playerIdRef.current,
-                  nickname: playerNickname.trim().slice(0, 16) || "主机",
-                  team: playerTeamRef.current,
-                  host: true,
-                  local: true,
-                },
+                ...(dedicatedServerHostRef.current
+                  ? []
+                  : [
+                      {
+                        id: playerIdRef.current,
+                        nickname:
+                          playerNickname.trim().slice(0, 16) || "主机",
+                        team: playerTeamRef.current,
+                        host: true,
+                        local: true,
+                      },
+                    ]),
                 ...[...lanChannelIdentityRef.current.values()],
               ],
             });
@@ -880,13 +894,10 @@ export default function Game3D() {
     }
   };
   const launchServer = (server: ServerRecord) => {
-    pendingServerIdRef.current = server.id;
-    setTeamSelection({
-      mode: "host",
-      server,
-      counts: { pku: 0, thu: 0 },
-      forcedTeam: null,
-    });
+    dedicatedServerHostRef.current = true;
+    setDedicatedServerHost(true);
+    loadGame(server.map, "pku", server.id);
+    window.setTimeout(() => void startAutomaticHost(server.id), 0);
   };
   const stopServer = (serverId: string) => {
     if (activeServerIdRef.current !== serverId) return;
@@ -902,6 +913,8 @@ export default function Game3D() {
     automaticSignalSourceRef.current?.close();
     automaticSignalSourceRef.current = null;
     automaticHostCodeRef.current = null;
+    dedicatedServerHostRef.current = false;
+    setDedicatedServerHost(false);
     lanHostRef.current = false;
     activeServerIdRef.current = null;
     pendingServerIdRef.current = null;
@@ -1547,13 +1560,17 @@ export default function Game3D() {
     const server = readServerSaves().find((record) => record.id === serverId);
     if (!server) return;
     const players = [
-      {
-        id: playerIdRef.current,
-        nickname: playerNickname.trim().slice(0, 16) || "主机",
-        team: playerTeamRef.current,
-        host: true,
-        local: true,
-      },
+      ...(dedicatedServerHostRef.current
+        ? []
+        : [
+            {
+              id: playerIdRef.current,
+              nickname: playerNickname.trim().slice(0, 16) || "主机",
+              team: playerTeamRef.current,
+              host: true,
+              local: true,
+            },
+          ]),
       ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
         ...identity,
         host: false,
@@ -1596,15 +1613,16 @@ export default function Game3D() {
         setPlayerTeam(lanTeamRef.current);
         playerTeamRef.current = lanTeamRef.current;
       }
-      sendToChannel(channel, {
-        type: "hello",
-        identity: {
-          id: playerIdRef.current,
-          nickname: playerNickname.trim().slice(0, 16) || "未命名玩家",
-          team: host ? playerTeamRef.current : lanTeamRef.current,
-          host,
-        },
-      });
+      if (!(host && dedicatedServerHostRef.current))
+        sendToChannel(channel, {
+          type: "hello",
+          identity: {
+            id: playerIdRef.current,
+            nickname: playerNickname.trim().slice(0, 16) || "未命名玩家",
+            team: host ? playerTeamRef.current : lanTeamRef.current,
+            host,
+          },
+        });
       if (host)
         sendToChannel(channel, {
           type: "state",
@@ -1675,14 +1693,18 @@ export default function Game3D() {
             if (expectedTeam) identity = { ...identity, team: expectedTeam };
             const usedNames = new Set(
                 [
-                  playerNickname.trim().slice(0, 16) || "主机",
+                  ...(dedicatedServerHostRef.current
+                    ? []
+                    : [playerNickname.trim().slice(0, 16) || "主机"]),
                   ...[...lanChannelIdentityRef.current.values()].map(
                     (item) => item.nickname,
                   ),
                 ],
               ),
               usedIds = new Set([
-                playerIdRef.current,
+                ...(dedicatedServerHostRef.current
+                  ? []
+                  : [playerIdRef.current]),
                 ...[...lanChannelIdentityRef.current.values()].map(
                   (item) => item.id,
                 ),
@@ -2089,7 +2111,8 @@ export default function Game3D() {
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
     const operatorCounts = { pku: 0, thu: 0 };
-    operatorCounts[playerTeamRef.current]++;
+    if (!dedicatedServerHostRef.current)
+      operatorCounts[playerTeamRef.current]++;
     for (const identity of lanChannelIdentityRef.current.values())
       operatorCounts[identity.team]++;
     const invite: ServerInvitePayload = {
@@ -2136,7 +2159,8 @@ export default function Game3D() {
           return;
         }
         const operatorCounts = { pku: 0, thu: 0 };
-        operatorCounts[playerTeamRef.current]++;
+        if (!dedicatedServerHostRef.current)
+          operatorCounts[playerTeamRef.current]++;
         for (const identity of lanChannelIdentityRef.current.values())
           operatorCounts[identity.team]++;
         if (
@@ -2243,7 +2267,8 @@ export default function Game3D() {
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer);
     const operatorCounts = { pku: 0, thu: 0 };
-    operatorCounts[playerTeamRef.current]++;
+    if (!dedicatedServerHostRef.current)
+      operatorCounts[playerTeamRef.current]++;
     for (const identity of lanChannelIdentityRef.current.values())
       operatorCounts[identity.team]++;
     const playerCount = operatorCounts.pku + operatorCounts.thu;
@@ -2447,13 +2472,18 @@ export default function Game3D() {
       players =
         activeServerIdRef.current === serverId
           ? [
-              {
-                id: playerIdRef.current,
-                nickname: playerNickname.trim().slice(0, 16) || "主机",
-                team: playerTeamRef.current,
-                host: true,
-                local: true,
-              },
+              ...(dedicatedServerHostRef.current
+                ? []
+                : [
+                    {
+                      id: playerIdRef.current,
+                      nickname:
+                        playerNickname.trim().slice(0, 16) || "主机",
+                      team: playerTeamRef.current,
+                      host: true,
+                      local: true,
+                    },
+                  ]),
               ...[...lanChannelIdentityRef.current.values()].map((identity) => ({
                 ...identity,
                 host: false,
@@ -3207,6 +3237,50 @@ export default function Game3D() {
                 <button onClick={retryLanConnection}>重新连接</button>
               )}
               <button onClick={cancelLanConnection}>取消</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {dedicatedServerHost && activeServerId && (
+        <div className="dedicated-host-overlay">
+          <section className="dedicated-host-card">
+            <small>纯服务器进程</small>
+            <h2>
+              {serverSaves.find((server) => server.id === activeServerId)?.name ??
+                "清北联机服务器"}
+            </h2>
+            <p>服务器本身不属于任何阵营，也不计入玩家。所有操作者必须通过房间码加入。</p>
+            <label>
+              <span>房间码</span>
+              <strong>{lanOutput || "正在启动…"}</strong>
+            </label>
+            <p>{lanStatus} · 在线玩家 {connectedPlayers} 人</p>
+            <div>
+              <button
+                disabled={!lanOutput}
+                onClick={() =>
+                  window.open(
+                    `${import.meta.env.BASE_URL}?join=${encodeURIComponent(lanOutput)}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                打开玩家入口
+              </button>
+              <button
+                onClick={() => {
+                  const server = serverSaves.find(
+                    (candidate) => candidate.id === activeServerId,
+                  );
+                  if (server) openServerAdmin(server);
+                }}
+              >
+                控制台
+              </button>
+              <button className="danger" onClick={() => stopServer(activeServerId)}>
+                停止服务器
+              </button>
             </div>
           </section>
         </div>

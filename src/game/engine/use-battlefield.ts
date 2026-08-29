@@ -77,6 +77,7 @@ type BattlefieldEngineContext = {
   lanChannelsRef: RefObject<Set<RTCDataChannel>>;
   lanChannelIdentityRef: RefObject<Map<RTCDataChannel, PlayerIdentity>>;
   lanHostRef: RefObject<boolean>;
+  dedicatedServerHostRef: RefObject<boolean>;
   timeScaleRef: RefObject<number>;
   autoDayRef: RefObject<boolean>;
   setVictoryBroadcast: Dispatch<SetStateAction<VictoryBroadcast | null>>;
@@ -123,6 +124,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     lanChannelsRef,
     lanChannelIdentityRef,
     lanHostRef,
+    dedicatedServerHostRef,
     timeScaleRef,
     autoDayRef,
     setVictoryBroadcast,
@@ -902,6 +904,37 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       g.computeVertexNormals();
       return g;
     };
+    const sportSurfaces: {
+      name: string;
+      track?: boolean;
+      points: readonly (readonly [number, number])[];
+    }[] = [
+      {
+        name: "五四体育场",
+        track: true,
+        points: [[-22.93, 33.63], [-20.81, 33.49], [-20.62, 36.7], [-22.76, 36.86]],
+      },
+      {
+        name: "北大东操场",
+        points: [[-24.8, 15.29], [-24.09, 18.16], [-22.07, 17.66], [-22.78, 14.8]],
+      },
+      {
+        name: "清华西大操场",
+        points: [[-5.34, -6.08], [-5.62, -10.03], [-3.39, -10.19], [-3.1, -6.24]],
+      },
+      {
+        name: "清华东大操场",
+        points: [[13.25, -7.73], [13.11, -11.85], [15.93, -11.95], [16.07, -7.88]],
+      },
+      {
+        name: "清华紫荆操场",
+        points: [[8.16, -18.14], [7.97, -22.29], [10.35, -22.4], [10.54, -18.25]],
+      },
+      {
+        name: "清华东区操场",
+        points: [[30.86, -5.91], [31.02, -2.48], [32.68, -2.5], [33.15, -2.53], [33, -6.03]],
+      },
+    ];
     const addRegion = (r: any) => {
       const { cols, rows, heights } = r.terrain,
         pos: number[] = [],
@@ -976,6 +1009,85 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         border.visible = false;
         mapGroup.add(border);
       }
+      if (r === regions.main)
+        for (const surface of sportSurfaces) {
+          const points = surface.points.map(([x, z]) => [x, z]),
+            centerX = points.reduce((sum, point) => sum + point[0], 0) / points.length,
+            centerZ = points.reduce((sum, point) => sum + point[1], 0) / points.length,
+            base = new THREE.Mesh(
+              surfaceGeometry(r, points, 0.055),
+              new THREE.MeshStandardMaterial({
+                color: surface.track ? 0x9f3e32 : 0x447d48,
+                roughness: 0.96,
+                polygonOffset: true,
+                polygonOffsetFactor: -3,
+              }),
+            );
+          base.name = surface.name;
+          base.receiveShadow = false;
+          base.renderOrder = 2;
+          mapGroup.add(base);
+          const innerScale = surface.track ? 0.7 : 0.92,
+            inner = points.map(([x, z]) => [
+              centerX + (x - centerX) * innerScale,
+              centerZ + (z - centerZ) * innerScale,
+            ]),
+            pitch = new THREE.Mesh(
+              surfaceGeometry(r, inner, 0.075),
+              new THREE.MeshStandardMaterial({
+                color: 0x3f7544,
+                roughness: 1,
+                polygonOffset: true,
+                polygonOffsetFactor: -4,
+              }),
+            ),
+            boundary = new THREE.LineLoop(
+              new THREE.BufferGeometry().setFromPoints(
+                inner.map(
+                  ([x, z]) =>
+                    new THREE.Vector3(
+                      x,
+                      terrainHeight(r, x, z) + 0.09,
+                      z,
+                    ),
+                ),
+              ),
+              new THREE.LineBasicMaterial({
+                color: 0xf1ead2,
+                transparent: true,
+                opacity: 0.92,
+              }),
+            );
+          pitch.renderOrder = 3;
+          boundary.renderOrder = 4;
+          mapGroup.add(pitch, boundary);
+          if (surface.track)
+            for (const scale of [0.78, 0.85, 0.92]) {
+              const lane = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(
+                  points.map(
+                    ([x, z]) =>
+                      new THREE.Vector3(
+                        centerX + (x - centerX) * scale,
+                        terrainHeight(
+                          r,
+                          centerX + (x - centerX) * scale,
+                          centerZ + (z - centerZ) * scale,
+                        ) + 0.092,
+                        centerZ + (z - centerZ) * scale,
+                      ),
+                  ),
+                ),
+                new THREE.LineBasicMaterial({
+                  color: 0xf3dcc7,
+                  transparent: true,
+                  opacity: 0.72,
+                }),
+              );
+              lane.renderOrder = 4;
+              mapGroup.add(lane);
+            }
+        }
       type RoadBucket = {
         positions: number[];
         indices: number[];
@@ -4902,6 +5014,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const combatTimer = window.setInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
+      if (
+        dedicatedServerHostRef.current &&
+        lanChannelIdentityRef.current.size === 0
+      )
+        return;
       const g = gameRef.current,
         now = performance.now(),
         combatTimeScale = THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),
@@ -5652,6 +5769,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const campaignTimer = window.setInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
+      if (
+        dedicatedServerHostRef.current &&
+        lanChannelIdentityRef.current.size === 0
+      )
+        return;
       const g = gameRef.current,
         campaign = g.campaign,
         qz = g.sites.find(
@@ -6440,9 +6562,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const aiTimer = window.setInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
+      if (
+        dedicatedServerHostRef.current &&
+        lanChannelIdentityRef.current.size === 0
+      )
+        return;
       const g = gameRef.current;
       const humanTeams = new Set<Team>([
-          playerTeamRef.current,
+          ...(dedicatedServerHostRef.current ? [] : [playerTeamRef.current]),
           ...[...lanChannelIdentityRef.current.values()].map(
             (identity) => identity.team,
           ),

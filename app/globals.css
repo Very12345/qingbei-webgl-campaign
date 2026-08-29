@@ -655,6 +655,54 @@ select option {
   animation: lan-connection-spin .85s linear infinite;
 }
 @keyframes lan-connection-spin { to { transform: rotate(360deg); } }
+.dedicated-host-overlay {
+  position: fixed;
+  z-index: 260;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #06100eec;
+  backdrop-filter: blur(10px);
+}
+.dedicated-host-card {
+  display: grid;
+  width: min(620px, 94vw);
+  gap: 14px;
+  border: 2px solid #d6bd68;
+  padding: 30px;
+  background: #0c1713;
+  color: #efe5c2;
+  box-shadow: 0 28px 100px #000d;
+  text-align: center;
+}
+.dedicated-host-card h2,
+.dedicated-host-card p { margin: 0; }
+.dedicated-host-card > small { color: #d9be63; letter-spacing: .22em; }
+.dedicated-host-card label {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #8f7d48;
+  padding: 13px;
+  background: #07100d;
+}
+.dedicated-host-card label strong {
+  color: #fff0a7;
+  font: 900 30px/1.2 ui-monospace, Consolas, monospace;
+  letter-spacing: .12em;
+}
+.dedicated-host-card > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+.dedicated-host-card .danger {
+  border-color: #b84c57;
+  background: linear-gradient(#743740, #472126);
+}
+@media (max-width: 620px) {
+  .dedicated-host-card > div { grid-template-columns: 1fr; }
+}
 @media (max-width: 620px) {
   .team-lobby-options { grid-template-columns: 1fr; }
   .team-lobby-name { grid-template-columns: 1fr; }
