@@ -3125,7 +3125,7 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | config | set <name|maxplayers|sameteam|turn-url|turn-user|turn-credential> <值> | saves | maps | map <savedAt> | logs [数量] | new [名称] | resume [名称/ID] | save | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
+      return "API: status | players | ai <pku|thu> | config | set <name|maxplayers|sameteam|turn-url|turn-user|turn-credential> <值> | saves | maps | map <savedAt> | logs [数量] | new [名称] | resume [名称/ID] | save | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
     if (action === "status") {
       const summary = buildServerSummary(activeServerIdRef.current ?? "");
       return JSON.stringify({
@@ -3202,6 +3202,64 @@ export default function Game3D() {
           ? "请回到游戏窗口完成阵营选择；完成后房间码会自动生成"
           : "服务器尚未启动，请先点击“启动服务器”并在游戏窗口选择阵营",
       );
+    if (action === "ai") {
+      const team = (args[0] || "thu") as Team;
+      if (!(team === "pku" || team === "thu"))
+        throw new Error("用法：ai <pku|thu>");
+      const game = gameRef.current,
+        production = game.sites
+          .filter(
+            (site) =>
+              site.team === team &&
+              !site.destroyed &&
+              (site.type === "dorm" || site.type === "dining"),
+          )
+          .map((site) => ({
+            site: site.displayName ?? site.name,
+            type: site.type,
+            idle: game.units.filter(
+              (unit) =>
+                unit.team === team &&
+                unit.siteId === site.id &&
+                unit.targetSiteId == null,
+            ).length,
+            threatened: game.units.filter(
+              (unit) =>
+                unit.team !== team &&
+                (unit.targetSiteId === site.id ||
+                  Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
+            ).length,
+          }))
+          .sort((a, b) => b.idle - a.idle),
+        routes = game.sites
+          .filter(
+            (site) =>
+              site.team === team &&
+              !site.destroyed &&
+              site.orderTarget != null,
+          )
+          .map((site) => {
+            const target = game.sites[site.orderTarget!];
+            return {
+              source: site.displayName ?? site.name,
+              target: target?.displayName ?? target?.name ?? "失效目标",
+              targetType: target?.type,
+              relation: target?.team === team ? "调动" : "进攻",
+              committed: game.units.filter(
+                (unit) =>
+                  unit.team === team && unit.targetSiteId === target?.id,
+              ).length,
+            };
+          });
+      return JSON.stringify({
+        team,
+        difficulty: game.campaign.ai.difficulty,
+        personality: game.campaign.ai.personality[team],
+        population: game.units.filter((unit) => unit.team === team).length,
+        production: production.slice(0, 20),
+        routes,
+      });
+    }
     const activeServer = readServerSaves().find(
       (record) => record.id === activeServerIdRef.current,
     );

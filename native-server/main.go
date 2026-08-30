@@ -917,6 +917,7 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
 			fmt.Println("  status / battle       查看进程或详细战局状态")
 			fmt.Println("  host / host restart   查看或重启后台战局主机")
+			fmt.Println("  ai <pku|thu>          查看AI生产点和当前战略路线")
 			fmt.Println("  rooms / players       查看战局和在线玩家")
 			fmt.Println("  kick <名称/ID>        移出玩家")
 			fmt.Println("  say <消息>            广播系统消息")

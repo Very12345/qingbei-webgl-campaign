@@ -6403,7 +6403,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           addTimedStatus("qz_stall", "前锋受阻", "pku", 24, 1, 1, 0.8);
           spawnUnitsAt(qz, "thu", 10, 1.15);
           campaign.freezeUntil.pku = campaign.elapsedHours + 24;
-          const emergencySources = g.sites
+          const qzThreat = g.units.filter(
+              (unit) =>
+                unit.team === "pku" &&
+                Math.hypot(unit.x - qz.x, unit.z - qz.z) < 10,
+            ).length,
+            emergencySources = g.sites
             .filter(
               (site) =>
                 site.team === "thu" &&
@@ -6412,19 +6417,36 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 Math.hypot(site.x - qz.x, site.z - qz.z) < 20,
             )
             .sort(
-              (a, b) =>
-                Math.hypot(a.x - qz.x, a.z - qz.z) -
-                Math.hypot(b.x - qz.x, b.z - qz.z),
+              (a, b) => {
+                const productionA =
+                    a.type === "dorm" || a.type === "dining" ? 14 : 0,
+                  productionB =
+                    b.type === "dorm" || b.type === "dining" ? 14 : 0;
+                return (
+                  productionA + Math.hypot(a.x - qz.x, a.z - qz.z) -
+                  productionB - Math.hypot(b.x - qz.x, b.z - qz.z)
+                );
+              },
             )
-            .slice(0, 6);
+            .slice(0, 4);
           emergencySources.forEach((source) =>
             spawnUnitsAt(source, "thu", 2, 1.05, false),
           );
           rebuildUnits();
           emergencySources.forEach((source) => {
             source.stance = "guard";
-            source.dispatchRatio = 0.9;
-            issueOrder("thu", source, qz, 6, true);
+            source.dispatchRatio = 0.72;
+            const deployed = issueOrder(
+              "thu",
+              source,
+              qz,
+              Math.max(2, Math.ceil(qzThreat / Math.max(1, emergencySources.length))),
+              false,
+            );
+            if (deployed) {
+              source.orderTarget = undefined;
+              source.orderPath = undefined;
+            }
           });
         });
       const pkuSites = g.sites.filter(
@@ -6813,8 +6835,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             g.sites[site.orderTarget]?.team === enemyTeam &&
             !site.destroyed,
         ).length,
-        routeLimit = aiTeam === "thu" ? 10 : 8,
-        waveLimit = aiTeam === "thu" ? 4 : 3;
+        routeLimit =
+          difficulty === "hard"
+            ? aiTeam === "thu" ? 9 : 8
+            : difficulty === "casual" ? 4 : 6,
+        waveLimit = difficulty === "hard" ? 5 : difficulty === "casual" ? 2 : 3;
       if (!g.campaign.research.active[aiTeam]) {
         const researchChoices = researchIdsForTeam(aiTeam).filter(
           (id) =>
@@ -6894,6 +6919,69 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         }
       }
+      const logisticsFriendlySites = g.sites.filter(
+          (site) => site.team === aiTeam && !site.destroyed,
+        ),
+        logisticsIdleAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === aiTeam &&
+              unit.siteId === site.id &&
+              unit.targetSiteId == null &&
+              Math.hypot(
+                unit.x - (site.navX ?? site.x),
+                unit.z - (site.navZ ?? site.z),
+              ) < 3.2,
+          ).length,
+        logisticsThreatAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === enemyTeam &&
+              (unit.targetSiteId === site.id ||
+                Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
+          ).length,
+        stagingSites = logisticsFriendlySites.filter(
+          (site) => site.type !== "dorm" && site.type !== "dining",
+        ),
+        stagingAssignments = new Map<number, number>();
+      logisticsFriendlySites
+        .filter((site) => site.type === "dorm" || site.type === "dining")
+        .sort((a, b) => logisticsIdleAt(b) - logisticsIdleAt(a))
+        .forEach((source) => {
+          const idle = logisticsIdleAt(source),
+            capacity = productionSitePopulationCap(source),
+            releaseAt = Math.max(8, Math.floor(capacity * 0.68)),
+            threatened = logisticsThreatAt(source);
+          source.stance = threatened ? "defend" : "guard";
+          source.dispatchRatio = threatened ? 0.4 : 0.72;
+          if (threatened || idle <= releaseAt || !stagingSites.length) return;
+          const target = stagingSites
+            .filter((site) => logisticsThreatAt(site) === 0)
+            .sort((a, b) => {
+              const loadA =
+                  logisticsIdleAt(a) + (stagingAssignments.get(a.id) ?? 0),
+                loadB =
+                  logisticsIdleAt(b) + (stagingAssignments.get(b.id) ?? 0),
+                distanceA = Math.hypot(a.x - source.x, a.z - source.z),
+                distanceB = Math.hypot(b.x - source.x, b.z - source.z);
+              return loadA * 0.35 + distanceA - loadB * 0.35 - distanceB;
+            })[0];
+          if (!target) return;
+          const surplus = Math.min(
+            idle - releaseAt,
+            difficulty === "hard" ? 24 : difficulty === "casual" ? 8 : 15,
+          );
+          if (surplus <= 0) return;
+          const deployed = issueOrder(aiTeam, source, target, surplus, true);
+          if (deployed) {
+            stagingAssignments.set(
+              target.id,
+              (stagingAssignments.get(target.id) ?? 0) + deployed,
+            );
+            source.orderTarget = undefined;
+            source.orderPath = undefined;
+          }
+        });
       if (!g.campaign.warUnlocked) return;
       if (qz && aiTeam === "thu") {
         const threat = g.units.filter(
@@ -6903,7 +6991,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               Math.hypot(unit.x - qz.x, unit.z - qz.z) < 10),
         ).length;
         if (threat > 0) {
-          g.sites
+          const defenders = g.units.filter(
+              (unit) =>
+                unit.team === "thu" &&
+                Math.hypot(unit.x - qz.x, unit.z - qz.z) < 9,
+            ).length;
+          let needed = Math.max(0, Math.ceil(threat * 1.25) - defenders);
+          const responders = g.sites
             .filter(
               (site) =>
                 site.team === "thu" &&
@@ -6912,14 +7006,35 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 Math.hypot(site.x - qz.x, site.z - qz.z) < 14,
             )
             .sort(
-              (a, b) =>
-                Math.hypot(a.x - qz.x, a.z - qz.z) -
-                Math.hypot(b.x - qz.x, b.z - qz.z),
+              (a, b) => {
+                const productionA =
+                    a.type === "dorm" || a.type === "dining" ? 12 : 0,
+                  productionB =
+                    b.type === "dorm" || b.type === "dining" ? 12 : 0;
+                return (
+                  productionA + Math.hypot(a.x - qz.x, a.z - qz.z) -
+                  productionB - Math.hypot(b.x - qz.x, b.z - qz.z)
+                );
+              },
             )
-            .slice(0, 3)
-            .forEach((source) =>
-              issueOrder("thu", source, qz, Math.ceil(threat / 2) + 2, true),
+            .slice(0, difficulty === "hard" ? 3 : 2);
+          for (const source of responders) {
+            if (needed <= 0) break;
+            source.stance = "guard";
+            source.dispatchRatio = 0.72;
+            const deployed = issueOrder(
+              "thu",
+              source,
+              qz,
+              Math.min(Math.max(0, logisticsIdleAt(source) - 3), needed),
+              false,
             );
+            if (deployed) {
+              source.orderTarget = undefined;
+              source.orderPath = undefined;
+            }
+            needed -= deployed;
+          }
         }
       }
       if (aiTeam === "pku") {
@@ -6933,8 +7048,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               (unit.targetSiteId === yuanpei.id ||
                 Math.hypot(unit.x - yuanpei.x, unit.z - yuanpei.z) < 10),
           ).length;
-          if (threat)
-            g.sites
+          if (threat) {
+            const defenders = g.units.filter(
+                (unit) =>
+                  unit.team === "pku" &&
+                  Math.hypot(unit.x - yuanpei.x, unit.z - yuanpei.z) < 9,
+              ).length;
+            let needed = Math.max(0, Math.ceil(threat * 1.25) - defenders);
+            const responders = g.sites
               .filter(
                 (site) =>
                   site.team === "pku" &&
@@ -6943,14 +7064,36 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   Math.hypot(site.x - yuanpei.x, site.z - yuanpei.z) < 14,
               )
               .sort(
-                (a, b) =>
-                  Math.hypot(a.x - yuanpei.x, a.z - yuanpei.z) -
-                  Math.hypot(b.x - yuanpei.x, b.z - yuanpei.z),
+                (a, b) => {
+                  const productionA =
+                      a.type === "dorm" || a.type === "dining" ? 12 : 0,
+                    productionB =
+                      b.type === "dorm" || b.type === "dining" ? 12 : 0;
+                  return (
+                    productionA + Math.hypot(a.x - yuanpei.x, a.z - yuanpei.z) -
+                    productionB - Math.hypot(b.x - yuanpei.x, b.z - yuanpei.z)
+                  );
+                },
               )
-              .slice(0, 3)
-              .forEach((source) =>
-                issueOrder("pku", source, yuanpei, Math.ceil(threat / 2) + 2, true),
+              .slice(0, difficulty === "hard" ? 3 : 2);
+            for (const source of responders) {
+              if (needed <= 0) break;
+              source.stance = "guard";
+              source.dispatchRatio = 0.72;
+              const deployed = issueOrder(
+                "pku",
+                source,
+                yuanpei,
+                Math.min(Math.max(0, logisticsIdleAt(source) - 3), needed),
+                false,
               );
+              if (deployed) {
+                source.orderTarget = undefined;
+                source.orderPath = undefined;
+              }
+              needed -= deployed;
+            }
+          }
         }
       }
       const enemySites = g.sites.filter(
@@ -6977,50 +7120,260 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               (unit.targetSiteId === site.id ||
                 Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
           ).length,
-        frontier = friendlySites
-          .slice()
-          .sort((a, b) => {
-            const da = Math.min(
-                ...enemySites.map((site) =>
-                  Math.hypot(site.x - a.x, site.z - a.z),
-                ),
-              ),
-              db = Math.min(
-                ...enemySites.map((site) =>
-                  Math.hypot(site.x - b.x, site.z - b.z),
-                ),
-              );
-            return threatAt(b) * 8 - threatAt(a) * 8 + da - db;
-          })
-          .slice(0, 8),
-        rearSources = friendlySites
+        productionSites = friendlySites.filter(
+          (site) => site.type === "dorm" || site.type === "dining",
+        ),
+        urgentProductionSites = productionSites.filter(
+          (site) => threatAt(site) > 0,
+        ),
+        urgentProductionIds = new Set(
+          urgentProductionSites.map((site) => site.id),
+        );
+      for (const threatened of urgentProductionSites) {
+        const threat = threatAt(threatened),
+          defenderCount = g.units.filter(
+            (unit) =>
+              unit.team === aiTeam &&
+              Math.hypot(unit.x - threatened.x, unit.z - threatened.z) < 5,
+          ).length;
+        threatened.stance = "defend";
+        threatened.dispatchRatio = 0.4;
+        threatened.orderTarget = undefined;
+        threatened.orderPath = undefined;
+        g.units
+          .filter(
+            (unit) =>
+              unit.team === aiTeam &&
+              unit.siteId === threatened.id &&
+              unit.targetSiteId != null &&
+              g.sites[unit.targetSiteId]?.team === enemyTeam,
+          )
+          .forEach((unit) => {
+            unit.targetSiteId = undefined;
+            unit.path = undefined;
+            unit.pathIndex = undefined;
+          });
+        if (defenderCount >= threat * 1.15 + 4) continue;
+        const responders = friendlySites
           .filter(
             (site) =>
-              (site.type === "dorm" || site.type === "dining") &&
-              site.orderTarget == null &&
-              idleAt(site) >= 3,
+              site.id !== threatened.id &&
+              !urgentProductionIds.has(site.id) &&
+              idleAt(site) >= 5,
           )
-          .sort((a, b) => idleAt(b) - idleAt(a));
-      for (
-        let i = 0;
-        i < Math.min(3, rearSources.length, frontier.length);
-        i++
-      ) {
-        const source = rearSources[i],
-          target = frontier[i % frontier.length];
-        if (source.id !== target.id)
-          issueOrder(
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - threatened.x, a.z - threatened.z) -
+              Math.hypot(b.x - threatened.x, b.z - threatened.z),
+          )
+          .slice(0, difficulty === "hard" ? 4 : difficulty === "casual" ? 2 : 3);
+        let needed = Math.max(4, Math.ceil(threat * 1.35 - defenderCount));
+        for (const source of responders) {
+          if (needed <= 0) break;
+          const available = Math.max(0, idleAt(source) - 3),
+            productionResponder =
+              source.type === "dorm" || source.type === "dining";
+          if (productionResponder) {
+            source.stance = "guard";
+            source.dispatchRatio = 0.72;
+          }
+          const deployed = issueOrder(
+              aiTeam,
+              source,
+              threatened,
+              Math.min(available, needed),
+              !productionResponder,
+            );
+          if (deployed) {
+            source.orderTarget = undefined;
+            source.orderPath = undefined;
+          }
+          needed -= deployed;
+        }
+      }
+      const strategicThreats = friendlySites
+        .filter(
+          (site) =>
+            !urgentProductionIds.has(site.id) &&
+            threatAt(site) >=
+              (site.type === "capital" ||
+              site.type === "target" ||
+              site.type === "gate"
+                ? 4
+                : 14),
+        )
+        .sort((a, b) => threatAt(b) - threatAt(a))
+        .slice(0, difficulty === "hard" ? 4 : difficulty === "casual" ? 1 : 2);
+      for (const threatened of strategicThreats) {
+        const threat = threatAt(threatened),
+          defenders = g.units.filter(
+            (unit) =>
+              unit.team === aiTeam &&
+              Math.hypot(unit.x - threatened.x, unit.z - threatened.z) < 6,
+          ).length;
+        if (defenders >= threat + 5) continue;
+        threatened.stance = "guard";
+        threatened.dispatchRatio = 0.68;
+        let needed = Math.max(3, Math.ceil(threat * 1.15 - defenders));
+        const responders = friendlySites
+          .filter(
+            (site) =>
+              site.id !== threatened.id &&
+              site.type !== "dorm" &&
+              site.type !== "dining" &&
+              threatAt(site) === 0 &&
+              idleAt(site) >= 6,
+          )
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - threatened.x, a.z - threatened.z) -
+              Math.hypot(b.x - threatened.x, b.z - threatened.z),
+          )
+          .slice(0, difficulty === "hard" ? 3 : 2);
+        for (const source of responders) {
+          if (needed <= 0) break;
+          const deployed = issueOrder(
             aiTeam,
             source,
-            target,
-            Math.max(1, idleAt(source) - 1),
+            threatened,
+            Math.min(Math.max(0, idleAt(source) - 3), needed),
             true,
           );
+          if (deployed) {
+            source.orderTarget = undefined;
+            source.orderPath = undefined;
+          }
+          needed -= deployed;
+        }
       }
+      const enemyProductionRemaining = enemySites.filter(
+          (site) => site.type === "dorm" || site.type === "dining",
+        ).length,
+        activeRoutes = friendlySites.filter(
+          (source) =>
+            source.orderTarget != null &&
+            g.sites[source.orderTarget]?.team === enemyTeam,
+        ),
+        aggressionThreshold =
+          difficulty === "hard" ? 1.08 : difficulty === "casual" ? 1.48 : 1.24,
+        reinforcementSourcesUsed = new Set<number>();
+      for (const source of activeRoutes) {
+        if (urgentProductionIds.has(source.id)) continue;
+        const target = g.sites[source.orderTarget!];
+        if (!target || target.destroyed || target.team !== enemyTeam) continue;
+        const committed = g.units.filter(
+            (unit) =>
+              unit.team === aiTeam && unit.targetSiteId === target.id,
+          ).length,
+          defenders = g.units.filter(
+            (unit) =>
+              unit.team === enemyTeam &&
+              Math.hypot(unit.x - target.x, unit.z - target.z) < 6,
+          ).length,
+          idle = idleAt(source),
+          advantage = (committed + idle * 0.65 + 2) / (defenders + 2),
+          hardPoint =
+            target.type === "capital" ||
+            target.type === "target" ||
+            target.type === "teaching",
+          observationKey = `route:${source.id}:${target.id}`,
+          observationAtKey = `route-at:${source.id}`;
+        if (
+          hardPoint &&
+          enemyProductionRemaining > 2 &&
+          committed + idle * 0.4 < defenders * 1.15 + 8
+        ) {
+          const lastObservation = aiState.failedGoals[observationAtKey] ?? -999;
+          if (g.campaign.elapsedHours - lastObservation >= 6) {
+            aiState.failedGoals[observationAtKey] = g.campaign.elapsedHours;
+            aiState.failedGoals[observationKey] =
+              (aiState.failedGoals[observationKey] ?? 0) + 1;
+          }
+          if (
+            (aiState.failedGoals[observationKey] ?? 0) >=
+            (difficulty === "hard" ? 2 : 3)
+          ) {
+            source.orderTarget = undefined;
+            source.orderPath = undefined;
+          }
+          continue;
+        }
+        if (advantage < aggressionThreshold) {
+          const supporters = friendlySites
+              .filter(
+                (candidate) =>
+                  candidate.id !== source.id &&
+                  !reinforcementSourcesUsed.has(candidate.id) &&
+                  !urgentProductionIds.has(candidate.id) &&
+                  candidate.type !== "dorm" &&
+                  candidate.type !== "dining" &&
+                  idleAt(candidate) >= 7 &&
+                  (candidate.orderTarget == null ||
+                    g.sites[candidate.orderTarget]?.team === aiTeam),
+              )
+              .sort(
+                (a, b) =>
+                  Math.hypot(a.x - target.x, a.z - target.z) -
+                  Math.hypot(b.x - target.x, b.z - target.z),
+              ),
+            supporterLimit =
+              difficulty === "hard" ? 3 : difficulty === "casual" ? 1 : 2,
+            selectedSupporters = supporters.slice(0, supporterLimit),
+            supportPotential = selectedSupporters.reduce(
+              (sum, candidate) => sum + idleAt(candidate) * 0.58,
+              0,
+            ),
+            combinedAdvantage =
+              (committed + supportPotential + 2) / (defenders + 2);
+          if (combinedAdvantage >= aggressionThreshold) {
+            for (const supporter of selectedSupporters) {
+              const supporterIdle = idleAt(supporter);
+              supporter.stance = combinedAdvantage > 2 ? "standby" : "guard";
+              supporter.dispatchRatio = combinedAdvantage > 2 ? 1 : 0.78;
+              const deployed = issueOrder(
+                aiTeam,
+                supporter,
+                target,
+                Math.max(
+                  2,
+                  Math.ceil(
+                    supporterIdle *
+                      (difficulty === "hard" ? 0.7 : difficulty === "casual" ? 0.32 : 0.52),
+                  ),
+                ),
+                false,
+              );
+              if (deployed) reinforcementSourcesUsed.add(supporter.id);
+            }
+          }
+          continue;
+        }
+        if (idle < 3) continue;
+        aiState.failedGoals[observationKey] = Math.max(
+          0,
+          (aiState.failedGoals[observationKey] ?? 0) - 1,
+        );
+        const productionSource =
+          source.type === "dorm" || source.type === "dining";
+        source.stance = productionSource ? "guard" : advantage > 2 ? "standby" : "guard";
+        source.dispatchRatio = productionSource ? 0.72 : advantage > 2 ? 1 : 0.78;
+        const ratio =
+            difficulty === "hard" ? 0.72 : difficulty === "casual" ? 0.35 : 0.52,
+          requested = Math.max(1, Math.ceil(idle * ratio));
+        issueOrder(aiTeam, source, target, requested, false);
+      }
+      if (
+        (difficulty === "casual" && random() < 0.45) ||
+        (difficulty === "standard" && random() < 0.15)
+      )
+        return;
       if (activeAiRoutes >= routeLimit) return;
       const attackSources = friendlySites
         .filter(
           (site) =>
+            !urgentProductionIds.has(site.id) &&
+            site.type !== "dorm" &&
+            site.type !== "dining" &&
             (site.orderTarget == null ||
               g.sites[site.orderTarget]?.team === aiTeam) &&
             idleAt(site) >= 3 &&
@@ -7055,28 +7408,56 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                         actualDefenders * (1 + (random() * 2 - 1) * uncertainty),
                       ),
                     ),
+                coreWindow =
+                  enemyProductionRemaining <= 2 ||
+                  friendlySites.length >= enemySites.length + 7,
                 coreValue =
-                  site.type === "capital" || site.type === "target" ? 22 : 0,
+                  site.type === "capital" || site.type === "target"
+                    ? coreWindow
+                      ? 38
+                      : difficulty === "hard" ? -52 : difficulty === "casual" ? -12 : -30
+                    : 0,
                 productionValue =
-                  site.type === "dorm" || site.type === "dining" ? 8 : 0,
-                eventValue =
-                  !g.campaign.firedEvents.includes("two_bombs_one_satellite") &&
-                  site.name.includes("物理学院")
-                    ? -6
+                  site.type === "dorm" ? 34 : site.type === "dining" ? 24 : 0,
+                gateValue = site.type === "gate" ? 12 : 0,
+                knownBuffRisk =
+                  site.type === "teaching"
+                    ? 14 +
+                      (/物理|数学|化学|工学院/.test(site.name) ? 12 : 0)
+                    : 0,
+                nearbyFriendlySupport = friendlySites.filter(
+                  (friendly) =>
+                    Math.hypot(friendly.x - site.x, friendly.z - site.z) < 12,
+                ).length,
+                routeCongestion = activeRoutes.filter((route) => {
+                  const routeTarget = g.sites[route.orderTarget!];
+                  return (
+                    routeTarget &&
+                    Math.hypot(routeTarget.x - site.x, routeTarget.z - site.z) < 11
+                  );
+                }).length,
+                flankValue =
+                  productionValue > 0 && routeCongestion === 0
+                    ? difficulty === "hard" ? 16 : 8
                     : 0,
                 personalityValue =
-                  personality.includes("穿插") && productionValue ? 9 :
+                  personality.includes("穿插") && productionValue ? 14 :
                   personality.includes("反攻") && coreValue ? 10 : 0,
                 cost =
                   Math.hypot(site.x - source.x, site.z - source.z) +
-                  estimatedDefenders * 1.35;
+                  estimatedDefenders *
+                    (difficulty === "hard" ? 1.8 : difficulty === "casual" ? 1.15 : 1.45);
               return {
                 site,
                 score:
                   coreValue +
                   productionValue +
+                  gateValue +
+                  flankValue +
+                  nearbyFriendlySupport * 2.2 -
+                  knownBuffRisk -
+                  routeCongestion * (difficulty === "hard" ? 15 : 8) +
                   personalityValue +
-                  eventValue -
                   cost +
                   (random() - .5) * (difficulty === "casual" ? 12 : 5),
               };
@@ -7084,18 +7465,40 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             .sort((a, b) => b.score - a.score),
           poolSize = difficulty === "hard" ? 2 : difficulty === "casual" ? 5 : 3,
           target = scoredTargets.length
-            ? scoredTargets[Math.floor(random() * Math.min(poolSize, scoredTargets.length))]
-                .site
+            ? scoredTargets[
+                difficulty === "hard" && random() < 0.78
+                  ? 0
+                  : Math.floor(random() * Math.min(poolSize, scoredTargets.length))
+              ].site
             : undefined;
         if (
           target &&
-          issueOrder(
-            aiTeam,
-            source,
-            target,
-            Math.max(1, idleAt(source) - 1),
-            true,
-          )
+          (() => {
+            const productionSource =
+                source.type === "dorm" || source.type === "dining",
+              defenders = g.units.filter(
+                (unit) =>
+                  unit.team === enemyTeam &&
+                  Math.hypot(unit.x - target.x, unit.z - target.z) < 5,
+              ).length,
+              idle = idleAt(source);
+            source.stance = productionSource ? "guard" : "standby";
+            source.dispatchRatio = productionSource ? 0.72 : 1;
+            return issueOrder(
+              aiTeam,
+              source,
+              target,
+              Math.min(
+                idle,
+                Math.max(
+                  difficulty === "hard" ? 6 : 4,
+                  Math.ceil(defenders * (difficulty === "hard" ? 1.7 : 1.35) + 4),
+                  Math.ceil(idle * (difficulty === "hard" ? 0.62 : 0.48)),
+                ),
+              ),
+              false,
+            );
+          })()
         )
           routesCreated++;
       }
