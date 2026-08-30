@@ -1,1 +1,64 @@
-<!doctype html><meta charset="utf-8"><title>解放清华园服务器</title><p>请通过发布工作流构建包含完整网页的服务器。</p>
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#07101c" />
+    <title>解放清华园｜本地服务器</title>
+    <style>
+      html,body,#root{width:100%;height:100%;margin:0;background:#07101c}
+      #boot-loader{position:fixed;z-index:99999;inset:0;display:grid;place-items:center;background:#d9253f;color:#fff;font-family:"Microsoft YaHei",system-ui,sans-serif;transition:opacity .28s ease,visibility .28s ease}
+      #boot-loader.boot-loader-hidden{visibility:hidden;opacity:0}
+      #boot-loader>div{display:grid;width:min(440px,78vw);gap:18px;text-align:center}
+      #boot-loader strong{font-size:clamp(28px,5vw,50px);letter-spacing:.14em;text-shadow:0 4px 0 #7e1022}
+      #boot-loader small{font-weight:800;letter-spacing:.15em}
+      #boot-loader i{display:block;height:10px;border:3px solid #fff;background:linear-gradient(90deg,#fff 0 42%,#8e1428 42%);animation:progress 1.2s ease-in-out infinite alternate}
+      #boot-loader button{min-height:42px;border:2px solid #fff;background:#681022;color:#fff;font-weight:900;cursor:pointer}
+      @keyframes progress{to{background:linear-gradient(90deg,#fff 0 82%,#8e1428 82%)}}
+    </style>
+  </head>
+  <body>
+    <div id="boot-loader" role="status">
+      <div>
+        <strong>解放清华园</strong>
+        <small id="remote-status">正在从 GitHub CDN 加载游戏资源</small>
+        <i aria-hidden="true"></i>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script>
+      (async () => {
+        const base = "https://very12345.github.io/qingbei-webgl-campaign/";
+        const status = document.getElementById("remote-status");
+        try {
+          const response = await fetch(base + "index.html", { cache: "no-store" });
+          if (!response.ok) throw new Error("GitHub 返回 " + response.status);
+          const remote = new DOMParser().parseFromString(await response.text(), "text/html");
+          for (const source of remote.querySelectorAll('link[rel="stylesheet"],link[rel="modulepreload"]')) {
+            const link = document.createElement("link");
+            for (const attribute of source.attributes) link.setAttribute(attribute.name, attribute.value);
+            link.href = new URL(source.getAttribute("href"), base).href;
+            document.head.appendChild(link);
+          }
+          const source = remote.querySelector('script[type="module"][src]');
+          if (!source) throw new Error("没有找到游戏入口");
+          status.textContent = "资源已定位，正在启动战局";
+          const script = document.createElement("script");
+          script.type = "module";
+          script.crossOrigin = "anonymous";
+          script.src = new URL(source.getAttribute("src"), base).href;
+          script.onerror = () => {
+            status.textContent = "游戏代码加载失败，请检查网络后刷新";
+          };
+          document.head.appendChild(script);
+        } catch (error) {
+          status.textContent = "资源加载失败：" + (error instanceof Error ? error.message : String(error));
+          const button = document.createElement("button");
+          button.textContent = "重新加载";
+          button.onclick = () => location.reload();
+          status.parentElement.appendChild(button);
+        }
+      })();
+    </script>
+  </body>
+</html>

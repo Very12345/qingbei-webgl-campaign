@@ -20,6 +20,7 @@ import type {
   ChatMessage,
   ClientSiteCommand,
   ClientUnitCommand,
+  CompactUnitNetworkState,
   DecisionVote,
   EventCard,
   GameData,
@@ -103,6 +104,63 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.cloudflare.com:3478" },
 ];
 
+const NETWORK_SKINS: Array<UnitState["skin"]> = [
+  undefined,
+  "ustc",
+  "zju",
+  "nju",
+  "fdu",
+  "sjtu",
+];
+
+const encodeCompactUnit = (unit: UnitState): CompactUnitNetworkState => [
+  unit.id,
+  unit.team === "pku" ? 0 : 1,
+  Math.round(unit.x * 100),
+  Math.round(unit.z * 100),
+  Math.round(unit.tx * 100),
+  Math.round(unit.tz * 100),
+  Math.round(unit.hp * 10),
+  Math.round(unit.supply * 10),
+  unit.strength,
+  unit.siteId,
+  unit.targetSiteId ?? -1,
+  unit.attackModifier == null ? null : Math.round(unit.attackModifier * 100),
+  unit.moveModifier == null ? null : Math.round(unit.moveModifier * 100),
+  unit.morale == null ? -1 : Math.round(unit.morale * 10),
+  (unit.retreating ? 1 : 0) | (unit.transportOutsidePenalty ? 2 : 0),
+  Math.max(0, NETWORK_SKINS.indexOf(unit.skin)),
+  unit.transport === "bus" ? 1 : unit.transport === "bike" ? 2 : 0,
+  unit.transportGroupId ?? "",
+  unit.transportModel ?? "",
+];
+
+const applyCompactUnit = (
+  unit: UnitState,
+  compact: CompactUnitNetworkState,
+) => {
+  unit.team = compact[1] === 0 ? "pku" : "thu";
+  unit.x = compact[2] / 100;
+  unit.z = compact[3] / 100;
+  unit.tx = compact[4] / 100;
+  unit.tz = compact[5] / 100;
+  unit.hp = compact[6] / 10;
+  unit.supply = compact[7] / 10;
+  unit.strength = compact[8];
+  unit.siteId = compact[9];
+  unit.targetSiteId = compact[10] < 0 ? undefined : compact[10];
+  unit.attackModifier = compact[11] == null ? undefined : compact[11] / 100;
+  unit.moveModifier = compact[12] == null ? undefined : compact[12] / 100;
+  unit.morale = compact[13] < 0 ? undefined : compact[13] / 10;
+  unit.retreating = Boolean(compact[14] & 1);
+  unit.transportOutsidePenalty = Boolean(compact[14] & 2);
+  unit.skin = NETWORK_SKINS[compact[15]];
+  unit.transport = compact[16] === 1 ? "bus" : compact[16] === 2 ? "bike" : undefined;
+  unit.transportGroupId = compact[17] || undefined;
+  unit.transportModel =
+    (compact[18] as UnitState["transportModel"]) || undefined;
+};
+
 type TeamSelectionState =
   | {
       mode: "host";
@@ -138,6 +196,8 @@ import type {
   GameScreen,
 } from "../src/game/engine/contracts";
 import { useBattlefieldEngine } from "../src/game/engine/use-battlefield";
+import SaveWorker from "../src/save-worker.ts?worker&inline";
+import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline";
 
 export default function Game3D() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -233,6 +293,8 @@ export default function Game3D() {
   );
   const networkRevisionRef = useRef(0);
   const networkLastFullAtRef = useRef(0);
+  const networkLastDeltaAtRef = useRef(0);
+  const networkUnitCursorRef = useRef(0);
   const networkUnitSignaturesRef = useRef(new Map<number, string>());
   const networkSiteSignaturesRef = useRef(new Map<number, string>());
   const networkCampaignSignatureRef = useRef("");
@@ -565,9 +627,7 @@ export default function Game3D() {
   }, [qualityMode]);
   useEffect(() => {
     if (typeof Worker === "undefined") return;
-    const worker = new Worker(new URL("../src/save-worker.ts", import.meta.url), {
-      type: "module",
-    });
+    const worker = new SaveWorker();
     saveWorkerRef.current = worker;
     worker.onmessage = (
       event: MessageEvent<{
@@ -2125,54 +2185,62 @@ export default function Game3D() {
             identity = lanChannelIdentityRef.current.get(channel),
             allowedTeam = host ? identity?.team : undefined,
             unitsById = new Map(game.units.map((unit) => [unit.id, unit]));
-          for (const delta of payload.units) {
-            if (allowedTeam && delta.team !== allowedTeam) continue;
-            const existing = unitsById.get(delta.id);
-            if (existing) {
-              const desiredCommand: ClientUnitCommand = {
-                  id: existing.id,
-                  team: existing.team,
-                  tx: existing.tx,
-                  tz: existing.tz,
-                  targetSiteId: existing.targetSiteId ?? null,
-                },
-                desiredSignature = `${desiredCommand.tx.toFixed(3)}/${desiredCommand.tz.toFixed(3)}/${desiredCommand.targetSiteId ?? ""}`,
-                lastAuthoritative =
-                  clientUnitCommandSignaturesRef.current.get(existing.id),
-                hasPendingLocalCommand =
-                  lastAuthoritative != null &&
-                  desiredSignature !== lastAuthoritative,
-                pendingSince =
-                  clientUnitCommandPendingSinceRef.current.get(existing.id) ??
-                  (hasPendingLocalCommand ? Date.now() : 0),
-                keepPending =
-                  hasPendingLocalCommand && Date.now() - pendingSince < 3_000,
-                previousX = existing.x,
-                previousZ = existing.z;
-              Object.assign(existing, delta);
-              const correctionDistance = Math.hypot(
-                existing.x - previousX,
-                existing.z - previousZ,
-              );
-              if (correctionDistance < 1.8) {
-                existing.x = THREE.MathUtils.lerp(previousX, existing.x, 0.42);
-                existing.z = THREE.MathUtils.lerp(previousZ, existing.z, 0.42);
-              }
-              const incomingSignature = `${existing.tx.toFixed(3)}/${existing.tz.toFixed(3)}/${existing.targetSiteId ?? ""}`;
-              clientUnitCommandSignaturesRef.current.set(
-                existing.id,
-                incomingSignature,
-              );
-              if (keepPending && incomingSignature !== desiredSignature) {
-                existing.tx = desiredCommand.tx;
-                existing.tz = desiredCommand.tz;
-                existing.targetSiteId =
-                  desiredCommand.targetSiteId ?? undefined;
-                existing.path = undefined;
-                existing.pathIndex = undefined;
-              } else clientUnitCommandPendingSinceRef.current.delete(existing.id);
-            } else {
-              const created: UnitState = { ...delta };
+          const applyExistingUnit = (
+            existing: UnitState,
+            apply: () => void,
+          ) => {
+            const desiredCommand: ClientUnitCommand = {
+                id: existing.id,
+                team: existing.team,
+                tx: existing.tx,
+                tz: existing.tz,
+                targetSiteId: existing.targetSiteId ?? null,
+              },
+              desiredSignature = `${desiredCommand.tx.toFixed(3)}/${desiredCommand.tz.toFixed(3)}/${desiredCommand.targetSiteId ?? ""}`,
+              lastAuthoritative =
+                clientUnitCommandSignaturesRef.current.get(existing.id),
+              hasPendingLocalCommand =
+                lastAuthoritative != null &&
+                desiredSignature !== lastAuthoritative,
+              pendingSince =
+                clientUnitCommandPendingSinceRef.current.get(existing.id) ??
+                (hasPendingLocalCommand ? Date.now() : 0),
+              keepPending =
+                hasPendingLocalCommand && Date.now() - pendingSince < 3_000,
+              previousX = existing.x,
+              previousZ = existing.z;
+            apply();
+            const correctionDistance = Math.hypot(
+              existing.x - previousX,
+              existing.z - previousZ,
+            );
+            if (correctionDistance < 1.8) {
+              existing.x = THREE.MathUtils.lerp(previousX, existing.x, 0.42);
+              existing.z = THREE.MathUtils.lerp(previousZ, existing.z, 0.42);
+            }
+            const incomingSignature = `${existing.tx.toFixed(3)}/${existing.tz.toFixed(3)}/${existing.targetSiteId ?? ""}`;
+            clientUnitCommandSignaturesRef.current.set(
+              existing.id,
+              incomingSignature,
+            );
+            if (keepPending && incomingSignature !== desiredSignature) {
+              existing.tx = desiredCommand.tx;
+              existing.tz = desiredCommand.tz;
+              existing.targetSiteId = desiredCommand.targetSiteId ?? undefined;
+              existing.path = undefined;
+              existing.pathIndex = undefined;
+            } else clientUnitCommandPendingSinceRef.current.delete(existing.id);
+          };
+          const legacyUnits = payload.units.filter(
+            (unit): unit is UnitNetworkState => !Array.isArray(unit),
+          );
+          for (const incoming of [...(payload.newUnits ?? []), ...legacyUnits]) {
+            if (allowedTeam && incoming.team !== allowedTeam) continue;
+            const existing = unitsById.get(incoming.id);
+            if (existing)
+              applyExistingUnit(existing, () => Object.assign(existing, incoming));
+            else {
+              const created: UnitState = { ...incoming };
               game.units.push(created);
               unitsById.set(created.id, created);
               clientUnitCommandSignaturesRef.current.set(
@@ -2180,6 +2248,14 @@ export default function Game3D() {
                 `${created.tx.toFixed(3)}/${created.tz.toFixed(3)}/${created.targetSiteId ?? ""}`,
               );
             }
+          }
+          for (const compact of payload.units) {
+            if (!Array.isArray(compact)) continue;
+            const team: Team = compact[1] === 0 ? "pku" : "thu";
+            if (allowedTeam && team !== allowedTeam) continue;
+            const existing = unitsById.get(compact[0]);
+            if (!existing) continue;
+            applyExistingUnit(existing, () => applyCompactUnit(existing, compact));
           }
           if (payload.removedUnitIds.length) {
             const removed = new Set(
@@ -3324,6 +3400,10 @@ export default function Game3D() {
       if (!openChannels.length) return;
       const now = performance.now(),
         role = lanHostRef.current ? "host" : "guest",
+        maximumBufferedAmount = Math.max(
+          0,
+          ...openChannels.map((channel) => channel.bufferedAmount),
+        ),
         signatureOf = (unit: UnitState) =>
           [
             unit.team,
@@ -3350,6 +3430,11 @@ export default function Game3D() {
             destroyed: site.destroyed,
             temporary: site.temporary,
           });
+      if (role === "host") {
+        if (maximumBufferedAmount > 320_000) return;
+        if (now - networkLastDeltaAtRef.current < 200) return;
+        networkLastDeltaAtRef.current = now;
+      }
       if (now - networkLastPingAtRef.current >= 1_000) {
         networkLastPingAtRef.current = now;
         for (const [id, startedAt] of networkPendingPingsRef.current)
@@ -3419,7 +3504,7 @@ export default function Game3D() {
       }
       if (
         role === "host" &&
-        now - networkLastFullAtRef.current >= 60_000
+        now - networkLastFullAtRef.current >= 300_000
       ) {
         networkLastFullAtRef.current = now;
         const envelope: MultiplayerEnvelope = {
@@ -3437,28 +3522,37 @@ export default function Game3D() {
         return;
       }
       const game = gameRef.current,
-        maximumBufferedAmount = Math.max(
-          0,
-          ...openChannels.map((channel) => channel.bufferedAmount),
-        ),
         unitBatchLimit =
-          maximumBufferedAmount > 1_000_000
-            ? 120
-            : maximumBufferedAmount > 400_000
-              ? 350
-              : 700,
-        currentIds = new Set<number>(),
-        units: UnitNetworkState[] = [];
-      for (const unit of game.units) {
-        currentIds.add(unit.id);
+          maximumBufferedAmount > 180_000
+            ? 180
+            : maximumBufferedAmount > 80_000
+              ? 320
+              : 560,
+        currentIds = new Set<number>(game.units.map((unit) => unit.id)),
+        units: CompactUnitNetworkState[] = [],
+        newUnits: UnitNetworkState[] = [];
+      const unitCount = game.units.length,
+        startIndex = unitCount
+          ? networkUnitCursorRef.current % unitCount
+          : 0;
+      let inspectedUnits = 0;
+      for (; inspectedUnits < unitCount; inspectedUnits++) {
+        const index = (startIndex + inspectedUnits) % unitCount,
+          unit = game.units[index];
         const signature = signatureOf(unit);
-        if (networkUnitSignaturesRef.current.get(unit.id) === signature)
+        const previousSignature = networkUnitSignaturesRef.current.get(unit.id);
+        if (previousSignature === signature)
           continue;
-        if (units.length >= unitBatchLimit) continue;
+        if (units.length + newUnits.length >= unitBatchLimit) break;
         networkUnitSignaturesRef.current.set(unit.id, signature);
-        const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
-        units.push(networkUnit);
+        if (previousSignature == null) {
+          const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
+          newUnits.push(networkUnit);
+        } else units.push(encodeCompactUnit(unit));
       }
+      if (unitCount)
+        networkUnitCursorRef.current =
+          (startIndex + inspectedUnits) % unitCount;
       const removedUnitIds: number[] = [];
       for (const id of networkUnitSignaturesRef.current.keys())
         if (!currentIds.has(id)) {
@@ -3500,6 +3594,7 @@ export default function Game3D() {
         revision: ++networkRevisionRef.current,
         role,
         units,
+        newUnits,
         removedUnitIds,
         sites,
         campaign: campaignChanged
@@ -3522,10 +3617,7 @@ export default function Game3D() {
         syncNetwork();
       }, 100),
       worker = dedicatedServerHost
-        ? new Worker(
-            new URL("../src/game/server-clock-worker.ts", import.meta.url),
-            { type: "module" },
-          )
+        ? new ServerClockWorker()
         : null;
     let lastWorkerSyncAt = 0;
     if (worker) {

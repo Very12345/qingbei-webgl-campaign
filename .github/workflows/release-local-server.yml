@@ -34,11 +34,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Embed current web build
-        run: |
-          rm -rf native-server/web
-          mkdir -p native-server/web
-          cp -R dist/. native-server/web/
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"

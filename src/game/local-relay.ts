@@ -10,7 +10,6 @@ type RelayWireMessage =
 
 export class RelayDataChannel {
   readyState: RTCDataChannelState = "connecting";
-  bufferedAmount = 0;
   onopen: ((event: Event) => unknown) | null = null;
   onclose: ((event: Event) => unknown) | null = null;
   onmessage: ((event: MessageEvent<string>) => unknown) | null = null;
@@ -19,7 +18,12 @@ export class RelayDataChannel {
     readonly peerId: string,
     private readonly sendFrame: (peerId: string, data: string) => void,
     private readonly closePeer: (peerId: string) => void,
+    private readonly readBufferedAmount: () => number,
   ) {}
+
+  get bufferedAmount() {
+    return this.readBufferedAmount();
+  }
 
   open() {
     if (this.readyState !== "connecting") return;
@@ -147,14 +151,19 @@ export class LocalRelayHub {
     if (existing) return existing;
     const channel = new RelayDataChannel(
       peerId,
-      (targetId, data) =>
-        this.socket?.send(
+      (targetId, data) => {
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+        this.socket.send(
           JSON.stringify({ type: "relay", peerId: targetId, data }),
-        ),
-      (targetId) =>
-        this.socket?.send(
+        );
+      },
+      (targetId) => {
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+        this.socket.send(
           JSON.stringify({ type: "close_peer", peerId: targetId }),
-        ),
+        );
+      },
+      () => this.socket?.bufferedAmount ?? 0,
     );
     this.channels.set(peerId, channel);
     return channel;

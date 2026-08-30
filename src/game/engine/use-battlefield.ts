@@ -50,6 +50,7 @@ import type {
   GameScreen,
 } from "./contracts";
 import type { NetworkChannel } from "../local-relay";
+import ServerClockWorker from "../server-clock-worker.ts?worker&inline";
 
 type VictoryBroadcast = {
   winner: Team;
@@ -7831,10 +7832,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     };
     let serverClockWorker: Worker | null = null;
     if (dedicatedServerHostRef.current) {
-      serverClockWorker = new Worker(
-        new URL("../server-clock-worker.ts", import.meta.url),
-        { type: "module" },
-      );
+      serverClockWorker = new ServerClockWorker();
       serverClockWorker.onmessage = () => {
         if (
           !dedicatedServerHostRef.current ||

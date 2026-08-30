@@ -264,6 +264,27 @@ export type ServerConfigurationDraft = {
 };
 
 export type UnitNetworkState = Omit<UnitState, "path" | "pathIndex">;
+export type CompactUnitNetworkState = [
+  id: number,
+  team: 0 | 1,
+  x100: number,
+  z100: number,
+  tx100: number,
+  tz100: number,
+  hp10: number,
+  supply10: number,
+  strength: number,
+  siteId: number,
+  targetSiteId: number,
+  attackModifier100: number | null,
+  moveModifier100: number | null,
+  morale10: number,
+  flags: number,
+  skin: number,
+  transport: number,
+  transportGroupId: string,
+  transportModel: string,
+];
 export type ClientUnitCommand = {
   id: number;
   team: Team;
@@ -294,7 +315,8 @@ export type MultiplayerEnvelope =
       type: "state_delta";
       revision: number;
       role: "host" | "guest";
-      units: UnitNetworkState[];
+      units: Array<CompactUnitNetworkState | UnitNetworkState>;
+      newUnits?: UnitNetworkState[];
       removedUnitIds: number[];
       sites: SiteState[];
       campaign?: CampaignState;

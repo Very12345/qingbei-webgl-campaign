@@ -44,18 +44,93 @@ type wireMessage struct {
 }
 
 type wsClient struct {
-	conn     net.Conn
-	reader   *bufio.Reader
-	mu       sync.Mutex
-	room     string
-	role     string
-	team     string
-	nickname string
-	peerID   string
-	hub      *relayHub
+	conn        net.Conn
+	reader      *bufio.Reader
+	mu          sync.Mutex
+	queueMu     sync.Mutex
+	outbound    chan wireMessage
+	stateSignal chan struct{}
+	latestState *wireMessage
+	done        chan struct{}
+	doneOnce    sync.Once
+	room        string
+	role        string
+	team        string
+	nickname    string
+	peerID      string
+	hub         *relayHub
 }
 
 func (c *wsClient) sendJSON(message wireMessage) error {
+	select {
+	case <-c.done:
+		return errors.New("websocket is closed")
+	default:
+	}
+	if message.Type == "relay" && applicationMessageType(message.Data) == "state_delta" {
+		c.queueMu.Lock()
+		copy := message
+		c.latestState = &copy
+		c.queueMu.Unlock()
+		select {
+		case c.stateSignal <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	select {
+	case <-c.done:
+		return errors.New("websocket is closed")
+	case c.outbound <- message:
+		return nil
+	default:
+		log.Printf("连接 %s 的控制队列已满，主动断开慢客户端\n", c.peerID[:8])
+		c.shutdown()
+		return errors.New("websocket control queue is full")
+	}
+}
+
+func (c *wsClient) writerLoop() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case message := <-c.outbound:
+			if err := c.writeJSON(message); err != nil {
+				log.Printf("连接 %s 写入失败：%v\n", c.peerID[:8], err)
+				c.shutdown()
+				return
+			}
+		default:
+			select {
+			case <-c.done:
+				return
+			case message := <-c.outbound:
+				if err := c.writeJSON(message); err != nil {
+					log.Printf("连接 %s 写入失败：%v\n", c.peerID[:8], err)
+					c.shutdown()
+					return
+				}
+			case <-c.stateSignal:
+				c.queueMu.Lock()
+				message := c.latestState
+				c.latestState = nil
+				c.queueMu.Unlock()
+				if message != nil {
+					if err := c.writeJSON(*message); err == nil {
+						continue
+					} else {
+						log.Printf("连接 %s 状态写入失败：%v\n", c.peerID[:8], err)
+					}
+					c.shutdown()
+					return
+				}
+			}
+		}
+	}
+}
+
+func (c *wsClient) writeJSON(message wireMessage) error {
 	payload, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -63,9 +138,22 @@ func (c *wsClient) sendJSON(message wireMessage) error {
 	return c.writeFrame(0x1, payload)
 }
 
+func (c *wsClient) shutdown() {
+	c.doneOnce.Do(func() {
+		close(c.done)
+		_ = c.conn.Close()
+	})
+}
+
 func (c *wsClient) writeFrame(opcode byte, payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	writeTimeout := 5 * time.Second
+	if c.role == "host" {
+		writeTimeout = 30 * time.Second
+	}
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	defer c.conn.SetWriteDeadline(time.Time{})
 	if len(payload) > 16<<20 {
 		return errors.New("websocket payload too large")
 	}
@@ -81,21 +169,30 @@ func (c *wsClient) writeFrame(opcode byte, payload []byte) error {
 		binary.BigEndian.PutUint64(header[len(header)-8:], uint64(len(payload)))
 	}
 	if _, err := c.conn.Write(header); err != nil {
+		_ = c.conn.Close()
 		return err
 	}
 	_, err := c.conn.Write(payload)
+	if err != nil {
+		_ = c.conn.Close()
+	}
 	return err
 }
 
 func (c *wsClient) readLoop() {
 	defer func() {
 		c.hub.unregister(c)
-		_ = c.conn.Close()
+		c.shutdown()
 	}()
 	var fragmented []byte
 	for {
 		opcode, final, payload, err := readFrame(c.reader)
 		if err != nil {
+			select {
+			case <-c.done:
+			default:
+				log.Printf("连接 %s 读取结束：%v\n", c.peerID[:8], err)
+			}
 			return
 		}
 		switch opcode {
@@ -118,6 +215,16 @@ func (c *wsClient) readLoop() {
 			}
 		}
 	}
+}
+
+func applicationMessageType(data string) string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal([]byte(data), &envelope) != nil {
+		return ""
+	}
+	return envelope.Type
 }
 
 func (c *wsClient) handleMessage(payload []byte) {
@@ -179,12 +286,24 @@ type relayRoom struct {
 }
 
 type relayHub struct {
-	mu    sync.RWMutex
-	rooms map[string]*relayRoom
+	mu     sync.RWMutex
+	rooms  map[string]*relayRoom
+	chunks map[string]*relayChunk
 }
 
 func newRelayHub() *relayHub {
-	return &relayHub{rooms: make(map[string]*relayRoom)}
+	return &relayHub{
+		rooms:  make(map[string]*relayRoom),
+		chunks: make(map[string]*relayChunk),
+	}
+}
+
+type relayChunk struct {
+	parts       []string
+	received    int
+	bytes       int
+	created     time.Time
+	passthrough bool
 }
 
 func (hub *relayHub) register(client *wsClient) error {
@@ -242,8 +361,8 @@ func (hub *relayHub) unregister(client *wsClient) {
 		hub.mu.Unlock()
 		log.Printf("房间 %s 已停止\n", client.room)
 		for _, guest := range guests {
-			_ = guest.sendJSON(wireMessage{Type: "error", Message: "服务器已停止"})
-			_ = guest.conn.Close()
+			_ = guest.writeJSON(wireMessage{Type: "error", Message: "服务器已停止"})
+			guest.shutdown()
 		}
 		return
 	}
@@ -269,6 +388,11 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 		return
 	}
 	if message.Type == "relay" {
+		var complete bool
+		message, complete = hub.reassembleRelay(sender, message)
+		if !complete {
+			return
+		}
 		hub.observeRelay(sender, message.Data)
 	}
 	hub.mu.RLock()
@@ -281,7 +405,8 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 		target := room.guests[message.PeerID]
 		hub.mu.RUnlock()
 		if target != nil {
-			_ = target.conn.Close()
+			log.Printf("网页主机请求关闭玩家连接 %s\n", target.peerID[:8])
+			target.shutdown()
 		}
 		return
 	}
@@ -303,6 +428,69 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 	if host != nil {
 		_ = host.sendJSON(wireMessage{Type: "relay", PeerID: peerID, Data: message.Data})
 	}
+}
+
+func (hub *relayHub) reassembleRelay(sender *wsClient, message wireMessage) (wireMessage, bool) {
+	var chunk struct {
+		Type       string `json:"type"`
+		TransferID string `json:"transferId"`
+		Index      int    `json:"index"`
+		Total      int    `json:"total"`
+		Data       string `json:"data"`
+	}
+	if json.Unmarshal([]byte(message.Data), &chunk) != nil || chunk.Type != "network_chunk" {
+		return message, true
+	}
+	if chunk.TransferID == "" || chunk.Total < 1 || chunk.Total > 2_000 || chunk.Index < 0 || chunk.Index >= chunk.Total {
+		return message, false
+	}
+	key := sender.peerID + "|" + message.PeerID + "|" + chunk.TransferID
+	hub.mu.Lock()
+	for existingKey, transfer := range hub.chunks {
+		if time.Since(transfer.created) > 45*time.Second {
+			delete(hub.chunks, existingKey)
+		}
+	}
+	transfer := hub.chunks[key]
+	if transfer == nil {
+		transfer = &relayChunk{
+			parts:   make([]string, chunk.Total),
+			created: time.Now(),
+			passthrough: chunk.Index == 0 &&
+				!strings.HasPrefix(chunk.Data, `{"type":"state_delta"`),
+		}
+		hub.chunks[key] = transfer
+	}
+	if transfer.passthrough {
+		if chunk.Index == chunk.Total-1 {
+			delete(hub.chunks, key)
+		}
+		hub.mu.Unlock()
+		return message, true
+	}
+	if len(transfer.parts) != chunk.Total {
+		delete(hub.chunks, key)
+		hub.mu.Unlock()
+		return message, false
+	}
+	if transfer.parts[chunk.Index] == "" {
+		transfer.parts[chunk.Index] = chunk.Data
+		transfer.received++
+		transfer.bytes += len(chunk.Data)
+	}
+	if transfer.bytes > 14<<20 {
+		delete(hub.chunks, key)
+		hub.mu.Unlock()
+		return message, false
+	}
+	if transfer.received != chunk.Total {
+		hub.mu.Unlock()
+		return message, false
+	}
+	message.Data = strings.Join(transfer.parts, "")
+	delete(hub.chunks, key)
+	hub.mu.Unlock()
+	return message, true
 }
 
 func (hub *relayHub) sendHostCommand(command string) int {
@@ -509,8 +697,8 @@ func (hub *relayHub) kickPlayer(query string) bool {
 	if target == nil {
 		return false
 	}
-	_ = target.sendJSON(wireMessage{Type: "error", Message: "你已被服务器管理员移出"})
-	_ = target.conn.Close()
+	_ = target.writeJSON(wireMessage{Type: "error", Message: "你已被服务器管理员移出"})
+	target.shutdown()
 	return true
 }
 
@@ -527,7 +715,7 @@ func (hub *relayHub) closeAll() {
 	}
 	hub.mu.RUnlock()
 	for _, client := range clients {
-		_ = client.conn.Close()
+		client.shutdown()
 	}
 }
 
@@ -564,18 +752,35 @@ func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.R
 	if err != nil {
 		return
 	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	}
 	acceptHash := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	_, _ = fmt.Fprintf(buffer, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(acceptHash[:]))
 	if buffer.Flush() != nil {
 		_ = conn.Close()
 		return
 	}
-	client := &wsClient{conn: conn, reader: buffer.Reader, room: room, role: role, team: team, peerID: randomID(), hub: hub}
+	client := &wsClient{
+		conn:        conn,
+		reader:      buffer.Reader,
+		outbound:    make(chan wireMessage, 512),
+		stateSignal: make(chan struct{}, 1),
+		done:        make(chan struct{}),
+		room:        room,
+		role:        role,
+		team:        team,
+		peerID:      randomID(),
+		hub:         hub,
+	}
 	if err := hub.register(client); err != nil {
-		_ = client.sendJSON(wireMessage{Type: "error", Message: err.Error()})
-		_ = conn.Close()
+		_ = client.writeJSON(wireMessage{Type: "error", Message: err.Error()})
+		client.shutdown()
 		return
 	}
+	go client.writerLoop()
 	hub.announce(client)
 	client.readLoop()
 }
@@ -644,7 +849,7 @@ func main() {
 	mux.HandleFunc("/ws", func(writer http.ResponseWriter, request *http.Request) {
 		websocketHandler(hub, writer, request)
 	})
-	fileServer := http.FileServer(http.FS(webRoot))
+	fileServer := embeddedWebServer(webRoot)
 	mux.Handle("/qingbei-webgl-campaign/", http.StripPrefix("/qingbei-webgl-campaign/", fileServer))
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/qingbei-webgl-campaign/?local=1", http.StatusTemporaryRedirect)
@@ -667,6 +872,30 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func embeddedWebServer(webRoot fs.FS) http.Handler {
+	fallback := http.FileServer(http.FS(webRoot))
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		name := strings.TrimPrefix(request.URL.Path, "/")
+		if name == "" || strings.HasSuffix(name, "/") {
+			name += "index.html"
+		}
+		name = path.Clean(name)
+		if name == "." || strings.HasPrefix(name, "../") {
+			http.NotFound(writer, request)
+			return
+		}
+		if _, err := fs.Stat(webRoot, name); err != nil {
+			const remoteBase = "https://very12345.github.io/qingbei-webgl-campaign/"
+			http.Redirect(writer, request, remoteBase+name, http.StatusTemporaryRedirect)
+			return
+		}
+		if name == "index.html" {
+			writer.Header().Set("Cache-Control", "no-cache")
+		}
+		fallback.ServeHTTP(writer, request)
+	})
 }
 
 func runConsole(hub *relayHub, server *http.Server, hostController *simulationHostController) {
@@ -997,11 +1226,11 @@ func applyUpdate(executable, newPath string) error {
 	arguments := strings.Join(os.Args[1:], " ")
 	if runtime.GOOS == "windows" {
 		script := executable + ".update.cmd"
-		content := fmt.Sprintf("@echo off\r\ntimeout /t 2 /nobreak >nul\r\nmove /Y \"%s\" \"%s\" >nul\r\nstart \"\" \"%s\" %s\r\ndel \"%%~f0\"\r\n", newPath, executable, executable, arguments)
+		content := fmt.Sprintf("@echo off\r\nping 127.0.0.1 -n 3 >nul\r\nmove /Y \"%s\" \"%s\" >nul\r\nstart \"\" /B \"%s\" %s\r\n(goto) 2>nul & del \"%%~f0\"\r\n", newPath, executable, executable, arguments)
 		if err := os.WriteFile(script, []byte(content), 0600); err != nil {
 			return err
 		}
-		if err := exec.Command("cmd", "/C", "start", "", script).Start(); err != nil {
+		if err := exec.Command("cmd", "/D", "/C", "call", script).Start(); err != nil {
 			return err
 		}
 		os.Exit(0)

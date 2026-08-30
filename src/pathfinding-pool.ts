@@ -1,3 +1,5 @@
+import PathfindingWorker from "./pathfinding-worker.ts?worker&inline";
+
 export type WorkerNavGrid = {
   cell: number;
   cols: number;
@@ -29,10 +31,7 @@ export class PathfindingWorkerPool {
   }
 
   private createWorker() {
-    const worker = new Worker(
-      new URL("./pathfinding-worker.ts", import.meta.url),
-      { type: "module" },
-    );
+    const worker = new PathfindingWorker();
     worker.onmessage = (
       event: MessageEvent<{ id: number; path: [number, number][] }>,
     ) => {
