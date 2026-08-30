@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -43,14 +44,15 @@ type wireMessage struct {
 }
 
 type wsClient struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	mu     sync.Mutex
-	room   string
-	role   string
-	team   string
-	peerID string
-	hub    *relayHub
+	conn     net.Conn
+	reader   *bufio.Reader
+	mu       sync.Mutex
+	room     string
+	role     string
+	team     string
+	nickname string
+	peerID   string
+	hub      *relayHub
 }
 
 func (c *wsClient) sendJSON(message wireMessage) error {
@@ -198,12 +200,14 @@ func (hub *relayHub) register(client *wsClient) error {
 			return errors.New("room already has a host")
 		}
 		room.host = client
+		log.Printf("房间 %s 已启动\n", client.room)
 		return nil
 	}
 	if room.host == nil {
 		return errors.New("room host is offline")
 	}
 	room.guests[client.peerID] = client
+	log.Printf("玩家 %s 正在连接房间 %s（%s）\n", client.peerID[:8], client.room, teamName(client.team))
 	return nil
 }
 
@@ -236,6 +240,7 @@ func (hub *relayHub) unregister(client *wsClient) {
 		}
 		delete(hub.rooms, client.room)
 		hub.mu.Unlock()
+		log.Printf("房间 %s 已停止\n", client.room)
 		for _, guest := range guests {
 			_ = guest.sendJSON(wireMessage{Type: "error", Message: "服务器已停止"})
 			_ = guest.conn.Close()
@@ -248,12 +253,20 @@ func (hub *relayHub) unregister(client *wsClient) {
 		delete(hub.rooms, client.room)
 	}
 	hub.mu.Unlock()
+	name := client.nickname
+	if name == "" {
+		name = client.peerID[:8]
+	}
+	log.Printf("玩家 %s 已离开房间 %s\n", name, client.room)
 	if host != nil {
 		_ = host.sendJSON(wireMessage{Type: "peer_leave", PeerID: client.peerID})
 	}
 }
 
 func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
+	if message.Type == "relay" {
+		hub.observeRelay(sender, message.Data)
+	}
 	hub.mu.RLock()
 	room := hub.rooms[sender.room]
 	if room == nil {
@@ -286,6 +299,54 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 	if host != nil {
 		_ = host.sendJSON(wireMessage{Type: "relay", PeerID: peerID, Data: message.Data})
 	}
+}
+
+func (hub *relayHub) observeRelay(sender *wsClient, data string) {
+	var envelope struct {
+		Type     string `json:"type"`
+		Channel  string `json:"channel"`
+		Text     string `json:"text"`
+		Identity struct {
+			Nickname string `json:"nickname"`
+			Team     string `json:"team"`
+		} `json:"identity"`
+	}
+	if json.Unmarshal([]byte(data), &envelope) != nil {
+		return
+	}
+	switch envelope.Type {
+	case "hello":
+		name := strings.TrimSpace(envelope.Identity.Nickname)
+		if len([]rune(name)) > 16 {
+			name = string([]rune(name)[:16])
+		}
+		hub.mu.Lock()
+		sender.nickname = name
+		hub.mu.Unlock()
+		if name != "" {
+			log.Printf("玩家 %s 已进入房间 %s（%s）\n", name, sender.room, teamName(sender.team))
+		}
+	case "chat_send":
+		text := strings.TrimSpace(envelope.Text)
+		if text == "" {
+			return
+		}
+		name := sender.nickname
+		if name == "" {
+			name = sender.peerID[:8]
+		}
+		log.Printf("[聊天/%s] %s: %s\n", envelope.Channel, name, text)
+	}
+}
+
+func teamName(team string) string {
+	if team == "pku" {
+		return "北大"
+	}
+	if team == "thu" {
+		return "清华"
+	}
+	return "未选择"
 }
 
 func (hub *relayHub) roomStatus(code string) (bool, map[string]int) {
@@ -329,6 +390,122 @@ func (hub *relayHub) activeClients() int {
 		total += len(room.guests)
 	}
 	return total
+}
+
+type consoleRoom struct {
+	code    string
+	host    bool
+	players []consolePlayer
+}
+
+type consolePlayer struct {
+	id       string
+	nickname string
+	team     string
+}
+
+func (hub *relayHub) consoleSnapshot() []consoleRoom {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	rooms := make([]consoleRoom, 0, len(hub.rooms))
+	for code, room := range hub.rooms {
+		summary := consoleRoom{code: code, host: room.host != nil}
+		for _, guest := range room.guests {
+			summary.players = append(summary.players, consolePlayer{
+				id:       guest.peerID,
+				nickname: guest.nickname,
+				team:     guest.team,
+			})
+		}
+		rooms = append(rooms, summary)
+	}
+	return rooms
+}
+
+func (hub *relayHub) broadcastSystemMessage(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	runes := []rune(text)
+	if len(runes) > 200 {
+		text = string(runes[:200])
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"type": "chat_message",
+		"message": map[string]any{
+			"id":         "server-" + randomID(),
+			"senderId":   "server-console",
+			"senderName": "服务器",
+			"senderTeam": "pku",
+			"channel":    "system",
+			"text":       text,
+			"sentAt":     time.Now().UnixMilli(),
+		},
+	})
+	type delivery struct {
+		client *wsClient
+		peerID string
+	}
+	var deliveries []delivery
+	hub.mu.RLock()
+	for _, room := range hub.rooms {
+		for peerID, guest := range room.guests {
+			if room.host != nil {
+				deliveries = append(deliveries, delivery{client: room.host, peerID: peerID})
+			}
+			deliveries = append(deliveries, delivery{client: guest, peerID: "host"})
+		}
+	}
+	hub.mu.RUnlock()
+	for _, item := range deliveries {
+		_ = item.client.sendJSON(wireMessage{Type: "relay", PeerID: item.peerID, Data: string(payload)})
+	}
+	return len(deliveries)
+}
+
+func (hub *relayHub) kickPlayer(query string) bool {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return false
+	}
+	var target *wsClient
+	hub.mu.RLock()
+	for _, room := range hub.rooms {
+		for _, guest := range room.guests {
+			if strings.HasPrefix(guest.peerID, query) || strings.EqualFold(guest.nickname, query) {
+				target = guest
+				break
+			}
+		}
+		if target != nil {
+			break
+		}
+	}
+	hub.mu.RUnlock()
+	if target == nil {
+		return false
+	}
+	_ = target.sendJSON(wireMessage{Type: "error", Message: "你已被服务器管理员移出"})
+	_ = target.conn.Close()
+	return true
+}
+
+func (hub *relayHub) closeAll() {
+	var clients []*wsClient
+	hub.mu.RLock()
+	for _, room := range hub.rooms {
+		if room.host != nil {
+			clients = append(clients, room.host)
+		}
+		for _, guest := range room.guests {
+			clients = append(clients, guest)
+		}
+	}
+	hub.mu.RUnlock()
+	for _, client := range clients {
+		_ = client.conn.Close()
+	}
 }
 
 func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.Request) {
@@ -456,7 +633,112 @@ func main() {
 		}()
 	}
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	log.Fatal(server.ListenAndServe())
+	go runConsole(hub, server)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func runConsole(hub *relayHub, server *http.Server) {
+	fmt.Println()
+	fmt.Println("服务器终端已就绪。输入 help 查看可用命令。")
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("> ")
+		if !scanner.Scan() {
+			return
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		command, argument, _ := strings.Cut(line, " ")
+		switch strings.ToLower(command) {
+		case "help", "?":
+			fmt.Println("可用命令：")
+			fmt.Println("  status          查看服务器、房间和玩家数量")
+			fmt.Println("  rooms           查看正在运行的战局")
+			fmt.Println("  players         查看所有在线玩家")
+			fmt.Println("  say <消息>      向所有战局发送系统消息")
+			fmt.Println("  kick <名称/ID>  移出一名玩家")
+			fmt.Println("  version         查看服务器版本")
+			fmt.Println("  clear           清空终端")
+			fmt.Println("  stop            保存由网页负责；断开玩家并停止服务")
+		case "status":
+			rooms := hub.consoleSnapshot()
+			players := 0
+			for _, room := range rooms {
+				players += len(room.players)
+			}
+			fmt.Printf("版本 %s · 运行中战局 %d · 在线玩家 %d\n", version, len(rooms), players)
+		case "rooms":
+			rooms := hub.consoleSnapshot()
+			if len(rooms) == 0 {
+				fmt.Println("当前没有运行中的战局。请在本机管理页面创建并启动服务器。")
+				continue
+			}
+			for _, room := range rooms {
+				state := "等待网页主机"
+				if room.host {
+					state = "运行中"
+				}
+				fmt.Printf("%s · %s · %d 名玩家\n", room.code, state, len(room.players))
+			}
+		case "players":
+			rooms := hub.consoleSnapshot()
+			shown := 0
+			for _, room := range rooms {
+				for _, player := range room.players {
+					name := player.nickname
+					if name == "" {
+						name = "（正在进入）"
+					}
+					fmt.Printf("%s · %s · %s · 房间 %s\n", player.id[:8], name, teamName(player.team), room.code)
+					shown++
+				}
+			}
+			if shown == 0 {
+				fmt.Println("当前没有在线玩家。")
+			}
+		case "say":
+			if strings.TrimSpace(argument) == "" {
+				fmt.Println("用法：say <消息>")
+				continue
+			}
+			deliveries := hub.broadcastSystemMessage(argument)
+			log.Printf("[公告] %s（发送 %d 个连接）\n", strings.TrimSpace(argument), deliveries)
+		case "kick":
+			if hub.kickPlayer(argument) {
+				fmt.Println("已移出玩家。")
+			} else {
+				fmt.Println("未找到玩家。请使用 players 查看名称或ID。")
+			}
+		case "version":
+			fmt.Printf("解放清华园本地服务器 %s\n", version)
+		case "clear", "cls":
+			clearConsole()
+		case "stop", "exit", "quit":
+			fmt.Println("正在断开玩家并停止服务器...")
+			hub.broadcastSystemMessage("服务器正在停止")
+			hub.closeAll()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = server.Shutdown(ctx)
+			cancel()
+			return
+		default:
+			fmt.Printf("未知命令：%s。输入 help 查看命令。\n", command)
+		}
+	}
+}
+
+func clearConsole() {
+	if runtime.GOOS == "windows" {
+		command := exec.Command("cmd", "/C", "cls")
+		command.Stdout = os.Stdout
+		_ = command.Run()
+		return
+	}
+	fmt.Print("\033[H\033[2J")
 }
 
 func localIPv4Addresses() []string {
