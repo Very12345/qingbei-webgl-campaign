@@ -4066,6 +4066,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         sourceSite?: number;
         selection?: boolean;
         tool?: boolean;
+        multiRoute?: boolean;
         eraseLines?: boolean;
         erasedLines?: Set<number>;
         routeTargets?: number[];
@@ -4494,7 +4495,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         screenUnit = site == null ? hitFriendlyUnitOnScreen(e) : undefined,
         selection = !!screenUnit && selectedUnitIds.has(screenUnit.id),
         eraseLines = e.shiftKey,
-        tool = activeToolMode === "simplify-lines" && !eraseLines;
+        tool = activeToolMode === "simplify-lines" && !eraseLines,
+        multiRoute = activeToolMode === "multi-route" && !eraseLines;
       down = {
         x: e.clientX,
         y: e.clientY,
@@ -4502,9 +4504,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         sourceSite,
         selection,
         tool,
+        multiRoute,
         eraseLines,
         erasedLines: eraseLines ? new Set<number>() : undefined,
-        routeTargets: sourceSite != null ? [] : undefined,
+        routeTargets: sourceSite != null && multiRoute ? [] : undefined,
       };
       if (site == null) setSelected(null);
       if (sourceSite != null || selection || tool || eraseLines) {
@@ -4566,14 +4569,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const s = gameRef.current.sites[down.sourceSite];
       if (!s) return;
       const hovered = hitSite(e);
-      if (hovered != null && hovered !== down.sourceSite) {
+      if (
+        down.multiRoute &&
+        hovered != null &&
+        hovered !== down.sourceSite
+      ) {
         const targets = down.routeTargets ?? (down.routeTargets = []),
           previous = targets.at(-2);
         if (previous === hovered) targets.pop();
         else if (targets.at(-1) !== hovered && !targets.includes(hovered))
           targets.push(hovered);
       }
-      const previewTargets = down.routeTargets ?? [],
+      const previewTargets = down.multiRoute ? down.routeTargets ?? [] : [],
         finalPreviewSite =
           hovered != null && hovered !== down.sourceSite
             ? gameRef.current.sites[hovered]
@@ -4694,7 +4701,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         end !== down.sourceSite
       ) {
         const source = gameRef.current.sites[down.sourceSite],
-          targetIds = [...(down.routeTargets ?? [])];
+          targetIds = down.multiRoute ? [...(down.routeTargets ?? [])] : [];
         if (targetIds.at(-1) !== end && !targetIds.includes(end))
           targetIds.push(end);
         const targets = targetIds
@@ -6715,84 +6722,103 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         });
       const productionCycle = Math.floor(campaign.elapsedHours / 6);
       if (productionCycle > campaign.lastProductionCycle) {
+        const firstCycle = Math.max(
+          campaign.lastProductionCycle + 1,
+          productionCycle - 47,
+        );
         campaign.lastProductionCycle = productionCycle;
         let produced = false;
-        for (const team of ["pku", "thu"] as Team[]) {
-          const population = teamPopulation(team),
-            allDorms = g.sites.filter(
-            (site) =>
-              site.team === team && site.type === "dorm" && !site.destroyed,
-            ),
-            dorms = allDorms.filter((site) =>
-              hasProductionCapacity(site, population),
-            ),
-            productionModifier =
-              teamStatusFactor(team, "production") *
-              (decisionEffectsFor(campaign, team).production ?? 1),
-            activeDorms = Math.min(
-              Math.max(
-                productionModifier > 0 ? 1 : 0,
-                Math.round(productionSlots(allDorms.length, 0.35) * productionModifier),
+        for (let cycle = firstCycle; cycle <= productionCycle; cycle++) {
+          for (const team of ["pku", "thu"] as Team[]) {
+            const population = teamPopulation(team),
+              allDorms = g.sites.filter(
+                (site) =>
+                  site.team === team &&
+                  site.type === "dorm" &&
+                  !site.destroyed,
               ),
-              dorms.length,
-              Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
-            );
-          for (let i = 0; i < activeDorms; i++) {
-            const site = dorms[(productionCycle + i * 3) % dorms.length];
-            spawnUnitsAt(site, team, 1, 1, false);
-            produced = true;
+              dorms = allDorms.filter((site) =>
+                hasProductionCapacity(site, population),
+              ),
+              productionModifier =
+                teamStatusFactor(team, "production") *
+                (decisionEffectsFor(campaign, team).production ?? 1),
+              activeDorms = Math.min(
+                Math.max(
+                  productionModifier > 0 ? 1 : 0,
+                  Math.round(
+                    productionSlots(allDorms.length, 0.35) *
+                      productionModifier,
+                  ),
+                ),
+                dorms.length,
+                Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
+              );
+            for (let i = 0; i < activeDorms; i++) {
+              const site = dorms[(cycle + i * 3) % dorms.length];
+              spawnUnitsAt(site, team, 1, 1, false);
+              produced = true;
+            }
+            g.resources[team] +=
+              6 * (decisionEffectsFor(campaign, team).resourceIncome ?? 1);
           }
-          g.resources[team] +=
-            6 * (decisionEffectsFor(campaign, team).resourceIncome ?? 1);
+          g.sites.forEach((source) => {
+            if (source.destroyed || source.orderTarget == null) return;
+            const target = g.sites[source.orderTarget];
+            if (!target || target.destroyed) return;
+            const idle = g.units.filter(
+              (unit) =>
+                unit.siteId === source.id && unit.targetSiteId == null,
+            ).length;
+            issueOrder(
+              source.team,
+              source,
+              target,
+              Math.ceil(idle * (source.dispatchRatio ?? 0.6)),
+            );
+          });
         }
         if (produced) rebuildUnits();
-        g.sites.forEach((source) => {
-          if (source.destroyed || source.orderTarget == null) return;
-          const target = g.sites[source.orderTarget];
-          if (!target || target.destroyed) return;
-          const idle = g.units.filter(
-            (unit) => unit.siteId === source.id && unit.targetSiteId == null,
-          ).length;
-          issueOrder(
-            source.team,
-            source,
-            target,
-            Math.ceil(idle * (source.dispatchRatio ?? 0.6)),
-          );
-        });
       }
       const diningCycle = Math.floor(campaign.elapsedHours / 12);
       if (diningCycle > campaign.lastDiningCycle) {
+        const firstCycle = Math.max(
+          campaign.lastDiningCycle + 1,
+          diningCycle - 47,
+        );
         campaign.lastDiningCycle = diningCycle;
         const producingDining: SiteState[] = [];
-        for (const team of ["pku", "thu"] as Team[]) {
-          const population = teamPopulation(team),
-            allDiningSites = g.sites.filter(
-            (site) =>
-              site.team === team && site.type === "dining" && !site.destroyed,
-            ),
-            diningSites = allDiningSites.filter((site) =>
-              hasProductionCapacity(site, population),
-            ),
-            productionModifier =
-              teamStatusFactor(team, "production") *
-              (decisionEffectsFor(campaign, team).production ?? 1),
-            activeDining = Math.min(
-              Math.max(
-                productionModifier > 0 ? 1 : 0,
-                Math.round(
-                  productionSlots(allDiningSites.length, 0.4) *
-                    productionModifier,
-                ),
+        for (let cycle = firstCycle; cycle <= diningCycle; cycle++) {
+          for (const team of ["pku", "thu"] as Team[]) {
+            const population = teamPopulation(team),
+              allDiningSites = g.sites.filter(
+                (site) =>
+                  site.team === team &&
+                  site.type === "dining" &&
+                  !site.destroyed,
               ),
-              diningSites.length,
-              Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
-            );
-          for (let i = 0; i < activeDining; i++) {
-            const site =
-              diningSites[(diningCycle + i * 2) % diningSites.length];
-            spawnUnitsAt(site, team, 1, 1, false, 145);
-            producingDining.push(site);
+              diningSites = allDiningSites.filter((site) =>
+                hasProductionCapacity(site, population),
+              ),
+              productionModifier =
+                teamStatusFactor(team, "production") *
+                (decisionEffectsFor(campaign, team).production ?? 1),
+              activeDining = Math.min(
+                Math.max(
+                  productionModifier > 0 ? 1 : 0,
+                  Math.round(
+                    productionSlots(allDiningSites.length, 0.4) *
+                      productionModifier,
+                  ),
+                ),
+                diningSites.length,
+                Math.max(0, Math.floor((teamUnitCap(team) - population) / 5)),
+              );
+            for (let i = 0; i < activeDining; i++) {
+              const site = diningSites[(cycle + i * 2) % diningSites.length];
+              spawnUnitsAt(site, team, 1, 1, false, 145);
+              producingDining.push(site);
+            }
           }
         }
         if (producingDining.length) rebuildUnits();
@@ -6839,6 +6865,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           );
       }
     }, 1000);
+    let nextAiThinkAt = 0;
     const aiTimer = resilientSetInterval(() => {
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
@@ -6847,6 +6874,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         lanChannelIdentityRef.current.size === 0
       )
         return;
+      const aiNow = performance.now(),
+        aiThinkInterval = Math.max(
+          120,
+          1700 /
+            THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),
+        );
+      if (aiNow < nextAiThinkAt) return;
+      nextAiThinkAt = aiNow + aiThinkInterval;
       const g = gameRef.current;
       const humanTeams = new Set<Team>([
           ...(dedicatedServerHostRef.current ? [] : [playerTeamRef.current]),
@@ -7663,7 +7698,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         )
           routesCreated++;
       }
-    }, 1700);
+    }, 120);
     let raf = 0,
       last = performance.now(),
       statAt = 0,
@@ -8064,11 +8099,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             selectedUnitIds.has(u.id) ||
             u.id === directLeaderId ||
             u.retreating,
-          simulationDivisor = prioritySimulation
+          baseSimulationDivisor = prioritySimulation
             ? 1
             : distanceToView < 32
               ? 2
-              : 4;
+              : 4,
+          maximumSimulationDivisor =
+            simulationTimeScale >= 10
+              ? 1
+              : simulationTimeScale >= 4
+                ? 2
+                : 4,
+          simulationDivisor = Math.min(
+            baseSimulationDivisor,
+            maximumSimulationDivisor,
+          );
         if ((unitSimulationTick + u.id) % simulationDivisor !== 0) return;
         const unitSimulationDt = simulationDt * simulationDivisor;
         if (pathPoint && dist < 0.24) {
@@ -8127,7 +8172,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                     1,
                     1.16,
                   ),
-            s =
+            rawStep =
               roadSpeed *
               terrainSpeed *
               transportSpeed *
@@ -8136,7 +8181,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               morningMove *
               unitStatus.movement *
               (unitDecision.movement ?? 1) *
-              unitSimulationDt;
+              unitSimulationDt,
+            s = Math.min(rawStep, dist);
           const forwardX = dx / dist,
             forwardZ = dz / dist,
             gx = Math.floor(u.x / separationCell),
@@ -8171,8 +8217,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             moveZ = forwardZ;
             moveLength = 1;
           }
-          const nextX = u.x + (moveX / moveLength) * s,
-            nextZ = u.z + (moveZ / moveLength) * s;
+          const reachesWaypoint = s >= dist * 0.98,
+            nextX = reachesWaypoint
+              ? destinationX
+              : u.x + (moveX / moveLength) * s,
+            nextZ = reachesWaypoint
+              ? destinationZ
+              : u.z + (moveZ / moveLength) * s;
           if (u.transport === "bus") {
             const nextIndex = navIndex(navGrid, nextX, nextZ);
             if (
@@ -8508,7 +8559,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         setNotice(
           mode === "simplify-lines"
             ? "兵线简化工具：按住左键划过链式兵线"
-            : "已退出战场工具",
+            : mode === "multi-route"
+              ? "多目标兵线工具：拖动依次经过据点，松开后建立连续路线"
+              : "已退出战场工具",
         );
       },
       mobilizeAll: (team, stance) => {

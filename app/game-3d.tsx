@@ -1556,6 +1556,12 @@ export default function Game3D() {
     };
     pump();
   };
+  const networkCommandGraceMs = () =>
+    Math.max(
+      300,
+      3_000 /
+        Math.max(0.5, Math.min(16, timeScaleRef.current)),
+    );
   clientActionSenderRef.current = (action) => {
     if (lanHostRef.current || !guestHasAuthoritativeStateRef.current)
       return false;
@@ -2206,7 +2212,8 @@ export default function Game3D() {
                 clientUnitCommandPendingSinceRef.current.get(existing.id) ??
                 (hasPendingLocalCommand ? Date.now() : 0),
               keepPending =
-                hasPendingLocalCommand && Date.now() - pendingSince < 3_000,
+                hasPendingLocalCommand &&
+                Date.now() - pendingSince < networkCommandGraceMs(),
               previousX = existing.x,
               previousZ = existing.z;
             apply();
@@ -2303,7 +2310,8 @@ export default function Game3D() {
                   clientSiteCommandPendingSinceRef.current.get(existing.id) ??
                   (hasPendingLocalCommand ? Date.now() : 0),
                 keepPending =
-                  hasPendingLocalCommand && Date.now() - pendingSince < 3_000;
+                  hasPendingLocalCommand &&
+                  Date.now() - pendingSince < networkCommandGraceMs();
               if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
                 Object.assign(existing, structuredClone(incoming));
                 sitesChanged = true;
@@ -2399,7 +2407,7 @@ export default function Game3D() {
                   clientUnitCommandPendingSinceRef.current.get(unit.id) ?? now;
               return authoritative != null &&
                 signature !== authoritative &&
-                now - pendingSince < 3_000
+                now - pendingSince < networkCommandGraceMs()
                 ? [
                     {
                       id: unit.id,
@@ -2434,7 +2442,7 @@ export default function Game3D() {
                   clientSiteCommandPendingSinceRef.current.get(site.id) ?? now;
               return authoritative != null &&
                 signature !== authoritative &&
-                now - pendingSince < 3_000
+                now - pendingSince < networkCommandGraceMs()
                 ? [command]
                 : [];
             });
@@ -3490,7 +3498,12 @@ export default function Game3D() {
           });
       if (role === "host") {
         if (maximumBufferedAmount > 320_000) return;
-        if (now - networkLastDeltaAtRef.current < 200) return;
+        const synchronizationInterval = Math.max(
+          50,
+          200 / Math.max(1, timeScaleRef.current),
+        );
+        if (now - networkLastDeltaAtRef.current < synchronizationInterval)
+          return;
         networkLastDeltaAtRef.current = now;
       }
       if (now - networkLastPingAtRef.current >= 1_000) {
@@ -3673,7 +3686,7 @@ export default function Game3D() {
         )
           return;
         syncNetwork();
-      }, 100),
+      }, 50),
       worker = dedicatedServerHost
         ? new ServerClockWorker()
         : null;
@@ -3683,7 +3696,7 @@ export default function Game3D() {
         const now = performance.now();
         if (
           document.visibilityState !== "hidden" ||
-          now - lastWorkerSyncAt < 90
+          now - lastWorkerSyncAt < 45
         )
           return;
         lastWorkerSyncAt = now;

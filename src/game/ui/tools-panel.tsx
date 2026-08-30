@@ -23,6 +23,19 @@ export function ToolsPanel({
           <button onClick={onClose}>关闭</button>
         </header>
         <article>
+          <div className="tool-symbol multi-route" aria-hidden="true"><i /></div>
+          <div>
+            <h3>多目标兵线</h3>
+            <p>启用后，拖动经过多个据点可建立连续路线；默认状态只连接起点和松开位置。</p>
+          </div>
+          <button
+            className={activeTool === "multi-route" ? "active" : ""}
+            onClick={() => onTool(activeTool === "multi-route" ? null : "multi-route")}
+          >
+            {activeTool === "multi-route" ? "退出工具" : "启用工具"}
+          </button>
+        </article>
+        <article>
           <div className="tool-symbol simplify" aria-hidden="true"><i /></div>
           <div>
             <h3>简化兵线</h3>

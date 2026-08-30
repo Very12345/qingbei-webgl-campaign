@@ -1,7 +1,7 @@
 import type { RegionId, Team } from "../types";
 
 export type GameScreen = "home" | "game";
-export type BattlefieldToolMode = "simplify-lines" | null;
+export type BattlefieldToolMode = "simplify-lines" | "multi-route" | null;
 
 export type BattlefieldSceneApi = {
   sync: () => void;

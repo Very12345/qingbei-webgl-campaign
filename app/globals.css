@@ -543,6 +543,29 @@ select option {
 }
 .tool-symbol.simplify::before { left: 6px; transform: rotate(24deg); }
 .tool-symbol.simplify::after { right: 6px; transform: rotate(-24deg); }
+.tool-symbol.multi-route::before {
+  position: absolute;
+  content: "";
+  left: 9px;
+  top: 25px;
+  width: 31px;
+  border-top: 3px solid #e0ca7b;
+  transform: rotate(-20deg);
+}
+.tool-symbol.multi-route i,
+.tool-symbol.multi-route i::before,
+.tool-symbol.multi-route i::after {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #e0ca7b;
+  border-radius: 50%;
+  background: #111b18;
+  content: "";
+}
+.tool-symbol.multi-route i { left: 6px; top: 29px; }
+.tool-symbol.multi-route i::before { left: 10px; top: -15px; }
+.tool-symbol.multi-route i::after { left: 24px; top: -5px; }
 .tool-symbol.mobilize i {
   position: absolute;
   inset: 10px;
