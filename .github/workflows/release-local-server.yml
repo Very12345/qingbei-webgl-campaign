@@ -7,8 +7,7 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -56,31 +55,38 @@ jobs:
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}.sha256
 
-  deploy-pages:
+  wait-for-pages:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - name: Wait for matching web deployment
         env:
-          VITE_RELEASE_VERSION: ${{ github.ref_name }}
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-      - name: Deploy matching web release
-        id: deployment
-        uses: actions/deploy-pages@v4
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 36); do
+            result=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow pages.yml \
+              --commit "$GITHUB_SHA" \
+              --limit 1 \
+              --json status,conclusion \
+              --jq '.[0] | [.status, .conclusion] | @tsv')
+            status=$(printf '%s' "$result" | cut -f1)
+            conclusion=$(printf '%s' "$result" | cut -f2)
+            if [ "$status" = "completed" ] && [ "$conclusion" = "success" ]; then
+              echo "Matching GitHub Pages deployment succeeded."
+              exit 0
+            fi
+            if [ "$status" = "completed" ] && [ "$conclusion" != "success" ]; then
+              echo "Matching GitHub Pages deployment failed: $conclusion"
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for matching GitHub Pages deployment."
+          exit 1
 
   release:
-    needs: [build, deploy-pages]
+    needs: [build, wait-for-pages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

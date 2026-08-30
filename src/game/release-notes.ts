@@ -1,5 +1,5 @@
 export const RELEASE_NOTES = {
-  version: import.meta.env.VITE_RELEASE_VERSION || "开发构建",
+  version: import.meta.env.VITE_RELEASE_VERSION || "v0.1.12",
   title: "AI、联机与校园地形更新",
   items: [
     "重构北大与清华AI：疏散宿舍溢出兵力、保护生产据点、评估Buff风险，并动态组织侧翼与优势兵线。",
