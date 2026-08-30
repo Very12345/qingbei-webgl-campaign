@@ -7019,8 +7019,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           g.units.filter(
             (unit) =>
               unit.team === enemyTeam &&
-              (unit.targetSiteId === site.id ||
-                Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
+              unit.targetSiteId === site.id,
           ).length,
         stagingSites = logisticsFriendlySites.filter(
           (site) => site.type !== "dorm" && site.type !== "dining",
@@ -7085,8 +7084,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const threat = g.units.filter(
           (unit) =>
             unit.team === "pku" &&
-            (unit.targetSiteId === qz.id ||
-              Math.hypot(unit.x - qz.x, unit.z - qz.z) < 10),
+            unit.targetSiteId === qz.id,
         ).length;
         if (threat > 0) {
           const defenders = g.units.filter(
@@ -7143,8 +7141,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           const threat = g.units.filter(
             (unit) =>
               unit.team === "thu" &&
-              (unit.targetSiteId === yuanpei.id ||
-                Math.hypot(unit.x - yuanpei.x, unit.z - yuanpei.z) < 10),
+              unit.targetSiteId === yuanpei.id,
           ).length;
           if (threat) {
             const defenders = g.units.filter(
@@ -7215,14 +7212,53 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           g.units.filter(
             (unit) =>
               unit.team === enemyTeam &&
-              (unit.targetSiteId === site.id ||
-                Math.hypot(unit.x - site.x, unit.z - site.z) < 7),
+              unit.targetSiteId === site.id,
+          ).length,
+        immediateThreatAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === enemyTeam &&
+              unit.targetSiteId === site.id &&
+              Math.hypot(unit.x - site.x, unit.z - site.z) < 7,
+          ).length,
+        defendersAt = (site: SiteState) =>
+          g.units.filter(
+            (unit) =>
+              unit.team === aiTeam &&
+              Math.hypot(unit.x - site.x, unit.z - site.z) < 6,
           ).length,
         productionSites = friendlySites.filter(
           (site) => site.type === "dorm" || site.type === "dining",
         ),
-        urgentProductionSites = productionSites.filter(
+        threatenedProductionSites = productionSites.filter(
           (site) => threatAt(site) > 0,
+        ),
+        threatenedProductionIds = new Set(
+          threatenedProductionSites.map((site) => site.id),
+        ),
+        breakoutProductionSites = threatenedProductionSites.filter((site) => {
+          const projectedThreat = threatAt(site),
+            immediateThreat = immediateThreatAt(site),
+            defenders = defendersAt(site),
+            idle = idleAt(site),
+            reserveRatio =
+              difficulty === "hard" ? 1.2 : difficulty === "casual" ? 1.55 : 1.35,
+            reserve = Math.max(12, Math.ceil(projectedThreat * reserveRatio) + 4),
+            minimumBreakout =
+              difficulty === "hard" ? 10 : difficulty === "casual" ? 28 : 16;
+          return (
+            defenders >= immediateThreat * 1.25 + 8 &&
+            idle - reserve >= minimumBreakout
+          );
+        }),
+        breakoutProductionIds = new Set(
+          breakoutProductionSites.map((site) => site.id),
+        ),
+        urgentProductionSites = threatenedProductionSites.filter(
+          (site) =>
+            !breakoutProductionIds.has(site.id) &&
+            (immediateThreatAt(site) > 0 ||
+              threatAt(site) >= Math.max(8, defendersAt(site) * 0.85)),
         ),
         urgentProductionIds = new Set(
           urgentProductionSites.map((site) => site.id),
@@ -7238,19 +7274,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         threatened.dispatchRatio = 0.4;
         threatened.orderTarget = undefined;
         threatened.orderPath = undefined;
-        g.units
-          .filter(
-            (unit) =>
-              unit.team === aiTeam &&
-              unit.siteId === threatened.id &&
-              unit.targetSiteId != null &&
-              g.sites[unit.targetSiteId]?.team === enemyTeam,
-          )
-          .forEach((unit) => {
-            unit.targetSiteId = undefined;
-            unit.path = undefined;
-            unit.pathIndex = undefined;
-          });
+        // 已经出发的部队继续执行命令。旧逻辑会在据点重新被判定为
+        // “紧急”时清空所有目标，长兵线和高倍率下就会表现为整队回溯。
+        // 防守缺口只通过保留后续产兵和调附近闲置部队来补足。
         if (defenderCount >= threat * 1.15 + 4) continue;
         const responders = friendlySites
           .filter(
@@ -7292,7 +7318,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const strategicThreats = friendlySites
         .filter(
           (site) =>
-            !urgentProductionIds.has(site.id) &&
+            !threatenedProductionIds.has(site.id) &&
             threatAt(site) >=
               (site.type === "capital" ||
               site.type === "target" ||
@@ -7358,7 +7384,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         forwardHubs = friendlySites
           .filter(
             (site) =>
-              isForwardCaptured(site) &&
+              (isForwardCaptured(site) ||
+                breakoutProductionIds.has(site.id)) &&
               !urgentProductionIds.has(site.id) &&
               idleAt(site) >= 20,
           )
@@ -7415,7 +7442,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             })
             .sort((a, b) => b.score - a.score),
           fanOutLimit = Math.min(
-            difficulty === "hard" ? 3 : difficulty === "casual" ? 1 : 2,
+            breakoutProductionIds.has(hub.id)
+              ? difficulty === "hard"
+                ? 4
+                : difficulty === "casual"
+                  ? 2
+                  : 3
+              : difficulty === "hard"
+                ? 3
+                : difficulty === "casual"
+                  ? 1
+                  : 2,
             Math.max(1, Math.floor(dispatchBudget / 10)),
           ),
           targets = scored.slice(0, fanOutLimit);
