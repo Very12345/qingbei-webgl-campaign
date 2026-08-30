@@ -5,6 +5,7 @@ import type {
   Snapshot,
   Team,
 } from "../types";
+import { RELEASE_NOTES } from "../release-notes";
 
 const LOCAL_SERVER_HISTORY_KEY = "qingbei-local-server-addresses-v1";
 const DEFAULT_LOCAL_SERVER_PORT = "17890";
@@ -199,8 +200,13 @@ export function HomeScreen(props: HomeScreenProps) {
               <button onClick={() => setPage("settings")}>设置</button>
             </nav>
             <details className="home-changelog">
-              <summary>更新日志 · 已更新</summary>
-              <p>新增自动房间码联机、多目标兵线与连续装备生产；优化大规模交战和载具显示。</p>
+              <summary>更新日志 · {RELEASE_NOTES.version}</summary>
+              <strong>{RELEASE_NOTES.title}</strong>
+              <ul>
+                {RELEASE_NOTES.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </details>
           </>
         )}

@@ -2644,6 +2644,18 @@ select option {
   font-weight: 800;
 }
 .home-changelog p { margin: 7px 0 0; }
+.home-changelog > strong {
+  display: block;
+  margin-top: 8px;
+  color: #fff1bf;
+}
+.home-changelog ul {
+  display: grid;
+  gap: 5px;
+  margin: 7px 0 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
 .world-settings,
 .home-settings-panel,
 .home-server-page,

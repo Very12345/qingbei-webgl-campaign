@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,12 +34,6 @@ jobs:
             suffix: ""
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
@@ -56,8 +56,31 @@ jobs:
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}.sha256
 
+  deploy-pages:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_RELEASE_VERSION: ${{ github.ref_name }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy matching web release
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   release:
-    needs: build
+    needs: [build, deploy-pages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

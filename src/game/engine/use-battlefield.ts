@@ -897,7 +897,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       });
     };
     refreshNavAnchors();
-    const surfaceGeometry = (r: any, points: number[][], lift: number) => {
+    const surfaceGeometry = (
+      r: any,
+      points: number[][],
+      lift: number,
+      heightResolver?: (x: number, z: number) => number,
+    ) => {
       const clean = points.filter(
         (p, i, a) =>
           !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
@@ -918,7 +923,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         new THREE.Float32BufferAttribute(
           clean.flatMap((p) => [
             p[0],
-            terrainHeight(r, p[0], p[1]) + lift,
+            (heightResolver?.(p[0], p[1]) ??
+              terrainHeight(r, p[0], p[1])) + lift,
             p[1],
           ]),
           3,
@@ -1140,6 +1146,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             points = surface.track
               ? capsule(halfLength, halfWidth)
               : rawPoints,
+            interiorHeightSamples = Array.from(
+              { length: 25 },
+              (_, index) => {
+                const along = ((index % 5) / 4) * 2 - 1,
+                  side = (Math.floor(index / 5) / 4) * 2 - 1,
+                  [x, z] = at(along * halfLength, side * halfWidth);
+                return terrainHeight(r, x, z);
+              },
+            ),
+            surfaceHeight = Math.max(
+              terrainHeight(r, centerX, centerZ),
+              ...points.map(([x, z]) => terrainHeight(r, x, z)),
+              ...interiorHeightSamples,
+            ),
+            flatSportHeight = () => surfaceHeight,
             baseMaterial = new THREE.MeshStandardMaterial({
                 color: surface.track ? 0xb84a3f : 0x397a48,
                 emissive: surface.track ? 0x2a0d0a : 0x0a2411,
@@ -1150,7 +1171,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 polygonOffsetFactor: -3,
               }),
             base = new THREE.Mesh(
-              surfaceGeometry(r, points, 0.055),
+              surfaceGeometry(r, points, 0.035, flatSportHeight),
               baseMaterial,
             );
           sportMaterials.push(baseMaterial);
@@ -1158,12 +1179,34 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           base.receiveShadow = true;
           base.renderOrder = 2;
           mapGroup.add(base);
-          const pitchHalfLength = surface.track
-              ? Math.max(0.35, halfLength - 0.46)
-              : halfLength * 0.94,
+          const trackInset = Math.min(0.38, halfWidth * 0.3),
+            infieldHalfWidth = Math.max(0.24, halfWidth - trackInset),
+            infieldHalfLength = Math.max(0.3, halfLength - trackInset),
+            infieldStraight = Math.max(
+              0.05,
+              infieldHalfLength - infieldHalfWidth,
+            ),
             pitchHalfWidth = surface.track
-              ? Math.max(0.28, halfWidth - 0.42)
+              ? Math.max(0.2, infieldHalfWidth * 0.76)
               : halfWidth * 0.94,
+            curvedCornerLimit =
+              infieldStraight +
+              Math.sqrt(
+                Math.max(
+                  0,
+                  infieldHalfWidth * infieldHalfWidth -
+                    pitchHalfWidth * pitchHalfWidth,
+                ),
+              ),
+            pitchHalfLength = surface.track
+              ? Math.max(
+                  0.26,
+                  Math.min(
+                    infieldHalfLength * 0.92,
+                    curvedCornerLimit - 0.06,
+                  ),
+                )
+              : halfLength * 0.94,
             inner: [number, number][] = [
               at(-pitchHalfLength, -pitchHalfWidth),
               at(pitchHalfLength, -pitchHalfWidth),
@@ -1180,7 +1223,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 polygonOffsetFactor: -4,
               }),
             pitch = new THREE.Mesh(
-              surfaceGeometry(r, inner, 0.075),
+              surfaceGeometry(r, inner, 0.055, flatSportHeight),
               pitchMaterial,
             ),
             boundary = new THREE.LineLoop(
@@ -1189,7 +1232,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   ([x, z]) =>
                     new THREE.Vector3(
                       x,
-                      terrainHeight(r, x, z) + 0.09,
+                      surfaceHeight + 0.07,
                       z,
                     ),
                 ),
@@ -1215,7 +1258,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 ([x, z]) =>
                   new THREE.Vector3(
                     x,
-                    terrainHeight(r, x, z) + 0.095,
+                    surfaceHeight + 0.075,
                     z,
                   ),
               ),
