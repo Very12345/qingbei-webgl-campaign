@@ -236,7 +236,7 @@ export function HomeScreen(props: HomeScreenProps) {
               {!localServerMode && (
                 <a
                   className="local-server-download"
-                  href="https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qingbei-server-windows-amd64.exe"
+                  href="https://very12345.github.io/qingbei-webgl-campaign/downloads/qingbei-server-windows-amd64.exe"
                 >
                   下载本地服务器
                 </a>

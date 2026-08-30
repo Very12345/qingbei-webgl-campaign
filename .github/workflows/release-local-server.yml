@@ -33,6 +33,8 @@ jobs:
             suffix: ""
     steps:
       - uses: actions/checkout@v4
+      - name: Validate release version
+        run: test "$(tr -d '\r\n' < VERSION)" = "$GITHUB_REF_NAME"
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"

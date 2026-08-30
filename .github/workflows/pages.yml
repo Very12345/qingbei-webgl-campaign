@@ -28,6 +28,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: cp VERSION dist/VERSION
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - name: Build CDN server mirrors
+        run: |
+          version=$(tr -d '\r\n' < VERSION)
+          target_dir="dist/downloads/$version"
+          mkdir -p "$target_dir"
+          cd native-server
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-windows-amd64.exe" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-linux-amd64" .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-amd64" .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-arm64" .
+          cd ..
+          for file in "$target_dir"/qingbei-server-*; do
+            sha256sum "$file" > "$file.sha256"
+            cp "$file" dist/downloads/
+            cp "$file.sha256" dist/downloads/
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

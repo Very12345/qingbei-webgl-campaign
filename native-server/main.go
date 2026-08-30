@@ -1086,22 +1086,16 @@ func openBrowser(url string) {
 
 func checkForUpdates() {
 	fmt.Printf("正在检查更新（当前版本 %s）...\n", version)
-	client := &http.Client{Timeout: 30 * time.Second}
-	request, _ := http.NewRequest(http.MethodHead, "https://github.com/Very12345/qingbei-webgl-campaign/releases/latest", nil)
-	request.Header.Set("User-Agent", "qingbei-local-server/"+version)
-	response, err := client.Do(request)
+	metadataTransport := http.DefaultTransport.(*http.Transport).Clone()
+	metadataTransport.ResponseHeaderTimeout = 25 * time.Second
+	metadataTransport.TLSHandshakeTimeout = 20 * time.Second
+	metadataClient := &http.Client{
+		Timeout:   40 * time.Second,
+		Transport: metadataTransport,
+	}
+	latestVersion, err := discoverLatestVersion(metadataClient)
 	if err != nil {
 		fmt.Printf("更新检查失败：%v，将继续启动当前版本。\n", err)
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		fmt.Printf("更新检查失败：GitHub 返回 %s，将继续启动当前版本。\n", response.Status)
-		return
-	}
-	latestVersion, err := url.PathUnescape(path.Base(response.Request.URL.Path))
-	if err != nil || latestVersion == "" || latestVersion == "latest" {
-		fmt.Println("更新信息无法读取，将继续启动当前版本。")
 		return
 	}
 	if latestVersion == version {
@@ -1117,26 +1111,31 @@ func checkForUpdates() {
 		"https://github.com/Very12345/qingbei-webgl-campaign/releases/download/%s/",
 		url.PathEscape(latestVersion),
 	)
-	binaryURL := releaseBase + url.PathEscape(assetName)
-	checksumURL := binaryURL + ".sha256"
-	binaryData, err := downloadWithProgress(client, binaryURL)
+	pagesBase := fmt.Sprintf(
+		"https://very12345.github.io/qingbei-webgl-campaign/downloads/%s/",
+		url.PathEscape(latestVersion),
+	)
+	downloadTransport := http.DefaultTransport.(*http.Transport).Clone()
+	downloadTransport.ResponseHeaderTimeout = 45 * time.Second
+	downloadTransport.TLSHandshakeTimeout = 30 * time.Second
+	downloadTransport.IdleConnTimeout = 90 * time.Second
+	downloadClient := &http.Client{
+		Timeout:   4 * time.Minute,
+		Transport: downloadTransport,
+	}
+	binaryData, sourceName, err := downloadVerifiedUpdate(
+		downloadClient,
+		assetName,
+		[]updateSource{
+			{name: "GitHub Release", baseURL: releaseBase, attempts: 1},
+			{name: "GitHub Pages CDN", baseURL: pagesBase, attempts: 3},
+		},
+	)
 	if err != nil {
-		fmt.Printf("更新下载失败：%v，将继续启动当前版本。\n", err)
+		fmt.Printf("所有更新下载源均失败：%v，将继续启动当前版本。\n", err)
 		return
 	}
-	checksumData, err := download(client, checksumURL)
-	if err != nil {
-		fmt.Printf("校验文件下载失败：%v，将继续启动当前版本。\n", err)
-		return
-	}
-	fmt.Println("正在校验更新文件...")
-	expected := strings.Fields(string(checksumData))
-	actual := sha256.Sum256(binaryData)
-	if len(expected) == 0 || !strings.EqualFold(expected[0], hex.EncodeToString(actual[:])) {
-		fmt.Println("更新文件校验失败，已取消安装并继续启动当前版本。")
-		return
-	}
-	fmt.Println("更新文件校验完成。")
+	fmt.Printf("更新文件校验完成（来源：%s）。\n", sourceName)
 	executable, err := os.Executable()
 	if err != nil {
 		fmt.Printf("无法确定服务器程序位置：%v，将继续启动当前版本。\n", err)
@@ -1151,6 +1150,83 @@ func checkForUpdates() {
 	if err := applyUpdate(executable, newPath); err != nil {
 		fmt.Printf("更新安装失败：%v，将继续启动当前版本。\n", err)
 	}
+}
+
+type updateSource struct {
+	name     string
+	baseURL  string
+	attempts int
+}
+
+func discoverLatestVersion(client *http.Client) (string, error) {
+	request, _ := http.NewRequest(http.MethodHead, "https://github.com/Very12345/qingbei-webgl-campaign/releases/latest", nil)
+	request.Header.Set("User-Agent", "qingbei-local-server/"+version)
+	response, githubErr := client.Do(request)
+	if githubErr == nil {
+		defer response.Body.Close()
+		if response.StatusCode == http.StatusOK {
+			latestVersion, err := url.PathUnescape(path.Base(response.Request.URL.Path))
+			if err == nil && latestVersion != "" && latestVersion != "latest" {
+				return latestVersion, nil
+			}
+		}
+		githubErr = fmt.Errorf("GitHub 返回 %s", response.Status)
+	}
+	fmt.Printf("GitHub版本检查失败：%v，正在尝试Pages CDN...\n", githubErr)
+	data, pagesErr := download(
+		client,
+		"https://very12345.github.io/qingbei-webgl-campaign/VERSION",
+	)
+	if pagesErr != nil {
+		return "", fmt.Errorf("GitHub: %v；Pages CDN: %v", githubErr, pagesErr)
+	}
+	latestVersion := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(latestVersion, "v") || len(latestVersion) > 32 {
+		return "", errors.New("Pages CDN返回了无效版本号")
+	}
+	return latestVersion, nil
+}
+
+func downloadVerifiedUpdate(
+	client *http.Client,
+	assetName string,
+	sources []updateSource,
+) ([]byte, string, error) {
+	var lastErr error
+	for _, source := range sources {
+		attempts := max(1, source.attempts)
+		for attempt := 1; attempt <= attempts; attempt++ {
+			fmt.Printf("正在使用%s下载（第%d/%d次）...\n", source.name, attempt, attempts)
+			binaryURL := source.baseURL + url.PathEscape(assetName)
+			checksumData, err := download(client, binaryURL+".sha256")
+			if err != nil {
+				lastErr = fmt.Errorf("%s校验文件：%w", source.name, err)
+				fmt.Printf("%v\n", lastErr)
+			} else {
+				binaryData, binaryErr := downloadWithProgress(client, binaryURL)
+				if binaryErr != nil {
+					lastErr = fmt.Errorf("%s安装包：%w", source.name, binaryErr)
+					fmt.Printf("%v\n", lastErr)
+				} else {
+					fmt.Println("正在校验更新文件...")
+					expected := strings.Fields(string(checksumData))
+					actual := sha256.Sum256(binaryData)
+					if len(expected) > 0 && strings.EqualFold(expected[0], hex.EncodeToString(actual[:])) {
+						return binaryData, source.name, nil
+					}
+					lastErr = fmt.Errorf("%s文件SHA-256校验失败", source.name)
+					fmt.Printf("%v\n", lastErr)
+				}
+			}
+			if attempt < attempts {
+				time.Sleep(time.Duration(attempt*2) * time.Second)
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("没有可用的更新下载源")
+	}
+	return nil, "", lastErr
 }
 
 func downloadWithProgress(client *http.Client, url string) ([]byte, error) {
