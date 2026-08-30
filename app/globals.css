@@ -1808,6 +1808,83 @@ select option {
 .home-server-page {
   margin-bottom: 16px;
 }
+.local-server-address-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #8c7a42;
+  background: #08100de8;
+}
+.local-server-address-panel h3 {
+  margin: 0;
+  color: #ffe28a;
+  font-size: 14px;
+  text-shadow: 2px 2px 0 #000;
+}
+.local-server-address-panel > label {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: #eee;
+}
+.local-server-address-panel input {
+  width: 100%;
+  min-width: 0;
+}
+.local-server-address-panel small {
+  line-height: 1.55;
+}
+.local-server-error {
+  margin: 0;
+  color: #ff8e8e;
+  font-size: 11px;
+}
+.local-server-history {
+  display: grid !important;
+  gap: 6px !important;
+  margin-top: 3px;
+}
+.local-server-history > strong {
+  color: #d5cda9;
+  font-size: 12px;
+}
+.local-server-history article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #ffffff20;
+  background: #111715;
+}
+.local-server-history article span {
+  min-width: 0;
+  overflow: hidden;
+  color: #eef5e9;
+  font: 12px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-server-history article button {
+  min-height: 34px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.server-join-divider {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  color: #aaa;
+  font-size: 11px;
+}
+.server-join-divider::before,
+.server-join-divider::after {
+  flex: 1;
+  height: 1px;
+  background: #ffffff2a;
+  content: "";
+}
 .home-bottom-nav {
   position: sticky;
   bottom: -24px;

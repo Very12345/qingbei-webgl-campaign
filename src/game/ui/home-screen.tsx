@@ -6,6 +6,38 @@ import type {
   Team,
 } from "../types";
 
+const LOCAL_SERVER_HISTORY_KEY = "qingbei-local-server-addresses-v1";
+const DEFAULT_LOCAL_SERVER_PORT = "17890";
+
+function normalizeLocalServerAddress(rawAddress: string) {
+  const trimmed = rawAddress.trim();
+  if (!trimmed) return null;
+  const address = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+  try {
+    const url = new URL(address);
+    if (!url.port) url.port = DEFAULT_LOCAL_SERVER_PORT;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function readLocalServerHistory() {
+  if (typeof window === "undefined") return [];
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(LOCAL_SERVER_HISTORY_KEY) ?? "[]",
+    );
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export type HomePage =
   | "menu"
   | "new"
@@ -104,7 +136,42 @@ export function HomeScreen(props: HomeScreenProps) {
   } = props;
   const [serverName, setServerName] = useState("清北联机服务器"),
     [serverMaxPlayers, setServerMaxPlayers] = useState(4),
-    [serverMapSavedAt, setServerMapSavedAt] = useState<number | undefined>();
+    [serverMapSavedAt, setServerMapSavedAt] = useState<number | undefined>(),
+    [localServerAddress, setLocalServerAddress] = useState(""),
+    [localServerError, setLocalServerError] = useState(""),
+    [localServerHistory, setLocalServerHistory] = useState<string[]>(
+      readLocalServerHistory,
+    );
+
+  const openLocalServer = (rawAddress: string) => {
+    const origin = normalizeLocalServerAddress(rawAddress);
+    if (!origin) {
+      setLocalServerError("请输入有效的 IP 与端口，例如 192.168.1.10:17890");
+      return;
+    }
+    setLocalServerError("");
+    const nextHistory = [
+      origin,
+      ...localServerHistory.filter((entry) => entry !== origin),
+    ].slice(0, 6);
+    setLocalServerHistory(nextHistory);
+    window.localStorage.setItem(
+      LOCAL_SERVER_HISTORY_KEY,
+      JSON.stringify(nextHistory),
+    );
+    window.location.assign(
+      `${origin}/qingbei-webgl-campaign/?local=1`,
+    );
+  };
+
+  const forgetLocalServer = (origin: string) => {
+    const nextHistory = localServerHistory.filter((entry) => entry !== origin);
+    setLocalServerHistory(nextHistory);
+    window.localStorage.setItem(
+      LOCAL_SERVER_HISTORY_KEY,
+      JSON.stringify(nextHistory),
+    );
+  };
 
   return (
     <section
@@ -268,6 +335,61 @@ export function HomeScreen(props: HomeScreenProps) {
         {page === "join-server" && (
           <div className="lan-panel home-server-page">
             <h2>进入服务器</h2>
+            <section className="local-server-address-panel">
+              <h3>本地服务器</h3>
+              <label>
+                <span>IP 与端口</span>
+                <input
+                  value={localServerAddress}
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="192.168.1.10:17890"
+                  onChange={(event) => {
+                    setLocalServerAddress(event.target.value);
+                    setLocalServerError("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      openLocalServer(localServerAddress);
+                    }
+                  }}
+                />
+              </label>
+              <button onClick={() => openLocalServer(localServerAddress)}>
+                添加并打开服务器
+              </button>
+              {localServerError && (
+                <p className="local-server-error" role="alert">
+                  {localServerError}
+                </p>
+              )}
+              <small>
+                将打开服务器提供的游戏页面；首次使用前，请在主机上运行本地服务器程序。
+              </small>
+              {localServerHistory.length > 0 && (
+                <div className="local-server-history">
+                  <strong>历史服务器</strong>
+                  {localServerHistory.map((origin) => (
+                    <article key={origin}>
+                      <span>{origin.replace(/^https?:\/\//, "")}</span>
+                      <button onClick={() => openLocalServer(origin)}>打开</button>
+                      <button
+                        className="delete"
+                        aria-label={`删除服务器 ${origin}`}
+                        onClick={() => forgetLocalServer(origin)}
+                      >
+                        删除
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+            <div className="server-join-divider">
+              <span>或使用房间码联机</span>
+            </div>
             <label className="lan-team-select">
               <span>玩家昵称</span>
               <input
