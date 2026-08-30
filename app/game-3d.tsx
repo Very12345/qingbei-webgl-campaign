@@ -168,11 +168,13 @@ export default function Game3D() {
   const [pauseOpen, setPauseOpen] = useState(false);
   const pauseOpenRef = useRef(false);
   const [pauseSettingsOpen, setPauseSettingsOpen] = useState(false);
-  const [homePage, setHomePage] = useState<HomePage>(() =>
-    new URLSearchParams(location.search).get("join")
-      ? "join-server"
-      : "menu",
-  );
+  const [homePage, setHomePage] = useState<HomePage>(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("join")) return "join-server";
+    if (params.get("local") === "1")
+      return params.get("manage") === "1" ? "servers" : "join-server";
+    return "menu";
+  });
   const [newGameTeam, setNewGameTeam] = useState<Team>("pku");
   const [openToLan, setOpenToLan] = useState(false);
   const [lanInput, setLanInput] = useState(
@@ -215,6 +217,9 @@ export default function Game3D() {
   const localRelayHubRef = useRef<LocalRelayHub | null>(null);
   const localRelayModeRef = useRef(
     new URLSearchParams(location.search).get("local") === "1",
+  );
+  const localServerManagerRef = useRef(
+    new URLSearchParams(location.search).get("manage") === "1",
   );
   const serverIceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const iceCandidateTypesRef = useRef(
@@ -2701,6 +2706,19 @@ export default function Game3D() {
       );
     }
   };
+  const joinCurrentLocalServer = async () => {
+    try {
+      setLanStatus("正在查找这台服务器的战局…");
+      const status = await localRoomStatus();
+      if (!status.roomCode) throw new Error("这台服务器尚未启动战局");
+      setLanInput(status.roomCode);
+      await requestAutomaticJoin(status.roomCode);
+    } catch (error) {
+      setLanStatus(
+        error instanceof Error ? error.message : "无法读取本地服务器战局",
+      );
+    }
+  };
   const connectToLanHost = async (
     invite: ServerInvitePayload,
     team: Team,
@@ -3685,6 +3703,9 @@ export default function Game3D() {
           exportServer={exportServer}
           importServer={(file) => void importServer(file)}
           openServerAdmin={openServerAdmin}
+          localServerMode={localRelayModeRef.current}
+          localServerManager={localServerManagerRef.current}
+          joinCurrentLocalServer={joinCurrentLocalServer}
         />
       )}
       {teamSelection && (

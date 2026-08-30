@@ -88,6 +88,9 @@ type HomeScreenProps = {
   exportServer: (server: ServerRecord) => void;
   importServer: (file: File) => void;
   openServerAdmin: (server?: ServerRecord) => void;
+  localServerMode: boolean;
+  localServerManager: boolean;
+  joinCurrentLocalServer: () => Promise<void>;
 };
 
 export function HomeScreen(props: HomeScreenProps) {
@@ -133,6 +136,9 @@ export function HomeScreen(props: HomeScreenProps) {
     exportServer,
     importServer,
     openServerAdmin,
+    localServerMode,
+    localServerManager,
+    joinCurrentLocalServer,
   } = props;
   const [serverName, setServerName] = useState("清北联机服务器"),
     [serverMaxPlayers, setServerMaxPlayers] = useState(4),
@@ -209,16 +215,26 @@ export function HomeScreen(props: HomeScreenProps) {
         )}
         {page === "servers" && (
           <div className="lan-panel home-server-page">
-            <h2>服务器</h2>
-            <div className="server-page-actions">
+            <h2>{localServerManager ? "本地服务器管理" : "服务器"}</h2>
+            {localServerManager && (
+              <div className="local-server-connected-banner manager">
+                <strong>服务器程序已连接</strong>
+                <span>创建或启动一个战局后，局域网玩家即可通过 IP 与端口直接进入。</span>
+              </div>
+            )}
+            <div
+              className={`server-page-actions${localServerMode ? " local" : ""}`}
+            >
               <button onClick={() => setPage("create-server")}>创建服务器</button>
               <button onClick={() => setPage("join-server")}>进入服务器</button>
-              <a
-                className="local-server-download"
-                href="https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qingbei-server-windows-amd64.exe"
-              >
-                下载本地服务器
-              </a>
+              {!localServerMode && (
+                <a
+                  className="local-server-download"
+                  href="https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qingbei-server-windows-amd64.exe"
+                >
+                  下载本地服务器
+                </a>
+              )}
             </div>
             <p className="lan-status">
               {lanStatus} · 当前连接 {connectedPlayers} 名远程玩家
@@ -335,7 +351,18 @@ export function HomeScreen(props: HomeScreenProps) {
         {page === "join-server" && (
           <div className="lan-panel home-server-page">
             <h2>进入服务器</h2>
-            <section className="local-server-address-panel">
+            {localServerMode ? (
+              <section className="local-server-connected-banner">
+                <small>已连接本地服务器</small>
+                <h3>{window.location.host}</h3>
+                <p>点击后将自动查找这台服务器当前运行的战局，并进入阵营选择。</p>
+                <button onClick={() => void joinCurrentLocalServer()}>
+                  进入这台服务器
+                </button>
+                <span>{lanStatus}</span>
+              </section>
+            ) : (
+              <section className="local-server-address-panel">
               <h3>本地服务器</h3>
               <label>
                 <span>IP 与端口</span>
@@ -386,9 +413,10 @@ export function HomeScreen(props: HomeScreenProps) {
                   ))}
                 </div>
               )}
-            </section>
+              </section>
+            )}
             <div className="server-join-divider">
-              <span>或使用房间码联机</span>
+              <span>{localServerMode ? "高级：指定房间码" : "或使用房间码联机"}</span>
             </div>
             <label className="lan-team-select">
               <span>玩家昵称</span>

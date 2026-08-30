@@ -132,13 +132,16 @@ export class LocalRelayHub {
   }
 }
 
-export const localRoomStatus = async (roomCode: string) => {
-  const response = await fetch(
-    `/api/room?code=${encodeURIComponent(roomCode)}`,
-  );
-  if (!response.ok) throw new Error("本地服务器中没有这个房间");
+export const localRoomStatus = async (roomCode = "") => {
+  const query = roomCode ? `?code=${encodeURIComponent(roomCode)}` : "";
+  const response = await fetch(`/api/room${query}`);
+  if (!response.ok)
+    throw new Error(
+      roomCode ? "本地服务器中没有这个房间" : "这台服务器尚未启动战局",
+    );
   return (await response.json()) as {
     online: boolean;
+    roomCode: string;
     counts: Record<Team, number>;
     players: number;
   };

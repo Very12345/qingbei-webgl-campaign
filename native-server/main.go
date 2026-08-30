@@ -302,6 +302,22 @@ func (hub *relayHub) roomStatus(code string) (bool, map[string]int) {
 	return true, counts
 }
 
+func (hub *relayHub) activeRoomStatus() (string, bool, map[string]int) {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	counts := map[string]int{"pku": 0, "thu": 0}
+	for code, room := range hub.rooms {
+		if room.host == nil {
+			continue
+		}
+		for _, guest := range room.guests {
+			counts[guest.team]++
+		}
+		return code, true, counts
+	}
+	return "", false, counts
+}
+
 func (hub *relayHub) activeClients() int {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
@@ -402,13 +418,19 @@ func main() {
 	})
 	mux.HandleFunc("/api/room", func(writer http.ResponseWriter, request *http.Request) {
 		code := normalizeCode(request.URL.Query().Get("code"))
-		online, counts := hub.roomStatus(code)
+		var online bool
+		var counts map[string]int
+		if code == "" {
+			code, online, counts = hub.activeRoomStatus()
+		} else {
+			online, counts = hub.roomStatus(code)
+		}
 		players := counts["pku"] + counts["thu"]
 		writer.Header().Set("Content-Type", "application/json")
 		if !online {
 			writer.WriteHeader(http.StatusNotFound)
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]any{"online": online, "counts": counts, "players": players})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"online": online, "roomCode": code, "counts": counts, "players": players})
 	})
 	mux.HandleFunc("/ws", func(writer http.ResponseWriter, request *http.Request) {
 		websocketHandler(hub, writer, request)
@@ -420,7 +442,7 @@ func main() {
 	})
 
 	address := fmt.Sprintf(":%d", *port)
-	localURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1", *port)
+	localURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1", *port)
 	fmt.Printf("解放清华园本地服务器 %s\n", version)
 	fmt.Printf("本机管理地址: %s\n", localURL)
 	for _, host := range localIPv4Addresses() {
