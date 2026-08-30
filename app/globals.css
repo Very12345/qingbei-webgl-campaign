@@ -206,6 +206,9 @@ select option {
   border: 1px solid #bca45d66;
   background: #101715e8;
 }
+.server-save-list article.local-server {
+  grid-template-columns: minmax(170px, 1fr) repeat(3, auto);
+}
 .server-save-list article.online {
   border-color: #6fc488;
   box-shadow: inset 3px 0 0 #58b978;

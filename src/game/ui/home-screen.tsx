@@ -245,7 +245,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 servers.map((server) => (
                   <article
                     key={server.id}
-                    className={activeServerId === server.id ? "online" : "offline"}
+                    className={`${activeServerId === server.id ? "online" : "offline"}${localServerMode ? " local-server" : ""}`}
                   >
                     <div>
                       <strong>
@@ -265,9 +265,11 @@ export function HomeScreen(props: HomeScreenProps) {
                     ) : (
                       <button onClick={() => launchServer(server)}>启动</button>
                     )}
-                    <button onClick={() => openServerAdmin(server)}>
-                      控制台
-                    </button>
+                    {!localServerMode && (
+                      <button onClick={() => openServerAdmin(server)}>
+                        控制台
+                      </button>
+                    )}
                     <button onClick={() => exportServer(server)}>导出</button>
                     <button
                       className="delete"

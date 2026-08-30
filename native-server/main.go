@@ -265,7 +265,7 @@ func (hub *relayHub) unregister(client *wsClient) {
 
 func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 	if message.Type == "server_command_result" && sender.role == "host" {
-		log.Printf("[命令结果] %s\n", message.Message)
+		terminalCommandResult(message.Message)
 		return
 	}
 	if message.Type == "relay" {
@@ -599,7 +599,7 @@ func randomID() string {
 
 func main() {
 	port := flag.Int("port", 17890, "HTTP/WebSocket listen port")
-	noOpen := flag.Bool("no-open", false, "do not open a browser automatically")
+	noOpen := flag.Bool("no-open", false, "do not start the background battle host")
 	noUpdate := flag.Bool("no-update", false, "disable automatic updates")
 	flag.Parse()
 	if !*noUpdate && version != "dev" {
@@ -642,20 +642,38 @@ func main() {
 	})
 
 	address := fmt.Sprintf(":%d", *port)
-	localURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
-	fmt.Printf("解放清华园本地服务器 %s\n", version)
-	fmt.Printf("本机管理地址: %s\n", localURL)
+	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
+	playerURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1", *port)
+	printTerminalBanner(version)
+	fmt.Printf("%s %s\n", paint(ansiGreen+ansiBold, "本机玩家地址:"), playerURL)
 	for _, host := range localIPv4Addresses() {
-		fmt.Printf("局域网玩家地址: http://%s:%d/qingbei-webgl-campaign/?local=1\n", host, *port)
+		fmt.Printf("%s http://%s:%d/qingbei-webgl-campaign/?local=1\n", paint(ansiMagenta+ansiBold, "局域网玩家地址:"), host, *port)
 	}
-	fmt.Println("关闭此窗口会停止本地服务器。")
+	terminalWarning("关闭此窗口会停止本地服务器。")
+	var hostMutex sync.Mutex
+	var backgroundHost *simulationHost
 	if !*noOpen {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			openBrowser(localURL)
+			host, err := startSimulationHost(hostURL)
+			if err != nil {
+				terminalError("后台战局主机启动失败：" + err.Error())
+				terminalWarning("已改为打开兼容管理页；安装 Chrome、Chromium 或 Edge 后可完全后台运行。")
+				openBrowser(hostURL)
+				return
+			}
+			hostMutex.Lock()
+			backgroundHost = host
+			hostMutex.Unlock()
+			terminalSuccess("后台战局主机已启动；管理员操作已迁移到当前终端。")
 		}()
 	}
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	defer func() {
+		hostMutex.Lock()
+		defer hostMutex.Unlock()
+		backgroundHost.stop()
+	}()
 	go runConsole(hub, server)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
@@ -664,10 +682,10 @@ func main() {
 
 func runConsole(hub *relayHub, server *http.Server) {
 	fmt.Println()
-	fmt.Println("服务器终端已就绪。输入 help 查看可用命令。")
+	terminalSuccess("服务器终端已就绪。输入 help 查看可用命令；支持上下文 API 指令。")
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print("> ")
+		terminalPrompt()
 		if !scanner.Scan() {
 			return
 		}
@@ -678,30 +696,42 @@ func runConsole(hub *relayHub, server *http.Server) {
 		command, argument, _ := strings.Cut(line, " ")
 		switch strings.ToLower(command) {
 		case "help", "?":
-			fmt.Println("可用命令：")
-			fmt.Println("  status          查看服务器、房间和玩家数量")
-			fmt.Println("  rooms           查看正在运行的战局")
-			fmt.Println("  players         查看所有在线玩家")
-			fmt.Println("  say <消息>      向所有战局发送系统消息")
-			fmt.Println("  save            立即保存当前战局")
-			fmt.Println("  new             新建并切换到全新战局")
-			fmt.Println("  resume          恢复最近保存的战局")
-			fmt.Println("  battle          查看当前战局状态")
-			fmt.Println("  kick <名称/ID>  移出一名玩家")
-			fmt.Println("  version         查看服务器版本")
-			fmt.Println("  clear           清空终端")
-			fmt.Println("  stop            保存由网页负责；断开玩家并停止服务")
+			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
+			fmt.Println("  status / battle       查看进程或详细战局状态")
+			fmt.Println("  rooms / players       查看战局和在线玩家")
+			fmt.Println("  kick <名称/ID>        移出玩家")
+			fmt.Println("  say <消息>            广播系统消息")
+			fmt.Println(paint(ansiYellow+ansiBold, "战局与存档"))
+			fmt.Println("  save                  立即保存")
+			fmt.Println("  new                   创建全新战局")
+			fmt.Println("  saves                 列出服务器存档")
+			fmt.Println("  resume [名称/ID]      恢复指定或最近战局")
+			fmt.Println("  maps / map <编号>     列出或切换地图存档")
+			fmt.Println("  logs [数量]           查看战局记录")
+			fmt.Println(paint(ansiYellow+ansiBold, "配置与管理"))
+			fmt.Println("  config                查看全部配置")
+			fmt.Println("  set name <名称>       修改服务器名称")
+			fmt.Println("  set maxplayers <2-8>  修改最大玩家数")
+			fmt.Println("  set sameteam <on|off> 允许或禁止后续玩家同阵营")
+			fmt.Println("  set turn-url <地址>   配置TURN中继（可逗号分隔）")
+			fmt.Println("  set turn-user <名称>  配置TURN用户名")
+			fmt.Println("  set turn-credential   配置TURN凭据")
+			fmt.Println("  timescale <0.5-16>    修改时间倍率")
+			fmt.Println("  resource <阵营> <数>  修改战略资源")
+			fmt.Println("  mobilize <阵营> <姿态>执行总动员")
+			fmt.Println("  version / clear / stop")
+			fmt.Println(paint(ansiDim, "未被终端内建处理的命令会自动转发给战局 API。"))
 		case "status":
 			rooms := hub.consoleSnapshot()
 			players := 0
 			for _, room := range rooms {
 				players += len(room.players)
 			}
-			fmt.Printf("版本 %s · 运行中战局 %d · 在线玩家 %d\n", version, len(rooms), players)
+			fmt.Printf("%s %s  %s %d  %s %d\n", paint(ansiCyan, "版本"), paint(ansiWhite+ansiBold, version), paint(ansiCyan, "运行中战局"), len(rooms), paint(ansiCyan, "在线玩家"), players)
 		case "rooms":
 			rooms := hub.consoleSnapshot()
 			if len(rooms) == 0 {
-				fmt.Println("当前没有运行中的战局。请在本机管理页面创建并启动服务器。")
+				terminalWarning("后台战局主机仍在初始化，请稍后重试。")
 				continue
 			}
 			for _, room := range rooms {
@@ -709,7 +739,7 @@ func runConsole(hub *relayHub, server *http.Server) {
 				if room.host {
 					state = "运行中"
 				}
-				fmt.Printf("%s · %s · %d 名玩家\n", room.code, state, len(room.players))
+				fmt.Printf("%s  %s  %s\n", paint(ansiMagenta+ansiBold, room.code), paint(ansiGreen, state), paint(ansiWhite, fmt.Sprintf("%d 名玩家", len(room.players))))
 			}
 		case "players":
 			rooms := hub.consoleSnapshot()
@@ -725,39 +755,39 @@ func runConsole(hub *relayHub, server *http.Server) {
 				}
 			}
 			if shown == 0 {
-				fmt.Println("当前没有在线玩家。")
+				terminalInfo("当前没有在线玩家。")
 			}
 		case "say":
 			if strings.TrimSpace(argument) == "" {
-				fmt.Println("用法：say <消息>")
+				terminalWarning("用法：say <消息>")
 				continue
 			}
 			deliveries := hub.broadcastSystemMessage(argument)
 			log.Printf("[公告] %s（发送 %d 个连接）\n", strings.TrimSpace(argument), deliveries)
 		case "save", "new", "resume":
-			if hub.sendHostCommand(strings.ToLower(command)) == 0 {
-				fmt.Println("战局网页主机尚未就绪，请稍后重试。")
+			if hub.sendHostCommand(line) == 0 {
+				terminalWarning("后台战局主机尚未就绪，请稍后重试。")
 			} else {
-				fmt.Println("命令已发送到战局主机。")
+				terminalSuccess("命令已发送。")
 			}
 		case "battle":
 			if hub.sendHostCommand("status") == 0 {
-				fmt.Println("战局网页主机尚未就绪，请稍后重试。")
+				terminalWarning("后台战局主机尚未就绪，请稍后重试。")
 			} else {
-				fmt.Println("正在读取战局状态...")
+				terminalInfo("正在读取战局状态...")
 			}
 		case "kick":
 			if hub.kickPlayer(argument) {
-				fmt.Println("已移出玩家。")
+				terminalSuccess("已移出玩家。")
 			} else {
-				fmt.Println("未找到玩家。请使用 players 查看名称或ID。")
+				terminalWarning("未找到玩家。请使用 players 查看名称或ID。")
 			}
 		case "version":
 			fmt.Printf("解放清华园本地服务器 %s\n", version)
 		case "clear", "cls":
 			clearConsole()
 		case "stop", "exit", "quit":
-			fmt.Println("正在保存战局、断开玩家并停止服务器...")
+			terminalWarning("正在保存战局、断开玩家并停止服务器...")
 			if hub.sendHostCommand("save") > 0 {
 				time.Sleep(350 * time.Millisecond)
 			}
@@ -768,7 +798,11 @@ func runConsole(hub *relayHub, server *http.Server) {
 			cancel()
 			return
 		default:
-			fmt.Printf("未知命令：%s。输入 help 查看命令。\n", command)
+			if hub.sendHostCommand(line) == 0 {
+				terminalWarning("后台战局主机尚未就绪；命令暂未发送。")
+			} else {
+				terminalInfo("API 命令已发送。")
+			}
 		}
 	}
 }

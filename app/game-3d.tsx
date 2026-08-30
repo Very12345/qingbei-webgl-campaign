@@ -1858,6 +1858,32 @@ export default function Game3D() {
           if (host) {
             const expectedTeam = expectedTeamByChannelRef.current.get(channel);
             if (expectedTeam) identity = { ...identity, team: expectedTeam };
+            const activeConfiguration = readServerSaves().find(
+              (record) => record.id === activeServerIdRef.current,
+            );
+            if (
+              activeConfiguration &&
+              lanChannelIdentityRef.current.size >=
+                activeConfiguration.maxPlayers
+            ) {
+              recordServerLog("player", `${identity.nickname}因服务器已满被拒绝`);
+              channel.close();
+              return;
+            }
+            if (
+              activeConfiguration &&
+              !activeConfiguration.allowSameTeam &&
+              [...lanChannelIdentityRef.current.values()].some(
+                (player) => player.team === identity.team,
+              )
+            ) {
+              recordServerLog(
+                "player",
+                `${identity.nickname}因阵营已有操作者被拒绝`,
+              );
+              channel.close();
+              return;
+            }
             const usedNames = new Set(
                 [
                   ...(dedicatedServerHostRef.current
@@ -2504,7 +2530,15 @@ export default function Game3D() {
           bindLanChannel(channel, true);
         },
         setLanStatus,
-        (command) => executeServerAdminCommand(command),
+        (command) =>
+          executeServerAdminCommand(command).then((output) => {
+            const compactOutput = output.replace(/\s+/g, " ").slice(0, 240);
+            recordServerLog(
+              "command",
+              `${command} → ${compactOutput}${output.length > 240 ? "…" : ""}`,
+            );
+            return output;
+          }),
       );
       localRelayHubRef.current = hub;
       hub.connect();
@@ -3009,16 +3043,54 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | new | resume | save | invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
-    if (action === "status")
-      return JSON.stringify(buildServerSummary(activeServerIdRef.current ?? ""));
+      return "API: status | players | config | set <name|maxplayers|sameteam|turn-url|turn-user|turn-credential> <值> | saves | maps | map <savedAt> | logs [数量] | new [名称] | resume [名称/ID] | save | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
+    if (action === "status") {
+      const summary = buildServerSummary(activeServerIdRef.current ?? "");
+      return JSON.stringify({
+        online: summary.online,
+        clock: summary.clock,
+        outcome: summary.outcome ?? "进行中",
+        players: summary.players.map((player) => ({
+          nickname: player.nickname,
+          team: player.team,
+        })),
+        units: summary.units,
+        sites: summary.sites,
+        deaths: summary.deaths,
+        resources: summary.resources,
+      });
+    }
     if (action === "players")
       return buildServerSummary(activeServerIdRef.current ?? "").players
         .map((player) => `${player.nickname}:${player.team}${player.host ? ":host" : ""}`)
         .join(", ");
+    if (action === "saves") {
+      const records = readServerSaves().sort(
+        (first, second) => second.updatedAt - first.updatedAt,
+      );
+      return records.length
+        ? records
+            .map(
+              (record) =>
+                `${record.id.slice(0, 8)} | ${record.name} | ${new Date(record.updatedAt).toLocaleString("zh-CN")} | ${record.map.units.length}人`,
+            )
+            .join("\n")
+        : "没有服务器存档";
+    }
+    if (action === "maps") {
+      const maps = readSaves();
+      return maps.length
+        ? maps
+            .map(
+              (map) =>
+                `${map.savedAt} | ${map.name} | ${map.units.length}人`,
+            )
+            .join("\n")
+        : "没有可导入的玩家地图存档";
+    }
     if (action === "new") {
       saveUnfinishedGame(true);
-      const server = createServer("清北本地服务器", 8);
+      const server = createServer(rest || "清北本地服务器", 8);
       launchServer(server);
       recordServerLog("command", "终端创建了全新战局");
       return `已创建并启动全新战局：${server.name}`;
@@ -3028,9 +3100,15 @@ export default function Game3D() {
           (first, second) => second.updatedAt - first.updatedAt,
         ),
         previous =
-          records.find(
-            (record) => record.id !== activeServerIdRef.current,
-          ) ?? records[0];
+          (rest
+            ? records.find(
+                (record) =>
+                  record.id.startsWith(rest) ||
+                  record.name.toLowerCase() === rest.toLowerCase(),
+              )
+            : records.find(
+                (record) => record.id !== activeServerIdRef.current,
+              )) ?? records[0];
       if (!previous) throw new Error("没有可以恢复的服务器战局");
       launchServer(previous);
       recordServerLog("command", `终端恢复战局：${previous.name}`);
@@ -3042,6 +3120,82 @@ export default function Game3D() {
           ? "请回到游戏窗口完成阵营选择；完成后房间码会自动生成"
           : "服务器尚未启动，请先点击“启动服务器”并在游戏窗口选择阵营",
       );
+    const activeServer = readServerSaves().find(
+      (record) => record.id === activeServerIdRef.current,
+    );
+    if (action === "config") {
+      if (!activeServer) throw new Error("当前服务器配置不存在");
+      return JSON.stringify({
+        id: activeServer.id,
+        name: activeServer.name,
+        maxPlayers: activeServer.maxPlayers,
+        allowSameTeam: activeServer.allowSameTeam,
+        map: activeServer.map.name,
+        turnUrls: activeServer.turnServer?.urls ?? [],
+        turnUsername: activeServer.turnServer?.username ?? "",
+        turnCredentialConfigured: Boolean(activeServer.turnServer?.credential),
+      });
+    }
+    if (action === "logs") {
+      if (!activeServer) throw new Error("当前服务器记录不存在");
+      const count = Math.min(200, Math.max(1, Number(args[0]) || 30));
+      return (activeServer.logs ?? [])
+        .slice(-count)
+        .map(
+          (entry) =>
+            `${new Date(entry.at).toLocaleTimeString("zh-CN")} [${entry.category}] ${entry.text}`,
+        )
+        .join("\n") || "暂无服务器记录";
+    }
+    if (action === "set") {
+      if (!activeServer) throw new Error("当前服务器配置不存在");
+      const key = args[0]?.toLowerCase(),
+        value = rest.slice(args[0]?.length ?? 0).trim();
+      let next = { ...activeServer };
+      if (key === "name")
+        next.name = value.slice(0, 24) || activeServer.name;
+      else if (key === "maxplayers") {
+        const maximum = Number(value);
+        if (!Number.isInteger(maximum) || maximum < 2 || maximum > 8)
+          throw new Error("最大玩家数必须是2—8的整数");
+        next.maxPlayers = maximum;
+      } else if (key === "sameteam") {
+        if (!["on", "off"].includes(value.toLowerCase()))
+          throw new Error("用法：set sameteam <on|off>");
+        next.allowSameTeam = value.toLowerCase() === "on";
+      } else if (["turn-url", "turn-user", "turn-credential"].includes(key)) {
+        const turn = {
+          urls: activeServer.turnServer?.urls ?? [],
+          username: activeServer.turnServer?.username ?? "",
+          credential: activeServer.turnServer?.credential ?? "",
+        };
+        if (key === "turn-url")
+          turn.urls = value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        if (key === "turn-user") turn.username = value;
+        if (key === "turn-credential") turn.credential = value;
+        next.turnServer = turn;
+      } else throw new Error("未知配置项");
+      next.updatedAt = Date.now();
+      setServerSaves(upsertServerSave(next));
+      return `配置已更新：${key}`;
+    }
+    if (action === "map") {
+      if (!activeServer) throw new Error("当前服务器配置不存在");
+      const savedAt = Number(args[0]),
+        selected = readSaves().find((save) => save.savedAt === savedAt);
+      if (!selected) throw new Error("没有找到地图；先使用 maps 查看编号");
+      const next = {
+        ...activeServer,
+        map: structuredClone(selected),
+        updatedAt: Date.now(),
+      };
+      setServerSaves(upsertServerSave(next));
+      launchServer(next);
+      return `已切换地图：${selected.name}`;
+    }
     if (action === "invite") {
       const roomCode = await startAutomaticHost(activeServerIdRef.current);
       return `自动房间码：${roomCode}`;
@@ -3825,16 +3979,18 @@ export default function Game3D() {
               >
                 打开玩家入口
               </button>
-              <button
-                onClick={() => {
-                  const server = serverSaves.find(
-                    (candidate) => candidate.id === activeServerId,
-                  );
-                  if (server) openServerAdmin(server);
-                }}
-              >
-                控制台
-              </button>
+              {!localRelayModeRef.current && (
+                <button
+                  onClick={() => {
+                    const server = serverSaves.find(
+                      (candidate) => candidate.id === activeServerId,
+                    );
+                    if (server) openServerAdmin(server);
+                  }}
+                >
+                  控制台
+                </button>
+              )}
               <button className="danger" onClick={() => stopServer(activeServerId)}>
                 停止服务器
               </button>
