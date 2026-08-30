@@ -6868,6 +6868,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           return aiState.seed / 4_294_967_296;
         },
         personality = aiState.personality[aiTeam],
+        forwardPrefix =
+          aiTeam === "thu" ? "清华燕园校区·" : "北大清华园校区·",
+        isForwardCaptured = (site: SiteState) =>
+          (site.displayName ?? "").startsWith(forwardPrefix),
         qz = g.sites.find(
           (site) => site.name === "求真书院" && !site.destroyed,
         ),
@@ -6988,7 +6992,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         ),
         stagingAssignments = new Map<number, number>();
       logisticsFriendlySites
-        .filter((site) => site.type === "dorm" || site.type === "dining")
+        .filter(
+          (site) =>
+            (site.type === "dorm" || site.type === "dining") &&
+            !isForwardCaptured(site),
+        )
         .sort((a, b) => logisticsIdleAt(b) - logisticsIdleAt(a))
         .forEach((source) => {
           const idle = logisticsIdleAt(source),
@@ -7026,6 +7034,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         });
       if (!g.campaign.warUnlocked) return;
+      g.sites
+        .filter(
+          (source) =>
+            source.team === aiTeam &&
+            !source.destroyed &&
+            source.orderTarget != null &&
+            g.sites[source.orderTarget]?.team === aiTeam,
+        )
+        .forEach((source) => {
+          source.orderTarget = undefined;
+          source.orderPath = undefined;
+        });
       if (qz && aiTeam === "thu") {
         const threat = g.units.filter(
           (unit) =>
@@ -7292,7 +7312,105 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const enemyProductionRemaining = enemySites.filter(
           (site) => site.type === "dorm" || site.type === "dining",
         ).length,
-        activeRoutes = friendlySites.filter(
+        occupiedAttackTargets = new Set(
+          friendlySites.flatMap((source) =>
+            source.orderTarget != null &&
+            g.sites[source.orderTarget]?.team === enemyTeam
+              ? [source.orderTarget]
+              : [],
+          ),
+        ),
+        forwardHubs = friendlySites
+          .filter(
+            (site) =>
+              isForwardCaptured(site) &&
+              !urgentProductionIds.has(site.id) &&
+              idleAt(site) >= 20,
+          )
+          .sort((a, b) => idleAt(b) - idleAt(a))
+          .slice(0, difficulty === "hard" ? 4 : difficulty === "casual" ? 1 : 3);
+      for (const hub of forwardHubs) {
+        const localThreat = threatAt(hub),
+          garrison = Math.max(12, Math.ceil(localThreat * 1.45) + 4),
+          idle = idleAt(hub),
+          available = Math.max(0, idle - garrison),
+          dispatchBudget = Math.floor(
+            available *
+              (difficulty === "hard" ? 0.82 : difficulty === "casual" ? 0.42 : 0.68),
+          );
+        if (dispatchBudget < 6) continue;
+        const scored = enemySites
+            .map((target) => {
+              const defenders = g.units.filter(
+                  (unit) =>
+                    unit.team === enemyTeam &&
+                    Math.hypot(unit.x - target.x, unit.z - target.z) < 5,
+                ).length,
+                productionValue =
+                  target.type === "dorm"
+                    ? 38
+                    : target.type === "dining"
+                      ? 28
+                      : target.type === "gate"
+                        ? 14
+                        : 0,
+                hardPoint =
+                  target.type === "capital" ||
+                  target.type === "target" ||
+                  target.type === "teaching",
+                hardPointPenalty =
+                  hardPoint && enemyProductionRemaining > 2
+                    ? difficulty === "hard" ? 50 : difficulty === "casual" ? 12 : 30
+                    : 0,
+                congestionPenalty = occupiedAttackTargets.has(target.id)
+                  ? difficulty === "hard" ? 24 : 14
+                  : 0,
+                distance = Math.hypot(target.x - hub.x, target.z - hub.z);
+              return {
+                target,
+                defenders,
+                score:
+                  productionValue -
+                  hardPointPenalty -
+                  congestionPenalty -
+                  distance -
+                  defenders * 1.55 +
+                  (random() - 0.5) * (difficulty === "casual" ? 12 : 4),
+              };
+            })
+            .sort((a, b) => b.score - a.score),
+          fanOutLimit = Math.min(
+            difficulty === "hard" ? 3 : difficulty === "casual" ? 1 : 2,
+            Math.max(1, Math.floor(dispatchBudget / 10)),
+          ),
+          targets = scored.slice(0, fanOutLimit);
+        if (!targets.length) continue;
+        hub.stance = "standby";
+        hub.dispatchRatio = 1;
+        let remaining = dispatchBudget;
+        targets.forEach((choice, index) => {
+          if (remaining <= 0) return;
+          const targetsLeft = targets.length - index,
+            requested = Math.min(
+              remaining,
+              Math.max(
+                5,
+                Math.ceil(choice.defenders * 1.55 + 4),
+                Math.floor(remaining / targetsLeft),
+              ),
+            ),
+            deployed = issueOrder(
+              aiTeam,
+              hub,
+              choice.target,
+              requested,
+              false,
+            );
+          if (deployed) occupiedAttackTargets.add(choice.target.id);
+          remaining -= deployed;
+        });
+      }
+      const activeRoutes = friendlySites.filter(
           (source) =>
             source.orderTarget != null &&
             g.sites[source.orderTarget]?.team === enemyTeam,
