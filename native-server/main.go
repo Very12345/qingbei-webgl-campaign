@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -21,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"runtime"
 	"strings"
 	"sync"
@@ -384,6 +386,9 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "do not open a browser automatically")
 	noUpdate := flag.Bool("no-update", false, "disable automatic updates")
 	flag.Parse()
+	if !*noUpdate && version != "dev" {
+		checkForUpdates()
+	}
 
 	hub := newRelayHub()
 	webRoot, err := fs.Sub(embeddedWeb, "web")
@@ -428,9 +433,6 @@ func main() {
 			openBrowser(localURL)
 		}()
 	}
-	if !*noUpdate && version != "dev" {
-		go checkForUpdates(hub)
-	}
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }
@@ -466,74 +468,129 @@ func openBrowser(url string) {
 	_ = command.Start()
 }
 
-type githubRelease struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	} `json:"assets"`
-}
-
-func checkForUpdates(hub *relayHub) {
-	time.Sleep(2 * time.Second)
+func checkForUpdates() {
+	fmt.Printf("正在检查更新（当前版本 %s）...\n", version)
 	client := &http.Client{Timeout: 30 * time.Second}
-	request, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/Very12345/qingbei-webgl-campaign/releases/latest", nil)
+	request, _ := http.NewRequest(http.MethodHead, "https://github.com/Very12345/qingbei-webgl-campaign/releases/latest", nil)
 	request.Header.Set("User-Agent", "qingbei-local-server/"+version)
 	response, err := client.Do(request)
 	if err != nil {
+		fmt.Printf("更新检查失败：%v，将继续启动当前版本。\n", err)
 		return
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		fmt.Printf("更新检查失败：GitHub 返回 %s，将继续启动当前版本。\n", response.Status)
 		return
 	}
-	var release githubRelease
-	if json.NewDecoder(response.Body).Decode(&release) != nil || release.TagName == "" || release.TagName == version {
+	latestVersion, err := url.PathUnescape(path.Base(response.Request.URL.Path))
+	if err != nil || latestVersion == "" || latestVersion == "latest" {
+		fmt.Println("更新信息无法读取，将继续启动当前版本。")
 		return
 	}
+	if latestVersion == version {
+		fmt.Println("当前已是最新版本。")
+		return
+	}
+	fmt.Printf("发现更新：%s → %s\n", version, latestVersion)
 	assetName := fmt.Sprintf("qingbei-server-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		assetName += ".exe"
 	}
-	var binaryURL, checksumURL string
-	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			binaryURL = asset.URL
-		}
-		if asset.Name == assetName+".sha256" {
-			checksumURL = asset.URL
-		}
-	}
-	if binaryURL == "" || checksumURL == "" {
-		return
-	}
-	binaryData, err := download(client, binaryURL)
+	releaseBase := fmt.Sprintf(
+		"https://github.com/Very12345/qingbei-webgl-campaign/releases/download/%s/",
+		url.PathEscape(latestVersion),
+	)
+	binaryURL := releaseBase + url.PathEscape(assetName)
+	checksumURL := binaryURL + ".sha256"
+	binaryData, err := downloadWithProgress(client, binaryURL)
 	if err != nil {
+		fmt.Printf("更新下载失败：%v，将继续启动当前版本。\n", err)
 		return
 	}
 	checksumData, err := download(client, checksumURL)
 	if err != nil {
+		fmt.Printf("校验文件下载失败：%v，将继续启动当前版本。\n", err)
 		return
 	}
+	fmt.Println("正在校验更新文件...")
 	expected := strings.Fields(string(checksumData))
 	actual := sha256.Sum256(binaryData)
 	if len(expected) == 0 || !strings.EqualFold(expected[0], hex.EncodeToString(actual[:])) {
-		log.Println("自动更新校验失败，已取消")
+		fmt.Println("更新文件校验失败，已取消安装并继续启动当前版本。")
 		return
 	}
+	fmt.Println("更新文件校验完成。")
 	executable, err := os.Executable()
 	if err != nil {
+		fmt.Printf("无法确定服务器程序位置：%v，将继续启动当前版本。\n", err)
 		return
 	}
 	newPath := executable + ".new"
-	if os.WriteFile(newPath, binaryData, 0755) != nil {
+	if err := os.WriteFile(newPath, binaryData, 0755); err != nil {
+		fmt.Printf("无法写入更新文件：%v，将继续启动当前版本。\n", err)
 		return
 	}
-	log.Printf("已下载更新 %s，将在房间空闲时自动应用。\n", release.TagName)
-	for hub.activeClients() > 0 {
-		time.Sleep(10 * time.Second)
+	fmt.Println("正在安装更新...服务器将自动重新启动。")
+	if err := applyUpdate(executable, newPath); err != nil {
+		fmt.Printf("更新安装失败：%v，将继续启动当前版本。\n", err)
 	}
-	applyUpdate(executable, newPath)
+}
+
+func downloadWithProgress(client *http.Client, url string) ([]byte, error) {
+	request, _ := http.NewRequest(http.MethodGet, url, nil)
+	request.Header.Set("User-Agent", "qingbei-local-server/"+version)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed: %s", response.Status)
+	}
+	if response.ContentLength > 100<<20 {
+		return nil, errors.New("update exceeds 100 MiB limit")
+	}
+	var buffer bytes.Buffer
+	if response.ContentLength > 0 {
+		buffer.Grow(int(response.ContentLength))
+	}
+	chunk := make([]byte, 64<<10)
+	var downloaded int64
+	lastPercent := -1
+	fmt.Print("下载更新：0%")
+	for {
+		count, readErr := response.Body.Read(chunk)
+		if count > 0 {
+			downloaded += int64(count)
+			if downloaded > 100<<20 {
+				fmt.Println()
+				return nil, errors.New("update exceeds 100 MiB limit")
+			}
+			_, _ = buffer.Write(chunk[:count])
+			if response.ContentLength > 0 {
+				percent := int(downloaded * 100 / response.ContentLength)
+				if percent != lastPercent {
+					fmt.Printf("\r下载更新：%d%%", percent)
+					lastPercent = percent
+				}
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			fmt.Println()
+			return nil, readErr
+		}
+	}
+	if response.ContentLength <= 0 {
+		fmt.Printf("\r下载更新：%.1f MiB", float64(downloaded)/(1<<20))
+	} else if lastPercent < 100 {
+		fmt.Print("\r下载更新：100%")
+	}
+	fmt.Println()
+	return buffer.Bytes(), nil
 }
 
 func download(client *http.Client, url string) ([]byte, error) {
@@ -550,23 +607,29 @@ func download(client *http.Client, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(response.Body, 100<<20))
 }
 
-func applyUpdate(executable, newPath string) {
+func applyUpdate(executable, newPath string) error {
 	arguments := strings.Join(os.Args[1:], " ")
 	if runtime.GOOS == "windows" {
 		script := executable + ".update.cmd"
 		content := fmt.Sprintf("@echo off\r\ntimeout /t 2 /nobreak >nul\r\nmove /Y \"%s\" \"%s\" >nul\r\nstart \"\" \"%s\" %s\r\ndel \"%%~f0\"\r\n", newPath, executable, executable, arguments)
-		if os.WriteFile(script, []byte(content), 0600) == nil {
-			_ = exec.Command("cmd", "/C", "start", "", script).Start()
-			os.Exit(0)
+		if err := os.WriteFile(script, []byte(content), 0600); err != nil {
+			return err
 		}
-		return
+		if err := exec.Command("cmd", "/C", "start", "", script).Start(); err != nil {
+			return err
+		}
+		os.Exit(0)
 	}
 	script := executable + ".update.sh"
 	content := fmt.Sprintf("#!/bin/sh\nsleep 1\nmv -f %q %q\nchmod +x %q\nexec %q %s\n", newPath, executable, executable, executable, arguments)
-	if os.WriteFile(script, []byte(content), 0700) == nil {
-		_ = exec.Command("sh", script).Start()
-		os.Exit(0)
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		return err
 	}
+	if err := exec.Command("sh", script).Start(); err != nil {
+		return err
+	}
+	os.Exit(0)
+	return nil
 }
 
 func init() {
