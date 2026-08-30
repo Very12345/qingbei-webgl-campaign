@@ -175,3 +175,17 @@ export const localRoomStatus = async (roomCode = "") => {
     players: number;
   };
 };
+
+export const localServerInfo = async () => {
+  const response = await fetch("/api/info");
+  if (!response.ok) throw new Error("无法读取本地服务器状态");
+  return (await response.json()) as {
+    name: string;
+    version: string;
+    battleHost?: {
+      status: string;
+      error?: string;
+      restarts: number;
+    };
+  };
+};

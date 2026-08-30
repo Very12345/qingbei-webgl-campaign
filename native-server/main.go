@@ -607,6 +607,11 @@ func main() {
 	}
 
 	hub := newRelayHub()
+	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
+	var hostController *simulationHostController
+	if !*noOpen {
+		hostController = newSimulationHostController(hostURL, hub)
+	}
 	webRoot, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -614,7 +619,11 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/info", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(map[string]any{"name": "qingbei-local-server", "version": version})
+		info := map[string]any{"name": "qingbei-local-server", "version": version}
+		if hostController != nil {
+			info["battleHost"] = hostController.snapshot()
+		}
+		_ = json.NewEncoder(writer).Encode(info)
 	})
 	mux.HandleFunc("/api/room", func(writer http.ResponseWriter, request *http.Request) {
 		code := normalizeCode(request.URL.Query().Get("code"))
@@ -642,7 +651,6 @@ func main() {
 	})
 
 	address := fmt.Sprintf(":%d", *port)
-	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
 	playerURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1", *port)
 	printTerminalBanner(version)
 	fmt.Printf("%s %s\n", paint(ansiGreen+ansiBold, "本机玩家地址:"), playerURL)
@@ -650,37 +658,18 @@ func main() {
 		fmt.Printf("%s http://%s:%d/qingbei-webgl-campaign/?local=1\n", paint(ansiMagenta+ansiBold, "局域网玩家地址:"), host, *port)
 	}
 	terminalWarning("关闭此窗口会停止本地服务器。")
-	var hostMutex sync.Mutex
-	var backgroundHost *simulationHost
-	if !*noOpen {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			host, err := startSimulationHost(hostURL)
-			if err != nil {
-				terminalError("后台战局主机启动失败：" + err.Error())
-				terminalWarning("已改为打开兼容管理页；安装 Chrome、Chromium 或 Edge 后可完全后台运行。")
-				openBrowser(hostURL)
-				return
-			}
-			hostMutex.Lock()
-			backgroundHost = host
-			hostMutex.Unlock()
-			terminalSuccess("后台战局主机已启动；管理员操作已迁移到当前终端。")
-		}()
-	}
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	defer func() {
-		hostMutex.Lock()
-		defer hostMutex.Unlock()
-		backgroundHost.stop()
-	}()
-	go runConsole(hub, server)
+	if hostController != nil {
+		hostController.start()
+		defer hostController.shutdown()
+	}
+	go runConsole(hub, server, hostController)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
 
-func runConsole(hub *relayHub, server *http.Server) {
+func runConsole(hub *relayHub, server *http.Server, hostController *simulationHostController) {
 	fmt.Println()
 	terminalSuccess("服务器终端已就绪。输入 help 查看可用命令；支持上下文 API 指令。")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -698,6 +687,7 @@ func runConsole(hub *relayHub, server *http.Server) {
 		case "help", "?":
 			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
 			fmt.Println("  status / battle       查看进程或详细战局状态")
+			fmt.Println("  host / host restart   查看或重启后台战局主机")
 			fmt.Println("  rooms / players       查看战局和在线玩家")
 			fmt.Println("  kick <名称/ID>        移出玩家")
 			fmt.Println("  say <消息>            广播系统消息")
@@ -728,6 +718,22 @@ func runConsole(hub *relayHub, server *http.Server) {
 				players += len(room.players)
 			}
 			fmt.Printf("%s %s  %s %d  %s %d\n", paint(ansiCyan, "版本"), paint(ansiWhite+ansiBold, version), paint(ansiCyan, "运行中战局"), len(rooms), paint(ansiCyan, "在线玩家"), players)
+		case "host":
+			if hostController == nil {
+				terminalWarning("后台战局主机已通过 --no-open 禁用。")
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(argument), "restart") {
+				hostController.requestRestart()
+				terminalInfo("已请求重启后台战局主机。")
+				continue
+			}
+			snapshot := hostController.snapshot()
+			fmt.Printf("%s %s\n", paint(ansiCyan, "后台状态:"), paint(ansiWhite+ansiBold, snapshot.Status))
+			fmt.Printf("%s %d\n", paint(ansiCyan, "自动重启:"), snapshot.Restarts)
+			if snapshot.Error != "" {
+				terminalError("最近错误: " + snapshot.Error)
+			}
 		case "rooms":
 			rooms := hub.consoleSnapshot()
 			if len(rooms) == 0 {

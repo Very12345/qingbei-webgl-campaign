@@ -70,6 +70,7 @@ import {
 import {
   LocalRelayHub,
   localRoomStatus,
+  localServerInfo,
   type NetworkChannel,
 } from "../src/game/local-relay";
 import {
@@ -2765,7 +2766,7 @@ export default function Game3D() {
   };
   const joinCurrentLocalServer = async () => {
     setLanStatus("正在等待服务器战局启动…");
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 120; attempt++) {
       try {
         const status = await localRoomStatus();
         if (!status.roomCode) throw new Error("服务器正在初始化战局");
@@ -2773,10 +2774,15 @@ export default function Game3D() {
         await requestAutomaticJoin(status.roomCode);
         return;
       } catch (error) {
-        if (attempt === 39) {
-          setLanStatus(
-            error instanceof Error ? error.message : "无法读取本地服务器战局",
-          );
+        if (attempt === 119) {
+          const info = await localServerInfo().catch(() => null),
+            host = info?.battleHost,
+            detail = host
+              ? `${host.status}${host.error ? `：${host.error}` : ""}`
+              : error instanceof Error
+                ? error.message
+                : "无法读取本地服务器战局";
+          setLanStatus(`后台战局未就绪：${detail}；请让管理员在终端输入 host`);
           return;
         }
         await new Promise((resolve) => window.setTimeout(resolve, 250));
