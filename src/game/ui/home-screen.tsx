@@ -350,14 +350,14 @@ export function HomeScreen(props: HomeScreenProps) {
         )}
         {page === "join-server" && (
           <div className="lan-panel home-server-page">
-            <h2>进入服务器</h2>
+            <h2>{localServerMode ? "正在进入服务器" : "进入服务器"}</h2>
             {localServerMode ? (
               <section className="local-server-connected-banner">
-                <small>已连接本地服务器</small>
+                <small>已连接本地服务器程序</small>
                 <h3>{window.location.host}</h3>
-                <p>点击后将自动查找这台服务器当前运行的战局，并进入阵营选择。</p>
+                <p>正在自动查找战局；准备完成后只需填写昵称并选择阵营。</p>
                 <button onClick={() => void joinCurrentLocalServer()}>
-                  进入这台服务器
+                  重新查找
                 </button>
                 <span>{lanStatus}</span>
               </section>
@@ -415,30 +415,34 @@ export function HomeScreen(props: HomeScreenProps) {
               )}
               </section>
             )}
-            <div className="server-join-divider">
-              <span>{localServerMode ? "高级：指定房间码" : "或使用房间码联机"}</span>
-            </div>
-            <label className="lan-team-select">
-              <span>玩家昵称</span>
-              <input
-                value={playerNickname}
-                maxLength={16}
-                onChange={(event) => setPlayerNickname(event.target.value)}
-              />
-            </label>
-            <textarea
-              value={lanInput}
-              onChange={(event) => setLanInput(event.target.value)}
-              placeholder="输入房间码，例如 ABCDE-12345"
-            />
-            <button onClick={() => void joinLanHost()}>
-              查找房间并进入阵营大厅
-            </button>
-            {lanOutput.startsWith("{") && (
-              <details className="legacy-connection-details">
-                <summary>兼容模式回应码</summary>
-                <textarea readOnly value={lanOutput} />
-              </details>
+            {!localServerMode && (
+              <>
+                <div className="server-join-divider">
+                  <span>或使用房间码联机</span>
+                </div>
+                <label className="lan-team-select">
+                  <span>玩家昵称</span>
+                  <input
+                    value={playerNickname}
+                    maxLength={16}
+                    onChange={(event) => setPlayerNickname(event.target.value)}
+                  />
+                </label>
+                <textarea
+                  value={lanInput}
+                  onChange={(event) => setLanInput(event.target.value)}
+                  placeholder="输入房间码，例如 ABCDE-12345"
+                />
+                <button onClick={() => void joinLanHost()}>
+                  查找房间并进入阵营大厅
+                </button>
+                {lanOutput.startsWith("{") && (
+                  <details className="legacy-connection-details">
+                    <summary>兼容模式回应码</summary>
+                    <textarea readOnly value={lanOutput} />
+                  </details>
+                )}
+              </>
             )}
           </div>
         )}

@@ -154,6 +154,8 @@ export default function Game3D() {
   const [serverSaves, setServerSaves] = useState<ServerRecord[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const activeServerIdRef = useRef<string | null>(null);
+  const autoDedicatedStartedRef = useRef(false);
+  const autoLocalJoinStartedRef = useRef(false);
   const [dedicatedServerHost, setDedicatedServerHost] = useState(false);
   const dedicatedServerHostRef = useRef(false);
   const pendingServerIdRef = useRef<string | null>(null);
@@ -892,6 +894,7 @@ export default function Game3D() {
       };
     setServerSaves(upsertServerSave(server));
     setNotice(`服务器“${server.name}”已创建，可进入控制台详细配置`);
+    return server;
   };
   const openServerAdmin = (server?: ServerRecord) => {
     if (!server) return;
@@ -940,6 +943,25 @@ export default function Game3D() {
     loadGame(server.map, "pku", server.id);
     window.setTimeout(() => void startAutomaticHost(server.id), 0);
   };
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (
+      !localRelayModeRef.current ||
+      !localServerManagerRef.current ||
+      params.get("autostart") !== "1" ||
+      autoDedicatedStartedRef.current
+    )
+      return;
+    autoDedicatedStartedRef.current = true;
+    const existing = readServerSaves().sort(
+      (first, second) => second.updatedAt - first.updatedAt,
+    )[0];
+    const server = existing ?? createServer("清北本地服务器", 8);
+    launchServer(server);
+    setLanStatus(
+      existing ? "正在自动恢复并启动上次战局" : "正在自动创建并启动新战局",
+    );
+  }, []);
   const stopServer = (serverId: string) => {
     if (activeServerIdRef.current !== serverId) return;
     recordServerLog("system", "服务器已由控制台停止");
@@ -2482,6 +2504,7 @@ export default function Game3D() {
           bindLanChannel(channel, true);
         },
         setLanStatus,
+        (command) => executeServerAdminCommand(command),
       );
       localRelayHubRef.current = hub;
       hub.connect();
@@ -2707,18 +2730,35 @@ export default function Game3D() {
     }
   };
   const joinCurrentLocalServer = async () => {
-    try {
-      setLanStatus("正在查找这台服务器的战局…");
-      const status = await localRoomStatus();
-      if (!status.roomCode) throw new Error("这台服务器尚未启动战局");
-      setLanInput(status.roomCode);
-      await requestAutomaticJoin(status.roomCode);
-    } catch (error) {
-      setLanStatus(
-        error instanceof Error ? error.message : "无法读取本地服务器战局",
-      );
+    setLanStatus("正在等待服务器战局启动…");
+    for (let attempt = 0; attempt < 40; attempt++) {
+      try {
+        const status = await localRoomStatus();
+        if (!status.roomCode) throw new Error("服务器正在初始化战局");
+        setLanInput(status.roomCode);
+        await requestAutomaticJoin(status.roomCode);
+        return;
+      } catch (error) {
+        if (attempt === 39) {
+          setLanStatus(
+            error instanceof Error ? error.message : "无法读取本地服务器战局",
+          );
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
     }
   };
+  useEffect(() => {
+    if (
+      !localRelayModeRef.current ||
+      localServerManagerRef.current ||
+      autoLocalJoinStartedRef.current
+    )
+      return;
+    autoLocalJoinStartedRef.current = true;
+    void joinCurrentLocalServer();
+  }, []);
   const connectToLanHost = async (
     invite: ServerInvitePayload,
     team: Team,
@@ -2969,13 +3009,33 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | invite | manual-invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本> | save | accept <兼容模式回应JSON>";
+      return "API: status | players | new | resume | save | invite | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
     if (action === "status")
       return JSON.stringify(buildServerSummary(activeServerIdRef.current ?? ""));
     if (action === "players")
       return buildServerSummary(activeServerIdRef.current ?? "").players
         .map((player) => `${player.nickname}:${player.team}${player.host ? ":host" : ""}`)
         .join(", ");
+    if (action === "new") {
+      saveUnfinishedGame(true);
+      const server = createServer("清北本地服务器", 8);
+      launchServer(server);
+      recordServerLog("command", "终端创建了全新战局");
+      return `已创建并启动全新战局：${server.name}`;
+    }
+    if (action === "resume") {
+      const records = readServerSaves().sort(
+          (first, second) => second.updatedAt - first.updatedAt,
+        ),
+        previous =
+          records.find(
+            (record) => record.id !== activeServerIdRef.current,
+          ) ?? records[0];
+      if (!previous) throw new Error("没有可以恢复的服务器战局");
+      launchServer(previous);
+      recordServerLog("command", `终端恢复战局：${previous.name}`);
+      return `已恢复并启动：${previous.name}`;
+    }
     if (!activeServerIdRef.current)
       throw new Error(
         pendingServerIdRef.current

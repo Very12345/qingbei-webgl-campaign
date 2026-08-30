@@ -5,6 +5,7 @@ type RelayWireMessage =
   | { type: "peer_leave"; peerId: string }
   | { type: "ready"; peerId: string }
   | { type: "relay"; peerId: string; data: string }
+  | { type: "server_command"; message: string }
   | { type: "error"; message: string };
 
 export class RelayDataChannel {
@@ -62,6 +63,9 @@ export class LocalRelayHub {
     private readonly team: Team | null,
     private readonly onChannel: (channel: RelayDataChannel, team?: Team) => void,
     private readonly onStatus: (status: string) => void,
+    private readonly onServerCommand?: (
+      command: string,
+    ) => string | Promise<string>,
   ) {}
 
   connect() {
@@ -81,6 +85,31 @@ export class LocalRelayHub {
         const message = JSON.parse(String(event.data)) as RelayWireMessage;
         if (message.type === "error") {
           this.onStatus(message.message);
+          return;
+        }
+        if (
+          message.type === "server_command" &&
+          this.role === "host" &&
+          this.onServerCommand
+        ) {
+          void Promise.resolve(this.onServerCommand(message.message))
+            .then((result) =>
+              this.socket?.send(
+                JSON.stringify({
+                  type: "server_command_result",
+                  message: result,
+                }),
+              ),
+            )
+            .catch((error) =>
+              this.socket?.send(
+                JSON.stringify({
+                  type: "server_command_result",
+                  message:
+                    error instanceof Error ? error.message : "命令执行失败",
+                }),
+              ),
+            );
           return;
         }
         if (message.type === "peer_join" && this.role === "host") {

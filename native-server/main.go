@@ -264,6 +264,10 @@ func (hub *relayHub) unregister(client *wsClient) {
 }
 
 func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
+	if message.Type == "server_command_result" && sender.role == "host" {
+		log.Printf("[命令结果] %s\n", message.Message)
+		return
+	}
 	if message.Type == "relay" {
 		hub.observeRelay(sender, message.Data)
 	}
@@ -299,6 +303,25 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 	if host != nil {
 		_ = host.sendJSON(wireMessage{Type: "relay", PeerID: peerID, Data: message.Data})
 	}
+}
+
+func (hub *relayHub) sendHostCommand(command string) int {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return 0
+	}
+	var hosts []*wsClient
+	hub.mu.RLock()
+	for _, room := range hub.rooms {
+		if room.host != nil {
+			hosts = append(hosts, room.host)
+		}
+	}
+	hub.mu.RUnlock()
+	for _, host := range hosts {
+		_ = host.sendJSON(wireMessage{Type: "server_command", Message: command})
+	}
+	return len(hosts)
 }
 
 func (hub *relayHub) observeRelay(sender *wsClient, data string) {
@@ -619,7 +642,7 @@ func main() {
 	})
 
 	address := fmt.Sprintf(":%d", *port)
-	localURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1", *port)
+	localURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
 	fmt.Printf("解放清华园本地服务器 %s\n", version)
 	fmt.Printf("本机管理地址: %s\n", localURL)
 	for _, host := range localIPv4Addresses() {
@@ -660,6 +683,10 @@ func runConsole(hub *relayHub, server *http.Server) {
 			fmt.Println("  rooms           查看正在运行的战局")
 			fmt.Println("  players         查看所有在线玩家")
 			fmt.Println("  say <消息>      向所有战局发送系统消息")
+			fmt.Println("  save            立即保存当前战局")
+			fmt.Println("  new             新建并切换到全新战局")
+			fmt.Println("  resume          恢复最近保存的战局")
+			fmt.Println("  battle          查看当前战局状态")
 			fmt.Println("  kick <名称/ID>  移出一名玩家")
 			fmt.Println("  version         查看服务器版本")
 			fmt.Println("  clear           清空终端")
@@ -707,6 +734,18 @@ func runConsole(hub *relayHub, server *http.Server) {
 			}
 			deliveries := hub.broadcastSystemMessage(argument)
 			log.Printf("[公告] %s（发送 %d 个连接）\n", strings.TrimSpace(argument), deliveries)
+		case "save", "new", "resume":
+			if hub.sendHostCommand(strings.ToLower(command)) == 0 {
+				fmt.Println("战局网页主机尚未就绪，请稍后重试。")
+			} else {
+				fmt.Println("命令已发送到战局主机。")
+			}
+		case "battle":
+			if hub.sendHostCommand("status") == 0 {
+				fmt.Println("战局网页主机尚未就绪，请稍后重试。")
+			} else {
+				fmt.Println("正在读取战局状态...")
+			}
 		case "kick":
 			if hub.kickPlayer(argument) {
 				fmt.Println("已移出玩家。")
@@ -718,7 +757,10 @@ func runConsole(hub *relayHub, server *http.Server) {
 		case "clear", "cls":
 			clearConsole()
 		case "stop", "exit", "quit":
-			fmt.Println("正在断开玩家并停止服务器...")
+			fmt.Println("正在保存战局、断开玩家并停止服务器...")
+			if hub.sendHostCommand("save") > 0 {
+				time.Sleep(350 * time.Millisecond)
+			}
 			hub.broadcastSystemMessage("服务器正在停止")
 			hub.closeAll()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
