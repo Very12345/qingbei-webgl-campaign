@@ -16,6 +16,7 @@ import { TACTICAL_EVENTS, type TacticalEventDefinition } from "../../tactical-ev
 import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
 import { EVENT_CARDS } from "../events/event-cards";
+import { createId } from "../id";
 import { pointInPolygon } from "../create-game";
 import {
   RESEARCH_DEFINITIONS,
@@ -48,6 +49,7 @@ import type {
   CampContext,
   GameScreen,
 } from "./contracts";
+import type { NetworkChannel } from "../local-relay";
 
 type VictoryBroadcast = {
   winner: Team;
@@ -74,8 +76,8 @@ type BattlefieldEngineContext = {
   pushEvent: (event: EventCard) => void;
   pauseOpenRef: RefObject<boolean>;
   screenRef: RefObject<GameScreen>;
-  lanChannelsRef: RefObject<Set<RTCDataChannel>>;
-  lanChannelIdentityRef: RefObject<Map<RTCDataChannel, PlayerIdentity>>;
+  lanChannelsRef: RefObject<Set<NetworkChannel>>;
+  lanChannelIdentityRef: RefObject<Map<NetworkChannel, PlayerIdentity>>;
   lanHostRef: RefObject<boolean>;
   dedicatedServerHostRef: RefObject<boolean>;
   timeScaleRef: RefObject<number>;
@@ -6075,7 +6077,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           campaign.research.stockpile[team][id] += definition.productionQuantity;
           if (g.resources[team] >= definition.deploymentCost) {
             g.resources[team] -= definition.deploymentCost;
-            production.id = crypto.randomUUID();
+            production.id = createId();
             production.startedAt = campaign.elapsedHours;
             production.completesAt = campaign.elapsedHours + definition.productionHours;
             setNotice(

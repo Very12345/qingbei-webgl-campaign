@@ -17,6 +17,21 @@ npm run dev
 npm run build
 ```
 
+## 轻量本地服务器
+
+Windows最新版固定下载地址：
+
+https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qingbei-server-windows-amd64.exe
+
+本地服务器是约12 MiB的单文件程序，内置完整网页和WebSocket/TCP房间中继，不需要安装Node.js或其他运行时：
+
+1. 下载并运行 `qingbei-server-windows-amd64.exe`。
+2. Windows防火墙首次询问时允许“专用网络”。
+3. 程序会打开本机游戏页，并在终端显示局域网玩家地址。
+4. 主机创建并启动服务器；其他玩家用浏览器打开显示的局域网地址，再输入房间码加入。
+
+默认端口为 `17890`，可用 `--port 端口` 修改；`--no-open` 禁止自动打开浏览器，`--no-update` 禁止自动更新。程序会从GitHub Releases下载与校验新版本，并在所有房间空闲后自动替换和重启。Release由 `.github/workflows/release-local-server.yml` 在推送版本标签时自动构建。
+
 ## 操作
 
 - 从北大据点拖向敌方据点下达进攻命令，拖向友方据点下达增援命令。

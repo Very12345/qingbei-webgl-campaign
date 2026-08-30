@@ -166,7 +166,27 @@ select option {
   gap: 8px;
 }
 .server-page-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.local-server-download {
+  display: grid;
+  place-items: center;
+  min-height: 42px;
+  border: 2px solid #111;
+  padding: 6px 12px;
+  background: linear-gradient(#777, #595959);
+  color: #fff;
+  box-shadow:
+    inset 2px 2px 0 #a9a9a9,
+    inset -2px -2px 0 #383838,
+    2px 2px 0 #000b;
+  text-decoration: none;
+  text-shadow: 2px 2px 0 #222;
+  font-weight: 800;
+}
+.local-server-download:hover {
+  border-color: #fff;
+  background: linear-gradient(#7386a7, #526484);
 }
 .server-save-list {
   display: grid;

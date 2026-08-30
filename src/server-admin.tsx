@@ -7,6 +7,7 @@ import {
 } from "./game/server-admin-protocol";
 import { readServerSaves, upsertServerSave } from "./game/server-storage";
 import { readSaves } from "./game/storage";
+import { createId } from "./game/id";
 import type { ServerRecord, Snapshot } from "./game/types";
 import "./server-admin.css";
 
@@ -71,7 +72,7 @@ function ServerAdmin() {
   const sendCommand = () => {
     const text = command.trim();
     if (!text || !serverId) return;
-    const requestId = crypto.randomUUID();
+    const requestId = createId();
     setConsoleLines((lines) => [...lines, `$ ${text}`].slice(-200));
     channelRef.current?.postMessage({
       type: "command",
@@ -227,7 +228,7 @@ function ServerAdmin() {
           />
           <button
             onClick={() => {
-              const requestId = crypto.randomUUID();
+              const requestId = createId();
               channelRef.current?.postMessage({
                 type: "command",
                 serverId,

@@ -48,6 +48,7 @@ import {
   readSaves,
 } from "../src/game/storage";
 import { decisionAvailable } from "../src/game/decisions";
+import { createId } from "../src/game/id";
 import { EVENT_CARDS } from "../src/game/events/event-cards";
 import { makeFreshGame } from "../src/game/create-game";
 import {
@@ -66,6 +67,11 @@ import {
   subscribeAutomaticSignals,
   type AutomaticSignalMessage,
 } from "../src/game/auto-signaling";
+import {
+  LocalRelayHub,
+  localRoomStatus,
+  type NetworkChannel,
+} from "../src/game/local-relay";
 import {
   AcademicYearOverlay,
   EventBatchOverlay,
@@ -88,6 +94,8 @@ type ServerInvitePayload = {
   operatorCounts?: Record<Team, number>;
   serverId?: string | null;
   iceServers?: RTCIceServer[];
+  transport?: "webrtc" | "websocket";
+  roomCode?: string;
 };
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
@@ -184,8 +192,8 @@ export default function Game3D() {
   const lanConnectionStageRef = useRef<"connecting" | "failed" | null>(null);
   const lanPeerRef = useRef<RTCPeerConnection | null>(null);
   const lanPeersRef = useRef(new Set<RTCPeerConnection>());
-  const lanChannelsRef = useRef(new Set<RTCDataChannel>());
-  const lanChannelIdentityRef = useRef(new Map<RTCDataChannel, PlayerIdentity>());
+  const lanChannelsRef = useRef(new Set<NetworkChannel>());
+  const lanChannelIdentityRef = useRef(new Map<NetworkChannel, PlayerIdentity>());
   const lanHostRef = useRef(false);
   const automaticSignalSourceRef = useRef<EventSource | null>(null);
   const automaticHostCodeRef = useRef<string | null>(null);
@@ -194,7 +202,7 @@ export default function Game3D() {
     new Map<string, RTCDataChannel>(),
   );
   const expectedTeamByChannelRef = useRef(
-    new WeakMap<RTCDataChannel, Team>(),
+    new WeakMap<NetworkChannel, Team>(),
   );
   const automaticJoinRef = useRef<{
     roomCode: string;
@@ -203,7 +211,11 @@ export default function Game3D() {
   const automaticPreferredTeamRef = useRef<Team | null>(null);
   const lastAutomaticRoomCodeRef = useRef<string | null>(null);
   const lanConnectionTimeoutRef = useRef<number | null>(null);
-  const signalingSenderIdRef = useRef(crypto.randomUUID());
+  const signalingSenderIdRef = useRef(createId());
+  const localRelayHubRef = useRef<LocalRelayHub | null>(null);
+  const localRelayModeRef = useRef(
+    new URLSearchParams(location.search).get("local") === "1",
+  );
   const serverIceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const iceCandidateTypesRef = useRef(
     new WeakMap<RTCPeerConnection, Set<string>>(),
@@ -222,7 +234,7 @@ export default function Game3D() {
   const clientSiteCommandPendingSinceRef = useRef(new Map<number, number>());
   const guestHasAuthoritativeStateRef = useRef(false);
   const clientActionRateRef = useRef(
-    new WeakMap<RTCDataChannel, number[]>(),
+    new WeakMap<NetworkChannel, number[]>(),
   );
   const networkPendingPingsRef = useRef(new Map<string, number>());
   const networkLatencySamplesRef = useRef<number[]>([]);
@@ -231,11 +243,11 @@ export default function Game3D() {
   const hostOperationQueueRef = useRef<Array<() => void>>([]);
   const hostOperationFlushTimerRef = useRef<number | null>(null);
   const networkReceivedRevisionRef = useRef(
-    new WeakMap<RTCDataChannel, number>(),
+    new WeakMap<NetworkChannel, number>(),
   );
   const networkChunkBuffersRef = useRef(
     new WeakMap<
-      RTCDataChannel,
+      NetworkChannel,
       Map<
         string,
         { parts: string[]; received: number; total: number; createdAt: number }
@@ -247,7 +259,7 @@ export default function Game3D() {
     `玩家${Math.floor(100 + Math.random() * 900)}`,
   );
   const playerIdRef = useRef(
-    sessionStorage.getItem("qingbei-player-id") || crypto.randomUUID(),
+    sessionStorage.getItem("qingbei-player-id") || createId(),
   );
   const [chatOpen, setChatOpen] = useState(false);
   const [chatChannel, setChatChannel] = useState<ChatChannel>("team");
@@ -436,7 +448,7 @@ export default function Game3D() {
       }
       game.resources[team] -= definition.deploymentCost;
       campaign.research.production[team][id] = {
-        id: crypto.randomUUID(),
+        id: createId(),
         researchId: id,
         startedAt: campaign.elapsedHours,
         completesAt: campaign.elapsedHours + definition.productionHours,
@@ -467,7 +479,7 @@ export default function Game3D() {
       const server = readServerSaves().find((record) => record.id === serverId);
       if (!server) return;
       const entry: ServerLogEntry = {
-          id: crypto.randomUUID(),
+          id: createId(),
           at: Date.now(),
           category,
           text,
@@ -855,7 +867,7 @@ export default function Game3D() {
           : readSaves().find((save) => save.savedAt === mapSavedAt),
       fresh = makeFreshGame(),
       server: ServerRecord = {
-        id: crypto.randomUUID(),
+        id: createId(),
         name: name.trim().slice(0, 24) || "清北联机服务器",
         createdAt: now,
         updatedAt: now,
@@ -894,7 +906,7 @@ export default function Game3D() {
         throw new Error("invalid server");
       const imported: ServerRecord = {
         ...parsed,
-        id: crypto.randomUUID(),
+        id: createId(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
         players: [],
@@ -936,6 +948,8 @@ export default function Game3D() {
     automaticHostChannelsRef.current.clear();
     automaticSignalSourceRef.current?.close();
     automaticSignalSourceRef.current = null;
+    localRelayHubRef.current?.close();
+    localRelayHubRef.current = null;
     automaticHostCodeRef.current = null;
     dedicatedServerHostRef.current = false;
     setDedicatedServerHost(false);
@@ -1421,7 +1435,7 @@ export default function Game3D() {
       }));
   };
   const sendToChannel = (
-    channel: RTCDataChannel,
+    channel: NetworkChannel,
     envelope: MultiplayerEnvelope,
   ) => {
     if (channel.readyState !== "open") return;
@@ -1434,7 +1448,7 @@ export default function Game3D() {
       channel.send(serialized);
       return;
     }
-    const transferId = crypto.randomUUID(),
+    const transferId = createId(),
       total = Math.ceil(serialized.length / chunkSize),
       chunks = Array.from({ length: total }, (_, index) =>
         JSON.stringify({
@@ -1524,7 +1538,7 @@ export default function Game3D() {
     if (approved) beginDecision(vote.decisionId, vote.team);
     const definition = DECISIONS.find((item) => item.id === vote.decisionId);
     relayChatMessage({
-      id: crypto.randomUUID(),
+      id: createId(),
       senderId: "system",
       senderName: "系统",
       senderTeam: vote.team,
@@ -1551,7 +1565,7 @@ export default function Game3D() {
   ) => {
     if (!lanHostRef.current || decisionVoteRef.current) return;
     const vote: DecisionVote = {
-      id: crypto.randomUUID(),
+      id: createId(),
       decisionId,
       team,
       deadline: Date.now() + 20_000,
@@ -1620,7 +1634,7 @@ export default function Game3D() {
     };
     if (lanHostRef.current || !lanChannelsRef.current.size) {
       relayChatMessage({
-        id: crypto.randomUUID(),
+        id: createId(),
         senderId: identity.id,
         senderName: identity.nickname,
         senderTeam: identity.team,
@@ -1665,7 +1679,7 @@ export default function Game3D() {
       upsertServerSave({ ...server, updatedAt: Date.now(), players }),
     );
   };
-  const bindLanChannel = (channel: RTCDataChannel, host: boolean) => {
+  const bindLanChannel = (channel: NetworkChannel, host: boolean) => {
     lanChannelsRef.current.add(channel);
     lanHostRef.current = host;
     const refreshConnectionCount = () =>
@@ -1731,7 +1745,7 @@ export default function Game3D() {
       recordServerLog("player", "一名玩家离开服务器");
       if (!host) guestHasAuthoritativeStateRef.current = false;
     };
-    channel.onmessage = (event) => {
+    channel.onmessage = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as MultiplayerEnvelope;
         if (payload.type === "network_chunk") {
@@ -1767,7 +1781,10 @@ export default function Game3D() {
           }
           if (transfer.received === transfer.total) {
             transfers.delete(payload.transferId);
-            channel.onmessage?.(
+            const handler = channel.onmessage as
+              | ((message: MessageEvent<string>) => unknown)
+              | null;
+            handler?.(
               new MessageEvent("message", { data: transfer.parts.join("") }),
             );
           }
@@ -1833,7 +1850,7 @@ export default function Game3D() {
                 ),
               ]);
             if (usedIds.has(identity.id))
-              identity = { ...identity, id: crypto.randomUUID() };
+              identity = { ...identity, id: createId() };
             if (usedNames.has(identity.nickname)) {
               let suffix = 2;
               while (usedNames.has(`${identity.nickname}#${suffix}`)) suffix++;
@@ -1855,7 +1872,7 @@ export default function Game3D() {
             );
             sendToChannel(channel, { type: "chat_history", messages: allowed });
             relayChatMessage({
-              id: crypto.randomUUID(),
+              id: createId(),
               senderId: "system",
               senderName: "系统",
               senderTeam: identity.team,
@@ -1875,7 +1892,7 @@ export default function Game3D() {
             .slice(0, 200);
           if (!text) return;
           relayChatMessage({
-            id: crypto.randomUUID(),
+            id: createId(),
             senderId: identity.id,
             senderName: identity.nickname,
             senderTeam: identity.team,
@@ -2449,6 +2466,23 @@ export default function Game3D() {
     automaticHostCodeRef.current = roomCode;
     setLanMode("host");
     setLanOutput(roomCode);
+    if (localRelayModeRef.current) {
+      localRelayHubRef.current?.close();
+      const hub = new LocalRelayHub(
+        "host",
+        roomCode,
+        null,
+        (channel, team) => {
+          if (team) expectedTeamByChannelRef.current.set(channel, team);
+          bindLanChannel(channel, true);
+        },
+        setLanStatus,
+      );
+      localRelayHubRef.current = hub;
+      hub.connect();
+      setLanStatus("本地WebSocket服务器已启动，等待玩家加入");
+      return roomCode;
+    }
     setLanStatus("自动房间已启动，玩家输入房间码即可加入");
     const source = subscribeAutomaticSignals(roomCode, (message) => {
       if (message.senderId === signalingSenderIdRef.current) return;
@@ -2510,7 +2544,34 @@ export default function Game3D() {
     const normalized = normalizeRoomCode(rawCode);
     if (normalized.length < 8) throw new Error("房间码长度不足");
     const roomCode = `${normalized.slice(0, 5)}-${normalized.slice(5)}`,
-      clientId = crypto.randomUUID();
+      clientId = createId();
+    if (localRelayModeRef.current) {
+      const status = await localRoomStatus(roomCode),
+        forcedTeam =
+          status.players === 1
+            ? status.counts.pku === 1
+              ? "thu"
+              : "pku"
+            : null;
+      if (!status.online) throw new Error("本地服务器房间尚未启动");
+      lastAutomaticRoomCodeRef.current = roomCode;
+      setTeamSelection({
+        mode: "guest",
+        invite: {
+          kind: "qingbei-server-invite",
+          sdp: { type: "offer", sdp: "" },
+          playerCount: status.players,
+          hostTeam: "pku",
+          operatorCounts: status.counts,
+          transport: "websocket",
+          roomCode,
+        },
+        counts: status.counts,
+        forcedTeam,
+      });
+      setLanStatus("已找到本地服务器，请选择阵营");
+      return;
+    }
     automaticSignalSourceRef.current?.close();
     automaticJoinRef.current = { roomCode, clientId };
     lastAutomaticRoomCodeRef.current = roomCode;
@@ -2647,6 +2708,24 @@ export default function Game3D() {
     try {
       lastConnectionFailureRef.current = null;
       guestHasAuthoritativeStateRef.current = false;
+      if (invite.transport === "websocket" && invite.roomCode) {
+        setLanTeam(team);
+        lanTeamRef.current = team;
+        lanConnectionStageRef.current = "connecting";
+        setLanConnectionStage("connecting");
+        localRelayHubRef.current?.close();
+        const hub = new LocalRelayHub(
+          "guest",
+          invite.roomCode,
+          team,
+          (channel) => bindLanChannel(channel, false),
+          setLanStatus,
+        );
+        localRelayHubRef.current = hub;
+        hub.connect();
+        setLanStatus("正在通过本地WebSocket服务器连接…");
+        return;
+      }
       if (
         lanPeerRef.current &&
         lanPeerRef.current.connectionState !== "connected"
@@ -2779,6 +2858,8 @@ export default function Game3D() {
     lanPeerRef.current?.close();
     automaticSignalSourceRef.current?.close();
     automaticSignalSourceRef.current = null;
+    localRelayHubRef.current?.close();
+    localRelayHubRef.current = null;
     automaticJoinRef.current = null;
     automaticPreferredTeamRef.current = null;
     setLanConnectionStage(null);
@@ -2915,7 +2996,7 @@ export default function Game3D() {
     }
     if (action === "say") {
       relayChatMessage({
-        id: crypto.randomUUID(),
+        id: createId(),
         senderId: "server-console",
         senderName: "服务器",
         senderTeam: playerTeamRef.current,
@@ -2987,6 +3068,8 @@ export default function Game3D() {
     () => () => {
       automaticSignalSourceRef.current?.close();
       automaticSignalSourceRef.current = null;
+      localRelayHubRef.current?.close();
+      localRelayHubRef.current = null;
       automaticHostPeersRef.current.forEach((peer) => peer.close());
       automaticHostPeersRef.current.clear();
       automaticHostChannelsRef.current.clear();
@@ -3035,7 +3118,7 @@ export default function Game3D() {
           if (now - startedAt > 10_000)
             networkPendingPingsRef.current.delete(id);
         openChannels.forEach((channel) => {
-          const id = crypto.randomUUID();
+          const id = createId();
           networkPendingPingsRef.current.set(id, performance.now());
           sendToChannel(channel, { type: "ping", id, sentAt: Date.now() });
         });
@@ -3653,7 +3736,7 @@ export default function Game3D() {
                 disabled={!lanOutput}
                 onClick={() =>
                   window.open(
-                    `${import.meta.env.BASE_URL}?join=${encodeURIComponent(lanOutput)}`,
+                    `${import.meta.env.BASE_URL}?${localRelayModeRef.current ? "local=1&" : ""}join=${encodeURIComponent(lanOutput)}`,
                     "_blank",
                     "noopener,noreferrer",
                   )

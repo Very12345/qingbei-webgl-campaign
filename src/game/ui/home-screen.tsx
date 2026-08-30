@@ -146,10 +146,17 @@ export function HomeScreen(props: HomeScreenProps) {
             <div className="server-page-actions">
               <button onClick={() => setPage("create-server")}>创建服务器</button>
               <button onClick={() => setPage("join-server")}>进入服务器</button>
+              <a
+                className="local-server-download"
+                href="https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qingbei-server-windows-amd64.exe"
+              >
+                下载本地服务器
+              </a>
             </div>
             <p className="lan-status">
               {lanStatus} · 当前连接 {connectedPlayers} 名远程玩家
             </p>
+            <small>本地服务器版使用WebSocket/TCP，无需WebRTC、STUN或TURN，并支持自动更新。</small>
             <div className="server-save-list">
               {servers.length ? (
                 servers.map((server) => (
