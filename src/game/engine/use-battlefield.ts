@@ -264,7 +264,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       gameplayBuildingCache.set(r, filtered);
       return filtered;
     };
-    const terrainVerticalScale = 3.2,
+    const terrainVerticalScale = 6,
       terrainHeight = (r: any, x: number, z: number) => {
       const { cols, rows, heights } = r.terrain,
         u =
@@ -1025,6 +1025,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }),
       );
       terrain.receiveShadow = true;
+      terrain.castShadow = true;
       mapGroup.add(terrain);
       terrainMeshes.push(terrain);
       for (const campus of r.campuses ?? []) {
@@ -1143,6 +1144,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 emissive: surface.track ? 0x2a0d0a : 0x0a2411,
                 emissiveIntensity: 0.05,
                 roughness: 0.96,
+                side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -3,
               }),
@@ -1172,6 +1174,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 emissive: 0x092a13,
                 emissiveIntensity: 0.05,
                 roughness: 1,
+                side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -4,
               }),
@@ -1683,7 +1686,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       mapGroup.add(outline);
       const windowMatrices: THREE.Matrix4[] = [],
         doorMatrices: THREE.Matrix4[] = [],
-        roofMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
         windowLimit = r === regions.main ? 13500 : 2600;
       for (const b of gameplayBuildings(r)) {
@@ -1770,25 +1772,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           detailDummy.updateMatrix();
           doorMatrices.push(detailDummy.matrix.clone());
         }
-        if (
-          h > 1.2 &&
-          Math.abs(b.osmId) % 4 === 0 &&
-          roofMatrices.length < 1400
-        ) {
-          const xs = pts.map((p: number[]) => p[0]),
-            zs = pts.map((p: number[]) => p[1]),
-            width = Math.max(...xs) - Math.min(...xs),
-            depth = Math.max(...zs) - Math.min(...zs);
-          detailDummy.position.set(x, base + h + 0.035, z);
-          detailDummy.rotation.set(0, ((b.osmId % 12) * Math.PI) / 12, 0);
-          detailDummy.scale.set(
-            Math.min(0.24, width * 0.16),
-            0.07,
-            Math.min(0.22, depth * 0.15),
-          );
-          detailDummy.updateMatrix();
-          roofMatrices.push(detailDummy.matrix.clone());
-        }
       }
       const windowMaterial = new THREE.MeshStandardMaterial({
         color: 0x31566a,
@@ -1828,20 +1811,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       doors.instanceMatrix.needsUpdate = true;
       doors.renderOrder = 6;
       mapGroup.add(doors);
-      const roofFixtures = new THREE.InstancedMesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshStandardMaterial({
-          color: 0x87918d,
-          roughness: 0.82,
-          metalness: 0.04,
-        }),
-        roofMatrices.length,
-      );
-      roofMatrices.forEach((m, i) => roofFixtures.setMatrixAt(i, m));
-      roofFixtures.instanceMatrix.needsUpdate = true;
-      roofFixtures.castShadow = false;
-      roofFixtures.receiveShadow = true;
-      mapGroup.add(roofFixtures);
       const waterMat = new THREE.MeshStandardMaterial({
         color: 0x478ca5,
         transparent: true,
@@ -3434,15 +3403,29 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         mesh.receiveShadow = false;
         unitGroup.add(mesh);
       });
-    const busGeometry = new THREE.BoxGeometry(1.42, 0.58, 0.62),
-      bikeFrameGeometry = new THREE.BoxGeometry(0.38, 0.045, 0.035),
-      bikeWheelGeometry = new THREE.TorusGeometry(0.13, 0.022, 5, 10),
-      bikeHandleGeometry = new THREE.BoxGeometry(0.035, 0.2, 0.12),
-      bikeSeatGeometry = new THREE.BoxGeometry(0.13, 0.035, 0.08),
+    const busGeometry = new THREE.BoxGeometry(1.48, 0.62, 0.66),
+      bikeFrameGeometry = new THREE.BoxGeometry(0.48, 0.055, 0.045),
+      bikeWheelGeometry = new THREE.TorusGeometry(0.16, 0.026, 6, 12),
+      bikeHandleGeometry = new THREE.BoxGeometry(0.04, 0.25, 0.15),
+      bikeSeatGeometry = new THREE.BoxGeometry(0.15, 0.045, 0.1),
       busMaterials = {
-        pku: new THREE.MeshStandardMaterial({ color: 0xb71934, roughness: 0.48 }),
-        thu: new THREE.MeshStandardMaterial({ color: 0x704096, roughness: 0.48 }),
+        pku: new THREE.MeshStandardMaterial({
+          color: 0xd11f3b,
+          emissive: 0x2b0309,
+          emissiveIntensity: 0.16,
+          roughness: 0.42,
+        }),
+        thu: new THREE.MeshStandardMaterial({
+          color: 0x8b4bb5,
+          emissive: 0x170522,
+          emissiveIntensity: 0.16,
+          roughness: 0.42,
+        }),
       },
+      bikeTireMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1b2021,
+        roughness: 0.88,
+      }),
       bikeMaterials = {
         pku: new THREE.MeshStandardMaterial({ color: 0xf2ce31, roughness: 0.42 }),
         thu: new THREE.MeshStandardMaterial({ color: 0xf2ce31, roughness: 0.42 }),
@@ -3463,10 +3446,22 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       },
       createBikeMeshes = (material: THREE.MeshStandardMaterial) => ({
         frame: new THREE.InstancedMesh(bikeFrameGeometry, material, 3200),
-        frontWheel: new THREE.InstancedMesh(bikeWheelGeometry, material, 3200),
-        rearWheel: new THREE.InstancedMesh(bikeWheelGeometry, material, 3200),
+        frontWheel: new THREE.InstancedMesh(
+          bikeWheelGeometry,
+          bikeTireMaterial,
+          3200,
+        ),
+        rearWheel: new THREE.InstancedMesh(
+          bikeWheelGeometry,
+          bikeTireMaterial,
+          3200,
+        ),
         handle: new THREE.InstancedMesh(bikeHandleGeometry, material, 3200),
-        seat: new THREE.InstancedMesh(bikeSeatGeometry, material, 3200),
+        seat: new THREE.InstancedMesh(
+          bikeSeatGeometry,
+          bikeTireMaterial,
+          3200,
+        ),
       }),
       bikeVariantMeshes = {
         pkuBike: createBikeMeshes(bikeMaterials.pku),
@@ -3485,20 +3480,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       bikePartMatrix = new THREE.Matrix4(),
       bikePartTransforms = {
         frame: new THREE.Matrix4().compose(
-          new THREE.Vector3(0, 0.15, 0),
+          new THREE.Vector3(0, 0.19, 0),
           new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -0.18)),
           new THREE.Vector3(1, 1, 1),
         ),
-        frontWheel: new THREE.Matrix4().makeTranslation(0.24, 0.13, 0),
-        rearWheel: new THREE.Matrix4().makeTranslation(-0.24, 0.13, 0),
-        handle: new THREE.Matrix4().makeTranslation(0.2, 0.29, 0),
-        seat: new THREE.Matrix4().makeTranslation(-0.08, 0.28, 0),
+        frontWheel: new THREE.Matrix4().makeTranslation(0.29, 0.16, 0),
+        rearWheel: new THREE.Matrix4().makeTranslation(-0.29, 0.16, 0),
+        handle: new THREE.Matrix4().makeTranslation(0.25, 0.36, 0),
+        seat: new THREE.Matrix4().makeTranslation(-0.1, 0.34, 0),
       };
     Object.values(transportMeshes).forEach((mesh) => {
       mesh.count = 0;
       mesh.frustumCulled = false;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      mesh.castShadow = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       unitGroup.add(mesh);
     });
     Object.values(bikeVariantMeshes).forEach((parts) =>
@@ -3677,7 +3673,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       });
     };
     const updateFarUnitInstances = () => {
-      if (useLegacyUnitRenderer) return;
       const counts = {
         pku: 0,
         thu: 0,
@@ -3754,7 +3749,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           Math.atan2(unit.tx - unit.x, unit.tz - unit.z),
           0,
         );
-        transportDummy.rotation.y += Math.PI / 2;
+        transportDummy.rotation.y -= Math.PI / 2;
         transportDummy.scale.set(1, 1, 1);
         transportDummy.updateMatrix();
         const parts = bikeVariantMeshes[key];
@@ -3786,7 +3781,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           Math.atan2(leader.tx - leader.x, leader.tz - leader.z),
           0,
         );
-        transportDummy.rotation.y += Math.PI / 2;
+        transportDummy.rotation.y -= Math.PI / 2;
         transportDummy.scale.setScalar(
           leader.transportModel === "large_bus" ? 1.15 : 1,
         );
@@ -5970,6 +5965,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           campaign.research.lastBikeAllocation[team] = campaign.elapsedHours;
         }
         rebuildUnits();
+        setNotice(
+          `${definition.title}已配发至${site.displayName ?? site.name}，${peopleRequired}名学生进入载具状态`,
+        );
         return true;
       },
       disembarkBusGroup = (groupId?: string) => {
@@ -7152,6 +7150,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           drawCalls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
           instancedUnits: gameRef.current.units.length,
+          transportUnits:
+            gameRef.current.units.filter((unit) => unit.transport === "bike")
+              .length +
+            new Set(
+              gameRef.current.units
+                .filter(
+                  (unit) =>
+                    unit.transport === "bus" && unit.transportGroupId,
+                )
+                .map((unit) => unit.transportGroupId),
+            ).size,
           detailedUnits: unitObjects.size,
           simulationMs:
             simulationSamples > 0 ? simulationSpentMs / simulationSamples : 0,
@@ -7659,47 +7668,29 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           thuPopulation = 0,
           pkuSiteCount = 0,
           thuSiteCount = 0;
-        const populationCellSize = 4,
-          sitePopulationGrid = new Map<string, SiteState[]>(),
-          populationKey = (x: number, z: number) =>
-            `${Math.floor(x / populationCellSize)}/${Math.floor(z / populationCellSize)}`;
         nearbyPopulationCache.clear();
         for (const site of g.sites) {
           if (site.destroyed) continue;
           if (site.team === "pku") pkuSiteCount++;
           else thuSiteCount++;
           nearbyPopulationCache.set(site.id, 0);
-          const key = populationKey(site.navX ?? site.x, site.navZ ?? site.z),
-            bucket = sitePopulationGrid.get(key);
-          if (bucket) bucket.push(site);
-          else sitePopulationGrid.set(key, [site]);
         }
         for (const unit of g.units) {
           if (unit.team === "pku") pkuPopulation += unit.strength;
           else thuPopulation += unit.strength;
-          const gridX = Math.floor(unit.x / populationCellSize),
-            gridZ = Math.floor(unit.z / populationCellSize);
-          let nearestSite: SiteState | undefined,
-            nearestDistance = 3.4;
-          for (let offsetX = -1; offsetX <= 1; offsetX++)
-            for (let offsetZ = -1; offsetZ <= 1; offsetZ++)
-              for (const site of
-                sitePopulationGrid.get(`${gridX + offsetX}/${gridZ + offsetZ}`) ??
-                [])
-                if (site.team === unit.team) {
-                  const distance = Math.hypot(
-                    unit.x - (site.navX ?? site.x),
-                    unit.z - (site.navZ ?? site.z),
-                  );
-                  if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearestSite = site;
-                  }
-                }
-          if (nearestSite)
+          const boundSite = g.sites[unit.siteId];
+          if (
+            boundSite &&
+            !boundSite.destroyed &&
+            boundSite.team === unit.team &&
+            Math.hypot(
+              unit.x - (boundSite.navX ?? boundSite.x),
+              unit.z - (boundSite.navZ ?? boundSite.z),
+            ) < 3.4
+          )
             nearbyPopulationCache.set(
-              nearestSite.id,
-              (nearbyPopulationCache.get(nearestSite.id) ?? 0) + unit.strength,
+              boundSite.id,
+              (nearbyPopulationCache.get(boundSite.id) ?? 0) + unit.strength,
             );
         }
         setStats({

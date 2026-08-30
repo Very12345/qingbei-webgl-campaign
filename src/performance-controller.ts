@@ -25,6 +25,7 @@ export type PerformanceMetrics = {
   triangles: number;
   detailedUnits: number;
   instancedUnits: number;
+  transportUnits: number;
   quality: QualityLevel;
 };
 
@@ -81,6 +82,7 @@ export class PerformanceController {
     triangles: 0,
     detailedUnits: 0,
     instancedUnits: 0,
+    transportUnits: 0,
     quality: "medium",
   };
   private listeners = new Set<(metrics: PerformanceMetrics) => void>();

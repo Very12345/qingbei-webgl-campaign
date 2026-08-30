@@ -21,6 +21,7 @@ export function PerformanceHud({
       <span>{metrics.frameMs.toFixed(1)} ms</span>
       <span>{metrics.drawCalls} draw</span>
       <span>{metrics.instancedUnits} 人</span>
+      <span>{metrics.transportUnits} 载具</span>
       <span>模拟 {metrics.simulationMs.toFixed(1)} ms</span>
       <span>寻路 {metrics.pathfindingMs.toFixed(1)} ms</span>
       <span>存档 {metrics.saveMs.toFixed(1)} ms</span>
