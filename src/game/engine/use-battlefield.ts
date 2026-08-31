@@ -17,8 +17,11 @@ import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
 import { EVENT_CARDS } from "../events/event-cards";
 import {
+  classifyIntent as kernelClassifyIntent,
   difficultyProfile as kernelDifficultyProfile,
+  isHighRiskEventTarget as kernelIsHighRiskEventTarget,
   KernelPathfinder,
+  offensiveMomentum as kernelOffensiveMomentum,
   pathCrossesRisk as kernelPathCrossesRisk,
   resolveAggregateCombat as kernelResolveAggregateCombat,
   siteEngagedBy as kernelSiteEngagedBy,
@@ -7534,10 +7537,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }))
           .filter(({ target }) => !!target && !target.destroyed)
           .sort((a, b) => b.strength - a.strength),
-        hostileStrength = orderedHostileGroups.reduce(
-          (sum, group) => sum + group.strength,
-          0,
-        ),
         aiPopulation = g.units
           .filter((unit) => unit.team === aiTeam)
           .reduce((sum, unit) => sum + unit.strength, 0),
@@ -7546,18 +7545,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           .reduce((sum, unit) => sum + unit.strength, 0),
         forceRatio = aiPopulation / Math.max(1, enemyPopulation),
         primaryHostileGroup = orderedHostileGroups[0],
-        currentIntent =
-          hostileStrength < (difficulty === "hard" ? 10 : 16)
-            ? "passive"
-            : primaryHostileGroup &&
-                (primaryHostileGroup.target.type === "dorm" ||
-                  primaryHostileGroup.target.type === "dining") &&
-                primaryHostileGroup.strength >=
-                  Math.max(12, hostileStrength * 0.48)
-              ? "single_breakthrough"
-              : orderedHostileGroups.length >= 3 && hostileStrength >= 24
-                ? "positional"
-                : "probing";
+        currentIntent = kernelClassifyIntent(
+          orderedHostileGroups.map(({ target, strength }) => ({
+            target,
+            strength,
+          })),
+          difficulty,
+        );
       aiState.intent ??= { pku: "passive", thu: "passive" };
       aiState.intentUpdatedAt ??= { pku: 0, thu: 0 };
       aiState.intent[aiTeam] = currentIntent;
@@ -7749,13 +7743,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const enemyProductionRemaining = enemySites.filter(
           (site) => site.type === "dorm" || site.type === "dining",
         ).length,
-        highRiskTarget = (site: SiteState) =>
-          site.type === "capital" ||
-          site.type === "target" ||
-          (site.type === "teaching" &&
-            /物理|数学|化学|工学院|图书馆|技物|百周年|纪念讲堂/.test(
-              site.name,
-            )),
+        highRiskTarget = kernelIsHighRiskEventTarget,
         enemyRiskSites = enemySites.filter(highRiskTarget),
         pathCrossesEventRisk = (path?: [number, number][]) =>
           kernelPathCrossesRisk(path, enemyRiskSites),
@@ -8102,17 +8090,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         }
       }
-      const siteAdvantage = friendlySites.length / Math.max(1, enemySites.length),
-        offensiveMomentum =
-          difficulty === "casual"
-            ? 0
-            : THREE.MathUtils.clamp(
-                (siteAdvantage - (difficulty === "hard" ? 0.95 : 1.05)) /
-                  (difficulty === "hard" ? 0.55 : 1.15),
-                0,
-                1,
-              ) *
-              THREE.MathUtils.clamp(forceRatio / 0.9, 0.28, 1);
+      const offensiveMomentum = kernelOffensiveMomentum(
+        difficulty,
+        friendlySites.length,
+        enemySites.length,
+        forceRatio,
+      );
       if (offensiveMomentum > 0) {
         const assignedSweepTargets = new Set(occupiedAttackTargets),
           sourceLimit =

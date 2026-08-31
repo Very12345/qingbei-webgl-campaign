@@ -10,6 +10,13 @@ export {
   type KernelNavGrid,
 } from "./navigation";
 export { resolveAggregateCombat, type AggregateCombatResult } from "./combat";
+export {
+  classifyIntent,
+  offensiveMomentum,
+  isHighRiskEventTarget,
+  type AiIntent,
+  type HostileGroupSummary,
+} from "./ai";
 
 export const KERNEL_API_VERSION = 1;
 
