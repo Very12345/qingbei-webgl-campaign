@@ -434,6 +434,8 @@ export function makeFreshGame(): GameData {
         },
         nextStrategicAt: { pku: 0, thu: 0 },
         failedGoals: {},
+        intent: { pku: "passive", thu: "passive" },
+        intentUpdatedAt: { pku: 0, thu: 0 },
       },
     },
   };

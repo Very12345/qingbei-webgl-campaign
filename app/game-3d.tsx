@@ -3263,6 +3263,7 @@ export default function Game3D() {
         team,
         difficulty: game.campaign.ai.difficulty,
         personality: game.campaign.ai.personality[team],
+        intent: game.campaign.ai.intent?.[team] ?? "passive",
         population: game.units.filter((unit) => unit.team === team).length,
         production: production.slice(0, 20),
         routes,

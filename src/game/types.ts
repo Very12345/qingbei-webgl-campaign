@@ -144,6 +144,11 @@ export type AiState = {
   personality: Record<Team, string>;
   nextStrategicAt: Record<Team, number>;
   failedGoals: Record<string, number>;
+  intent?: Record<
+    Team,
+    "passive" | "single_breakthrough" | "positional" | "probing"
+  >;
+  intentUpdatedAt?: Record<Team, number>;
 };
 export type AcademicYearOutcome = {
   atHour: number;

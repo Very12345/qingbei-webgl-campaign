@@ -4361,6 +4361,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const buildCampAt = (
       point: THREE.Vector3,
       requestedTeam = playerTeamRef.current,
+      silent = false,
     ) => {
       const g = gameRef.current,
         index = navIndex(navGrid, point.x, point.z),
@@ -4369,16 +4370,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
       const campTeam = requestedTeam;
       if (g.resources[campTeam] < 80)
-        return (setNotice("建立营地需要80战略资源"), false);
+        return (silent || setNotice("建立营地需要80战略资源"), false);
       if (activeCamps.length >= 4)
-        return (setNotice("主战场最多同时维持4座临时营地"), false);
+        return (silent || setNotice("主战场最多同时维持4座临时营地"), false);
       if (
         index < 0 ||
         navGrid.blocked[index] ||
         navGrid.component[index] !== navGrid.mainComponent
-      )
+        )
         return (
-          setNotice("这里被建筑、水体或封闭庭院占用，无法建立营地"),
+          silent || setNotice("这里被建筑、水体或封闭庭院占用，无法建立营地"),
           false
         );
       if (
@@ -4388,7 +4389,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             Math.hypot(site.x - point.x, site.z - point.z) < 2.2,
         )
       )
-        return (setNotice("营地距离现有据点过近"), false);
+        return (silent || setNotice("营地距离现有据点过近"), false);
       const nearbyPku = g.units.filter(
           (unit) =>
             unit.team === campTeam &&
@@ -4401,7 +4402,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
       if (nearbyPku < 3 || nearbyEnemy)
         return (
-          setNotice(
+          silent || setNotice(
             `需要附近至少3名${campTeam === "pku" ? "北大" : g.campaign.thuFactionName}学生，且5格内没有${campTeam === "pku" ? g.campaign.thuFactionName : "北大"}部队`,
           ),
           false
@@ -4426,13 +4427,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       g.resources[campTeam] -= 80;
       g.sites.push(camp);
       rebuildBuildings();
-      setSelected(id);
-      setRenameDraft(name);
-      if (!g.campaign.firedEvents.includes("first_camp")) {
+      if (!silent) {
+        setSelected(id);
+        setRenameDraft(name);
+      }
+      if (!silent && !g.campaign.firedEvents.includes("first_camp")) {
         g.campaign.firedEvents.push("first_camp");
         pushEvent({ id: "first_camp", ...EVENT_CARDS.first_camp });
       }
-      setNotice("临时营地已建立；敌军攻克后会直接拆除");
+      if (!silent) setNotice("临时营地已建立；敌军攻克后会直接拆除");
       return true;
     };
     const selectedCentroid = () => {
@@ -5377,10 +5380,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             pressure,
           };
         };
-        for (const members of combatCells.values()) {
-          const pku = members.filter((unit) => unit.team === "pku"),
-            thu = members.filter((unit) => unit.team === "thu");
-          if (!pku.length || !thu.length) continue;
+        const resolveAggregateGroup = (
+          pku: UnitState[],
+          thu: UnitState[],
+          centerX: number,
+          centerZ: number,
+        ) => {
+          if (!pku.length || !thu.length) return;
           const pkuStrength = pku.reduce((sum, unit) => sum + unit.strength, 0),
             thuStrength = thu.reduce((sum, unit) => sum + unit.strength, 0),
             pkuSide = aggregateSide(pku, thuStrength),
@@ -5432,11 +5438,75 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             };
           applySide(pku, thu.length, damageToPku, pkuSide.supplyUse);
           applySide(thu, pku.length, damageToThu, thuSide.supplyUse);
+          emitCombatFeedback(centerX, centerZ);
+        };
+        for (const members of combatCells.values()) {
+          const pku = members.filter((unit) => unit.team === "pku"),
+            thu = members.filter((unit) => unit.team === "thu");
+          if (!pku.length || !thu.length) continue;
           const centerX =
               members.reduce((sum, unit) => sum + unit.x, 0) / members.length,
             centerZ =
               members.reduce((sum, unit) => sum + unit.z, 0) / members.length;
-          emitCombatFeedback(centerX, centerZ);
+          resolveAggregateGroup(pku, thu, centerX, centerZ);
+        }
+        // 建筑碰撞可能把争夺同一据点的双方隔在不同空间网格中。
+        // 对已进入据点作战半径、但尚未被近身格斗处理的单位补做一次
+        // 据点级范围交战，避免宿舍内部/外部两团人永久互相等待。
+        const attackersBySite = new Map<number, UnitState[]>(),
+          defendersBySite = new Map<number, UnitState[]>();
+        for (const unit of g.units) {
+          if (unit.hp <= 0 || unit.retreating || used.has(unit.id)) continue;
+          if (unit.targetSiteId != null) {
+            const target = g.sites[unit.targetSiteId];
+            if (
+              target &&
+              !target.destroyed &&
+              target.team !== unit.team &&
+              Math.hypot(
+                unit.x - (target.navX ?? target.x),
+                unit.z - (target.navZ ?? target.z),
+              ) < 8.5
+            ) {
+              const attackers = attackersBySite.get(target.id);
+              if (attackers) attackers.push(unit);
+              else attackersBySite.set(target.id, [unit]);
+            }
+          }
+          const home = g.sites[unit.siteId];
+          if (
+            home &&
+            !home.destroyed &&
+            home.team === unit.team &&
+            Math.hypot(
+              unit.x - (home.navX ?? home.x),
+              unit.z - (home.navZ ?? home.z),
+            ) < 8.5
+          ) {
+            const defenders = defendersBySite.get(home.id);
+            if (defenders) defenders.push(unit);
+            else defendersBySite.set(home.id, [unit]);
+          }
+        }
+        for (const [siteId, attackers] of attackersBySite) {
+          const site = g.sites[siteId],
+            defenders = (defendersBySite.get(siteId) ?? []).filter(
+              (unit) => unit.team === site.team && !used.has(unit.id),
+            ),
+            availableAttackers = attackers.filter((unit) => !used.has(unit.id));
+          if (!site || !defenders.length || !availableAttackers.length) continue;
+          const pku = [...availableAttackers, ...defenders].filter(
+              (unit) => unit.team === "pku",
+            ),
+            thu = [...availableAttackers, ...defenders].filter(
+              (unit) => unit.team === "thu",
+            );
+          resolveAggregateGroup(
+            pku,
+            thu,
+            site.navX ?? site.x,
+            site.navZ ?? site.z,
+          );
         }
       } else for (const unit of g.units) {
         if (!g.campaign.warUnlocked) break;
@@ -5960,7 +6030,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         return false;
       },
-      allocateTransport = (team: Team, kind: ResearchId) => {
+      allocateTransport = (
+        team: Team,
+        kind: ResearchId,
+        preferredSiteId?: number,
+      ) => {
         const game = gameRef.current,
           campaign = game.campaign,
           definition = RESEARCH_DEFINITIONS[kind],
@@ -5996,8 +6070,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             }))
             .filter((candidate) => candidate.idle.length >= peopleRequired);
         if (!candidates.length) return false;
-        let chosen = candidates[0];
-        if (!isBus) {
+        let chosen =
+          candidates.find(({ site }) => site.id === preferredSiteId) ??
+          candidates[0];
+        if (preferredSiteId == null && !isBus) {
           const totalWeight = candidates.reduce(
               (sum, candidate) => sum + candidate.idle.length,
               0,
@@ -6011,7 +6087,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               break;
             }
           }
-        } else chosen = candidates[Math.floor(Math.random() * candidates.length)];
+        } else if (preferredSiteId == null)
+          chosen = candidates[Math.floor(Math.random() * candidates.length)];
         const { site, idle } = chosen;
         campaign.research.stockpile[team][kind] -= equipmentRequired;
         if (isBus) {
@@ -6858,14 +6935,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       g.sites
         .filter(
-          (site) =>
-            site.type === "camp" && !site.destroyed && site.team === "pku",
+          (site) => site.type === "camp" && !site.destroyed,
         )
         .forEach((camp) => {
           g.units
             .filter(
               (unit) =>
-                unit.team === "pku" &&
+                unit.team === camp.team &&
                 Math.hypot(unit.x - camp.x, unit.z - camp.z) < 2.3,
             )
             .forEach(
@@ -6937,8 +7013,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         personality = aiState.personality[aiTeam],
         forwardPrefix =
           aiTeam === "thu" ? "清华燕园校区·" : "北大清华园校区·",
+        enemyForwardPrefix =
+          aiTeam === "thu" ? "北大清华园校区·" : "清华燕园校区·",
         isForwardCaptured = (site: SiteState) =>
           (site.displayName ?? "").startsWith(forwardPrefix),
+        isLostHomeSite = (site: SiteState) =>
+          (site.displayName ?? "").startsWith(enemyForwardPrefix),
         qz = g.sites.find(
           (site) => site.name === "求真书院" && !site.destroyed,
         ),
@@ -7304,6 +7384,56 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         urgentProductionIds = new Set(
           urgentProductionSites.map((site) => site.id),
         );
+      const hostileOrders = g.units.filter(
+          (unit) =>
+            unit.team === enemyTeam &&
+            unit.targetSiteId != null &&
+            g.sites[unit.targetSiteId]?.team === aiTeam,
+        ),
+        hostileGroups = new Map<number, UnitState[]>();
+      for (const unit of hostileOrders) {
+        const targetId = unit.targetSiteId!;
+        hostileGroups.set(targetId, [
+          ...(hostileGroups.get(targetId) ?? []),
+          unit,
+        ]);
+      }
+      const orderedHostileGroups = [...hostileGroups.entries()]
+          .map(([targetId, units]) => ({
+            target: g.sites[targetId],
+            units,
+            strength: units.reduce((sum, unit) => sum + unit.strength, 0),
+          }))
+          .filter(({ target }) => !!target && !target.destroyed)
+          .sort((a, b) => b.strength - a.strength),
+        hostileStrength = orderedHostileGroups.reduce(
+          (sum, group) => sum + group.strength,
+          0,
+        ),
+        aiPopulation = g.units
+          .filter((unit) => unit.team === aiTeam)
+          .reduce((sum, unit) => sum + unit.strength, 0),
+        enemyPopulation = g.units
+          .filter((unit) => unit.team === enemyTeam)
+          .reduce((sum, unit) => sum + unit.strength, 0),
+        forceRatio = aiPopulation / Math.max(1, enemyPopulation),
+        primaryHostileGroup = orderedHostileGroups[0],
+        currentIntent =
+          hostileStrength < (difficulty === "hard" ? 10 : 16)
+            ? "passive"
+            : primaryHostileGroup &&
+                (primaryHostileGroup.target.type === "dorm" ||
+                  primaryHostileGroup.target.type === "dining") &&
+                primaryHostileGroup.strength >=
+                  Math.max(12, hostileStrength * 0.48)
+              ? "single_breakthrough"
+              : orderedHostileGroups.length >= 3 && hostileStrength >= 24
+                ? "positional"
+                : "probing";
+      aiState.intent ??= { pku: "passive", thu: "passive" };
+      aiState.intentUpdatedAt ??= { pku: 0, thu: 0 };
+      aiState.intent[aiTeam] = currentIntent;
+      aiState.intentUpdatedAt[aiTeam] = g.campaign.elapsedHours;
       for (const threatened of urgentProductionSites) {
         const threat = threatAt(threatened),
           defenderCount = g.units.filter(
@@ -7354,6 +7484,83 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             source.orderPath = undefined;
           }
           needed -= deployed;
+        }
+      }
+      if (
+        currentIntent === "single_breakthrough" &&
+        primaryHostileGroup &&
+        difficulty !== "casual"
+      ) {
+        const originCounts = new Map<number, number>();
+        for (const unit of primaryHostileGroup.units)
+          originCounts.set(
+            unit.siteId,
+            (originCounts.get(unit.siteId) ?? 0) + unit.strength,
+          );
+        const raidOriginId = [...originCounts.entries()].sort(
+            (a, b) => b[1] - a[1],
+          )[0]?.[0],
+          raidOrigin = raidOriginId != null ? g.sites[raidOriginId] : undefined,
+          cutoffKey = `cutoff-at:${aiTeam}`,
+          lastCutoffAt = aiState.failedGoals[cutoffKey] ?? -999;
+        if (
+          raidOrigin &&
+          !raidOrigin.destroyed &&
+          raidOrigin.team === enemyTeam &&
+          g.campaign.elapsedHours - lastCutoffAt >=
+            (difficulty === "hard" ? 2 : 5)
+        ) {
+          const originDefenders = g.units.filter(
+              (unit) =>
+                unit.team === enemyTeam &&
+                Math.hypot(unit.x - raidOrigin.x, unit.z - raidOrigin.z) < 5,
+            ).length,
+            cutoffSources = friendlySites
+              .filter(
+                (site) =>
+                  !urgentProductionIds.has(site.id) &&
+                  idleAt(site) >= (difficulty === "hard" ? 8 : 12),
+              )
+              .sort(
+                (a, b) =>
+                  Math.hypot(a.x - raidOrigin.x, a.z - raidOrigin.z) -
+                  Math.hypot(b.x - raidOrigin.x, b.z - raidOrigin.z),
+              )
+              .slice(0, difficulty === "hard" ? 3 : 2),
+            cutoffPotential = cutoffSources.reduce(
+              (sum, site) => sum + idleAt(site) * 0.72,
+              0,
+            );
+          if (cutoffPotential >= originDefenders * 1.2 + 5) {
+            const lead = cutoffSources[0];
+            if (lead && difficulty === "hard" && siteTouchesRoad(lead)) {
+              const busKind = (["large_bus", "bus"] as ResearchId[]).find(
+                (kind) =>
+                  hasResearch(g.campaign, aiTeam, kind) &&
+                  g.campaign.research.stockpile[aiTeam][kind] > 0,
+              );
+              if (busKind) allocateTransport(aiTeam, busKind, lead.id);
+            }
+            let committed = 0;
+            for (const source of cutoffSources) {
+              const available = idleAt(source);
+              source.stance = "standby";
+              source.dispatchRatio = 1;
+              committed += issueOrder(
+                aiTeam,
+                source,
+                raidOrigin,
+                Math.max(
+                  4,
+                  Math.ceil(
+                    available * (difficulty === "hard" ? 0.82 : 0.62),
+                  ),
+                ),
+                false,
+              );
+            }
+            if (committed) aiState.failedGoals[cutoffKey] = g.campaign.elapsedHours;
+          }
         }
       }
       const strategicThreats = friendlySites
@@ -7493,6 +7700,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   enemyProductionRemaining > 2
                     ? difficulty === "hard" ? 140 : difficulty === "casual" ? 35 : 95
                     : 0,
+                intentValue =
+                  isLostHomeSite(target)
+                    ? currentIntent === "single_breakthrough" ? 95 : 42
+                    : (target.type === "dorm" || target.type === "dining") &&
+                        currentIntent === "positional"
+                      ? 32
+                      : (target.type === "dorm" || target.type === "dining") &&
+                          currentIntent === "passive"
+                        ? 18
+                        : 0,
                 congestionPenalty = occupiedAttackTargets.has(target.id)
                   ? difficulty === "hard" ? 60 : difficulty === "casual" ? 12 : 35
                   : 0,
@@ -7511,6 +7728,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                       ? difficulty === "hard" ? 0.45 : difficulty === "casual" ? 0.9 : 0.65
                       : 1) -
                   defenders * 1.55 +
+                  intentValue +
                   (random() - 0.5) * (difficulty === "casual" ? 12 : 4),
               };
             })
@@ -7533,6 +7751,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (!targets.length) continue;
         hub.stance = "standby";
         hub.dispatchRatio = 1;
+        if (
+          difficulty === "hard" &&
+          dispatchBudget >= 30 &&
+          siteTouchesRoad(hub)
+        ) {
+          const busKind = (["large_bus", "bus"] as ResearchId[]).find(
+            (kind) =>
+              hasResearch(g.campaign, aiTeam, kind) &&
+              g.campaign.research.stockpile[aiTeam][kind] > 0,
+          );
+          if (busKind) allocateTransport(aiTeam, busKind, hub.id);
+        }
         let remaining = dispatchBudget;
         targets.forEach((choice, index) => {
           if (remaining <= 0) return;
@@ -7560,6 +7790,137 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           remaining -= deployed;
         });
       }
+      if (
+        difficulty === "hard" &&
+        enemyProductionRemaining > 2 &&
+        g.resources[aiTeam] >= 160 &&
+        g.sites.filter(
+          (site) =>
+            site.team === aiTeam && site.type === "camp" && !site.destroyed,
+        ).length < 2 &&
+        g.campaign.elapsedHours -
+          (aiState.failedGoals[`camp-at:${aiTeam}`] ?? -999) >=
+          24
+      ) {
+        const enemyStrongpoints = enemySites.filter((site) => {
+            if (
+              site.type !== "teaching" &&
+              site.type !== "target" &&
+              site.type !== "capital"
+            )
+              return false;
+            return (
+              g.units.filter(
+                (unit) =>
+                  unit.team === enemyTeam &&
+                  Math.hypot(unit.x - site.x, unit.z - site.z) < 5,
+              ).length >= 8
+            );
+          }),
+          deepTargets = enemySites
+            .filter((site) => site.type === "dorm" || site.type === "dining")
+            .map((site) => ({
+              site,
+              defenders: g.units.filter(
+                (unit) =>
+                  unit.team === enemyTeam &&
+                  Math.hypot(unit.x - site.x, unit.z - site.z) < 5,
+              ).length,
+            }))
+            .sort((a, b) => a.defenders - b.defenders),
+          campSources = friendlySites
+            .filter(
+              (site) =>
+                site.type !== "camp" &&
+                !urgentProductionIds.has(site.id) &&
+                idleAt(site) >= 18,
+            )
+            .sort((a, b) => idleAt(b) - idleAt(a));
+        let campBuilt = false;
+        for (const { site: deepTarget } of deepTargets.slice(0, 6)) {
+          if (campBuilt) break;
+          for (const source of campSources.slice(0, 8)) {
+            const sourceX = source.navX ?? source.x,
+              sourceZ = source.navZ ?? source.z,
+              targetX = deepTarget.navX ?? deepTarget.x,
+              targetZ = deepTarget.navZ ?? deepTarget.z,
+              directDistance = Math.hypot(targetX - sourceX, targetZ - sourceZ),
+              directPath = findPath(sourceX, sourceZ, targetX, targetZ),
+              crossesStrongpoint = directPath.some(([x, z]) =>
+                enemyStrongpoints.some(
+                  (strongpoint) =>
+                    Math.hypot(x - strongpoint.x, z - strongpoint.z) < 4.2,
+                ),
+              );
+            if (
+              !directPath.length ||
+              (!crossesStrongpoint && directDistance < 24)
+            )
+              continue;
+            const directionX = (targetX - sourceX) / Math.max(0.001, directDistance),
+              directionZ = (targetZ - sourceZ) / Math.max(0.001, directDistance),
+              side = random() < 0.5 ? -1 : 1,
+              candidatePoints = [
+                [
+                  sourceX + directionX * 3.1 - directionZ * 2.5 * side,
+                  sourceZ + directionZ * 3.1 + directionX * 2.5 * side,
+                ],
+                [
+                  sourceX + directionX * 3.5 + directionZ * 2.2 * side,
+                  sourceZ + directionZ * 3.5 - directionX * 2.2 * side,
+                ],
+              ];
+            for (const [candidateX, candidateZ] of candidatePoints) {
+              const clearIndex = nearestClearIndex(candidateX, candidateZ);
+              if (clearIndex < 0) continue;
+              const [campX, campZ] = navPoint(navGrid, clearIndex),
+                previousSiteCount = g.sites.length;
+              if (
+                !buildCampAt(
+                  new THREE.Vector3(campX, 0, campZ),
+                  aiTeam,
+                  true,
+                ) ||
+                g.sites.length === previousSiteCount
+              )
+                continue;
+              const camp = g.sites.at(-1)!;
+              const busKind = (["large_bus", "bus"] as ResearchId[]).find(
+                (kind) =>
+                  hasResearch(g.campaign, aiTeam, kind) &&
+                  g.campaign.research.stockpile[aiTeam][kind] > 0,
+              );
+              if (busKind && siteTouchesRoad(source))
+                allocateTransport(aiTeam, busKind, source.id);
+              source.stance = "standby";
+              source.dispatchRatio = 1;
+              const deployed = issueOrder(
+                aiTeam,
+                source,
+                camp,
+                Math.max(12, Math.floor(idleAt(source) * 0.68)),
+                true,
+              );
+              source.orderTarget = undefined;
+              source.orderPath = undefined;
+              if (deployed) {
+                camp.orderTarget = deepTarget.id;
+                camp.orderPath = findPath(
+                  camp.navX ?? camp.x,
+                  camp.navZ ?? camp.z,
+                  targetX,
+                  targetZ,
+                );
+                aiState.failedGoals[`camp-at:${aiTeam}`] =
+                  g.campaign.elapsedHours;
+                campBuilt = true;
+              }
+              break;
+            }
+            if (campBuilt) break;
+          }
+        }
+      }
       const siteAdvantage = friendlySites.length / Math.max(1, enemySites.length),
         offensiveMomentum =
           difficulty === "casual"
@@ -7569,7 +7930,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   (difficulty === "hard" ? 0.55 : 1.15),
                 0,
                 1,
-              );
+              ) *
+              THREE.MathUtils.clamp(forceRatio / 0.9, 0.28, 1);
       if (offensiveMomentum > 0) {
         const assignedSweepTargets = new Set(occupiedAttackTargets),
           sourceLimit =
@@ -7656,7 +8018,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             g.sites[source.orderTarget]?.team === enemyTeam,
         ),
         aggressionThreshold =
-          difficulty === "hard" ? 0.95 : difficulty === "casual" ? 1.8 : 1.12,
+          (difficulty === "hard" ? 0.95 : difficulty === "casual" ? 1.8 : 1.12) *
+          (forceRatio < 0.72 ? 1.28 : forceRatio < 0.95 ? 1.1 : 1),
         reinforcementSourcesUsed = new Set<number>();
       for (const source of activeRoutes) {
         if (urgentProductionIds.has(source.id)) continue;
@@ -7815,7 +8178,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         (difficulty === "standard" && random() < 0.08)
       )
         return;
-      if (activeAiRoutes >= routeLimit) return;
+      const effectiveRouteLimit =
+          routeLimit +
+          (currentIntent === "passive"
+            ? difficulty === "hard" ? 6 : difficulty === "standard" ? 2 : 0
+            : currentIntent === "positional" && difficulty === "hard"
+              ? 3
+              : 0),
+        effectiveWaveLimit =
+          waveLimit +
+          (currentIntent === "passive"
+            ? difficulty === "hard" ? 4 : difficulty === "standard" ? 1 : 0
+            : currentIntent === "positional" && difficulty === "hard"
+              ? 2
+              : 0);
+      if (activeAiRoutes >= effectiveRouteLimit) return;
       const attackSources = friendlySites
         .filter(
           (site) =>
@@ -7833,8 +8210,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       let routesCreated = 0;
       for (const source of attackSources) {
         if (
-          activeAiRoutes + routesCreated >= routeLimit ||
-          routesCreated >= waveLimit
+          activeAiRoutes + routesCreated >= effectiveRouteLimit ||
+          routesCreated >= effectiveWaveLimit
         )
           break;
         const scoredTargets = enemySites
@@ -7889,6 +8266,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   enemyProductionRemaining > 2
                     ? difficulty === "hard" ? 150 : difficulty === "casual" ? 40 : 100
                     : 0,
+                intentValue =
+                  isLostHomeSite(site)
+                    ? currentIntent === "single_breakthrough" ? 105 : 46
+                    : (site.type === "dorm" || site.type === "dining") &&
+                        currentIntent === "positional"
+                      ? 36
+                      : (site.type === "dorm" || site.type === "dining") &&
+                          currentIntent === "passive"
+                        ? 22
+                        : 0,
                 nearbyFriendlySupport = friendlySites.filter(
                   (friendly) =>
                     Math.hypot(friendly.x - site.x, friendly.z - site.z) < 12,
@@ -7928,6 +8315,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                   routeCongestion * (difficulty === "hard" ? 15 : 8) +
                   personalityValue -
                   cost +
+                  intentValue +
                   (random() - .5) * (difficulty === "casual" ? 12 : 5),
               };
             })
