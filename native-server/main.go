@@ -812,6 +812,14 @@ func main() {
 	}
 
 	hub := newRelayHub()
+	kernelRuntime, err := newJSKernelRuntime()
+	if err != nil {
+		log.Fatalf("初始化共享JS内核失败: %v", err)
+	}
+	kernelHealth, err := kernelRuntime.healthCheck()
+	if err != nil {
+		log.Fatalf("共享JS内核自检失败: %v", err)
+	}
 	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
 	var hostController *simulationHostController
 	if !*noOpen {
@@ -824,7 +832,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/info", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		info := map[string]any{"name": "qingbei-local-server", "version": version}
+		info := map[string]any{"name": "qingbei-local-server", "version": version, "kernel": kernelHealth}
 		if hostController != nil {
 			info["battleHost"] = hostController.snapshot()
 		}
@@ -868,7 +876,7 @@ func main() {
 		hostController.start()
 		defer hostController.shutdown()
 	}
-	go runConsole(hub, server, hostController)
+	go runConsole(hub, server, hostController, kernelRuntime)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
@@ -898,7 +906,7 @@ func embeddedWebServer(webRoot fs.FS) http.Handler {
 	})
 }
 
-func runConsole(hub *relayHub, server *http.Server, hostController *simulationHostController) {
+func runConsole(hub *relayHub, server *http.Server, hostController *simulationHostController, kernelRuntime *jsKernelRuntime) {
 	fmt.Println()
 	terminalSuccess("服务器终端已就绪。输入 help 查看可用命令；支持上下文 API 指令。")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -917,6 +925,7 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
 			fmt.Println("  status / battle       查看进程或详细战局状态")
 			fmt.Println("  host / host restart   查看或重启后台战局主机")
+			fmt.Println("  kernel                查看共享JS内核状态")
 			fmt.Println("  ai <pku|thu>          查看AI生产点和当前战略路线")
 			fmt.Println("  rooms / players       查看战局和在线玩家")
 			fmt.Println("  kick <名称/ID>        移出玩家")
@@ -964,6 +973,14 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			if snapshot.Error != "" {
 				terminalError("最近错误: " + snapshot.Error)
 			}
+		case "kernel":
+			health, err := kernelRuntime.healthCheck()
+			if err != nil {
+				terminalError("共享JS内核错误: " + err.Error())
+				continue
+			}
+			encoded, _ := json.Marshal(health)
+			fmt.Printf("%s %s\n", paint(ansiCyan, "共享JS内核:"), paint(ansiWhite+ansiBold, string(encoded)))
 		case "rooms":
 			rooms := hub.consoleSnapshot()
 			if len(rooms) == 0 {

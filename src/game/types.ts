@@ -140,7 +140,9 @@ export type ResearchState = {
 };
 export type AiState = {
   difficulty: AiDifficulty;
+  difficultyByTeam?: Record<Team, AiDifficulty>;
   seed: number;
+  seedByTeam?: Record<Team, number>;
   personality: Record<Team, string>;
   nextStrategicAt: Record<Team, number>;
   failedGoals: Record<string, number>;

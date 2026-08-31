@@ -26,7 +26,7 @@ export function ToolsPanel({
           <div className="tool-symbol multi-route" aria-hidden="true"><i /></div>
           <div>
             <h3>多目标兵线</h3>
-            <p>启用后，拖动经过多个据点可建立连续路线；默认状态只连接起点和松开位置。</p>
+            <p>启用后，拖动经过多个据点可建立连续路线。可先在空地建立临时营地，再一次拖过“来源→营地→目标”主动绕开高风险区域。</p>
           </div>
           <button
             className={activeTool === "multi-route" ? "active" : ""}

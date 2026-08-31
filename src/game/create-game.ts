@@ -427,7 +427,12 @@ export function makeFreshGame(): GameData {
       research: defaultResearchState(),
       ai: {
         difficulty: "standard",
+        difficultyByTeam: { pku: "standard", thu: "standard" },
         seed: aiSeed,
+        seedByTeam: {
+          pku: aiSeed ^ 0x504b5501,
+          thu: aiSeed ^ 0x54485501,
+        },
         personality: {
           pku: pkuPersonalities[aiSeed % pkuPersonalities.length],
           thu: thuPersonalities[(aiSeed >>> 3) % thuPersonalities.length],

@@ -6,6 +6,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "build:kernel": "node scripts/build-kernel.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

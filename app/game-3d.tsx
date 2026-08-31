@@ -217,6 +217,7 @@ export default function Game3D() {
   const activeServerIdRef = useRef<string | null>(null);
   const autoDedicatedStartedRef = useRef(false);
   const autoLocalJoinStartedRef = useRef(false);
+  const aiBenchmarkAutostartedRef = useRef(false);
   const [dedicatedServerHost, setDedicatedServerHost] = useState(false);
   const dedicatedServerHostRef = useRef(false);
   const pendingServerIdRef = useRef<string | null>(null);
@@ -345,8 +346,13 @@ export default function Game3D() {
   const [saveName, setSaveName] = useState("解放清华园");
   const [autoDay, setAutoDay] = useState(true);
   const autoDayRef = useRef(true);
-  const [timeScale, setTimeScale] = useState(1);
-  const timeScaleRef = useRef(1);
+  const initialBenchmarkScale = new URLSearchParams(location.search).has(
+    "ai-benchmark",
+  )
+    ? 16
+    : 1;
+  const [timeScale, setTimeScale] = useState(initialBenchmarkScale);
+  const timeScaleRef = useRef(initialBenchmarkScale);
   const [clock, setClock] = useState("8月16日 08:00");
   const [selected, setSelected] = useState<number | null>(null);
   const selectedRef = useRef<number | null>(null);
@@ -1158,7 +1164,18 @@ export default function Game3D() {
             ).length,
           },
           decisions: campaign.decisions ?? defaults.decisions,
-          ai: campaign.ai ?? defaults.ai,
+          ai: {
+            ...defaults.ai,
+            ...(campaign.ai ?? {}),
+            difficultyByTeam:
+              campaign.ai?.difficultyByTeam ??
+              ({
+                pku: campaign.ai?.difficulty ?? defaults.ai.difficulty,
+                thu: campaign.ai?.difficulty ?? defaults.ai.difficulty,
+              } as const),
+            seedByTeam:
+              campaign.ai?.seedByTeam ?? defaults.ai.seedByTeam,
+          },
         };
       normalizedCampaign.decisions.active ??= { pku: null, thu: null };
       normalizedCampaign.decisions.completed ??= [];
@@ -1381,6 +1398,10 @@ export default function Game3D() {
     playerTeamRef.current = team;
     gameRef.current = makeFreshGame();
     gameRef.current.campaign.ai.difficulty = aiDifficulty;
+    gameRef.current.campaign.ai.difficultyByTeam = {
+      pku: aiDifficulty,
+      thu: aiDifficulty,
+    };
     sceneApi.current?.sync();
     sceneApi.current?.clearUnitSelection();
     setSelected(null);
@@ -1390,6 +1411,14 @@ export default function Game3D() {
     setPauseOpen(false);
     setScreen("game");
   };
+  useEffect(() => {
+    const scenario = new URLSearchParams(location.search).get("ai-benchmark");
+    if (!scenario || aiBenchmarkAutostartedRef.current) return;
+    aiBenchmarkAutostartedRef.current = true;
+    const humanTeam: Team = scenario.startsWith("pku-") ? "thu" : "pku";
+    setSaveName(`AI基准-${scenario}`);
+    newGame(humanTeam);
+  }, []);
   const stanceText = useMemo(
     () => ({
       defend: { title: "防守", detail: "保留55%驻军" },
@@ -4206,7 +4235,7 @@ export default function Game3D() {
         </div>
         <button onClick={() => setAssetOpen(true)}>🖼 更换材质</button>
         <button onClick={() => setEventLogOpen(true)}>事件档案</button>
-        <span className="camp-hint">右键空地建立临时据点</span>
+        <span className="camp-hint">右键空地建立临时据点 · 多目标兵线可经营地绕行</span>
         {selectedUnitCount > 0 && (
           <span className="selected-squad">◎ 已选 {selectedUnitCount} 人</span>
         )}
