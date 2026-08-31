@@ -2727,11 +2727,118 @@ select option {
   background: linear-gradient(#777, #595959) !important;
 }
 .home-save-list {
-  max-height: 260px;
+  max-height: min(58vh, 620px);
   overflow: auto;
 }
-.home-save-list article {
-  grid-template-columns: 1fr auto auto;
+.home-card.save-browser-card {
+  width: min(94vw, 1080px);
+  max-height: min(94vh, 860px);
+}
+.home-save-browser {
+  display: grid;
+  gap: 12px;
+  min-height: min(68vh, 650px);
+}
+.home-save-browser > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 4px;
+}
+.home-save-browser h2 {
+  margin: 0 0 3px;
+  color: #fff;
+  font-size: 22px;
+  text-shadow: 2px 2px 0 #111;
+}
+.home-save-browser header span {
+  color: #b9c0b9;
+  font-size: 11px;
+}
+.save-view-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #eee;
+  white-space: nowrap;
+}
+.save-view-team select {
+  min-height: 36px;
+  padding: 6px 30px 6px 10px;
+}
+.home-save-browser .home-save-list {
+  width: 100%;
+  margin: 0;
+  padding: 10px;
+  border: 2px solid #111;
+  background: #111817ec;
+  box-shadow: inset 0 0 0 2px #3b3b3b;
+}
+.home-save-browser .home-save-list article {
+  display: grid;
+  grid-template-columns: 40px minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 720px;
+  padding: 10px;
+  border: 1px solid #505750;
+  background: linear-gradient(90deg, #17211eef, #101614ef);
+}
+.home-save-browser .home-save-list article + article {
+  margin-top: 7px;
+}
+.home-save-browser .home-save-list article:hover {
+  border-color: #d9c56e;
+  background: linear-gradient(90deg, #23302bef, #151d1aef);
+}
+.save-row-summary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.save-row-summary strong {
+  overflow: hidden;
+  color: #fff1bf;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-save-browser .save-row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  white-space: nowrap;
+}
+.home-save-browser .save-row-actions button {
+  min-width: 58px;
+  padding: 7px 10px;
+}
+.home-save-list .save-icon.autosave {
+  border-color: #6eb6dc;
+  background: linear-gradient(135deg, #24495b, #132a35);
+  box-shadow: inset 0 0 0 3px #101817, 0 0 8px #66c9ff55;
+}
+.save-empty-state {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: #c4c9c3;
+}
+.save-browser-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.save-browser-actions > * {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  margin: 0;
+}
+.save-browser-actions .save-create {
+  border-color: #e5ca6f;
+  background: linear-gradient(#806921, #5f4b14);
 }
 .home-bottom-nav {
   position: static;
@@ -3497,10 +3604,26 @@ select option {
     gap: 4px;
   }
   .home-save-list article {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 40px minmax(190px, 1fr) auto;
   }
-  .home-save-list .delete {
-    grid-column: 2;
+  .home-card.save-browser-card {
+    width: 96vw;
+  }
+  .home-save-browser {
+    min-height: 72vh;
+  }
+  .home-save-browser > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .save-view-team {
+    justify-content: space-between;
+  }
+  .home-save-browser .home-save-list article {
+    min-width: 680px;
+  }
+  .save-browser-actions {
+    grid-template-columns: 1fr;
   }
   .direct-control-hud {
     left: 8px;

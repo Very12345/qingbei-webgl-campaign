@@ -867,7 +867,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const refreshNavAnchors = () => {
       gameRef.current.sites.forEach((site) => {
         if (site.destroyed) return;
-        let anchor = nearestOpenIndex(navGrid, site.x, site.z);
+        let anchor = nearestClearIndex(site.x, site.z);
         if (anchor < 0) return;
         let anchorPoint = navPoint(navGrid, anchor),
           needsPortal =
@@ -875,8 +875,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (needsPortal) {
           const roadAnchor = nearestRoadIndex(navGrid, site.x, site.z);
           if (roadAnchor >= 0) {
+            const [roadX, roadZ] = navPoint(navGrid, roadAnchor);
+            if (!walkableWithClearance(roadX, roadZ)) {
+              [site.navX, site.navZ] = anchorPoint;
+              site.hasPortal =
+                Math.hypot(anchorPoint[0] - site.x, anchorPoint[1] - site.z) >
+                0.6;
+              return;
+            }
             anchor = roadAnchor;
-            anchorPoint = navPoint(navGrid, roadAnchor);
+            anchorPoint = [roadX, roadZ];
           }
         }
         [site.navX, site.navZ] = anchorPoint;
@@ -3253,29 +3261,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const selectionTexture = new THREE.CanvasTexture(selectionCanvas);
     const UNIT_RENDER_SCALE = 0.56 / 3,
       UNIT_SEPARATION_DISTANCE = 0.48 / 3,
-      hpGeometry = new THREE.PlaneGeometry(1, 0.1),
-      hpBackMaterial = new THREE.MeshBasicMaterial({
-        color: 0x241014,
-        transparent: true,
-        opacity: 0.9,
-        depthTest: false,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-      hpFillMaterials = {
-        pku: new THREE.MeshBasicMaterial({
-          color: 0xff5368,
-          depthTest: false,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-        }),
-        thu: new THREE.MeshBasicMaterial({
-          color: 0xb67aff,
-          depthTest: false,
-          depthWrite: false,
-          side: THREE.DoubleSide,
-        }),
-      },
       unitBodyGeometry = new THREE.SphereGeometry(0.58, 16, 12),
       farUnitBodyGeometry = new THREE.SphereGeometry(0.58, 8, 6),
       unitLimbGeometry = new THREE.CylinderGeometry(0.055, 0.055, 0.68, 7),
@@ -3370,7 +3355,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }),
       },
       sharedUnitGeometries = new Set<THREE.BufferGeometry>([
-        hpGeometry,
         unitBodyGeometry,
         farUnitBodyGeometry,
         unitLimbGeometry,
@@ -3378,9 +3362,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         unitGlowGeometry,
       ]),
       sharedUnitMaterials = new Set<THREE.Material>([
-        hpBackMaterial,
-        hpFillMaterials.pku,
-        hpFillMaterials.thu,
         unitBodyMaterials.pku,
         unitBodyMaterials.thu,
         unitBodyMaterials.ustc,
@@ -3623,17 +3604,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       routeMarker.visible = false;
       routeMarker.renderOrder = 90;
       g.add(routeMarker);
-      const hpBack = new THREE.Mesh(hpGeometry, hpBackMaterial),
-        hpFill = new THREE.Mesh(hpGeometry, hpFillMaterials[u.team]);
-      hpBack.scale.set(0.78, 1, 1);
-      hpBack.position.set(0, 1.72, 0.05);
-      hpBack.renderOrder = 42;
-      hpBack.visible = false;
-      hpFill.scale.set(0.74, 0.62, 1);
-      hpFill.position.set(0, 1.72, 0.06);
-      hpFill.renderOrder = 43;
-      hpFill.visible = false;
-      g.add(hpBack, hpFill);
       g.position.set(u.x, terrainHeight(region, u.x, u.z), u.z);
       g.scale.setScalar(UNIT_RENDER_SCALE);
       g.userData = {
@@ -3644,8 +3614,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         detailParts,
         detailsVisible: true,
         glow,
-        hpBack,
-        hpFill,
         selectionRing,
         routeMarker,
         renderTeam: u.team,
@@ -5466,7 +5434,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               Math.hypot(
                 unit.x - (target.navX ?? target.x),
                 unit.z - (target.navZ ?? target.z),
-              ) < 8.5
+              ) < 12
             ) {
               const attackers = attackersBySite.get(target.id);
               if (attackers) attackers.push(unit);
@@ -5481,7 +5449,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             Math.hypot(
               unit.x - (home.navX ?? home.x),
               unit.z - (home.navZ ?? home.z),
-            ) < 8.5
+            ) < 12
           ) {
             const defenders = defendersBySite.get(home.id);
             if (defenders) defenders.push(unit);
@@ -5528,6 +5496,41 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           if (distance < best) {
             best = distance;
             enemy = candidate;
+          }
+        }
+        if (!enemy && unit.targetSiteId != null) {
+          const target = g.sites[unit.targetSiteId];
+          if (
+            target &&
+            !target.destroyed &&
+            target.team !== unit.team &&
+            Math.hypot(
+              unit.x - (target.navX ?? target.x),
+              unit.z - (target.navZ ?? target.z),
+            ) < 12
+          ) {
+            let nearestDefenderDistance = Number.POSITIVE_INFINITY;
+            for (const candidate of unitsNearPoint(
+              target.navX ?? target.x,
+              target.navZ ?? target.z,
+              12,
+            )) {
+              if (
+                candidate.team !== target.team ||
+                candidate.siteId !== target.id ||
+                candidate.hp <= 0 ||
+                used.has(candidate.id)
+              )
+                continue;
+              const distance = Math.hypot(
+                candidate.x - unit.x,
+                candidate.z - unit.z,
+              );
+              if (distance < nearestDefenderDistance) {
+                nearestDefenderDistance = distance;
+                enemy = candidate;
+              }
+            }
           }
         }
         if (!enemy) continue;
@@ -8748,13 +8751,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           const glow = mesh.userData.glow as THREE.Mesh;
           glow.visible = fighting || selectedUnitIds.has(u.id) || night > 0.34;
           glow.scale.setScalar(fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1);
-          const hpRatio = THREE.MathUtils.clamp(u.hp / 100, 0, 1),
-            hpBack = mesh.userData.hpBack as THREE.Mesh,
-            hpFill = mesh.userData.hpFill as THREE.Mesh;
-          hpBack.visible = fighting;
-          hpFill.visible = fighting;
-          hpFill.scale.x = 0.74 * hpRatio;
-          hpFill.position.x = -0.37 * (1 - hpRatio);
         }
         if (fighting || !simulateUnits) return;
         const distanceToView = Math.hypot(

@@ -42,6 +42,7 @@ function readLocalServerHistory() {
 export type HomePage =
   | "menu"
   | "new"
+  | "create-game"
   | "servers"
   | "create-server"
   | "join-server"
@@ -187,7 +188,7 @@ export function HomeScreen(props: HomeScreenProps) {
         backgroundImage: `linear-gradient(90deg,#0308076b,#07100bc4 44%,#07100bc4 56%,#0308076b),url(${import.meta.env.BASE_URL}menu-poster-v2.webp)`,
       }}
     >
-      <div className="home-card">
+      <div className={`home-card${page === "new" ? " save-browser-card" : ""}`}>
         <header className="home-title">
           <h1>解放清华园</h1>
           <small>燕园—清华园实时战役</small>
@@ -454,7 +455,7 @@ export function HomeScreen(props: HomeScreenProps) {
             )}
           </div>
         )}
-        {page === "new" && (
+        {page === "create-game" && (
           <div className="world-settings">
             <h2>新建游戏</h2>
             <label>
@@ -509,66 +510,106 @@ export function HomeScreen(props: HomeScreenProps) {
             </button>
           </div>
         )}
-        <div className={`home-save-list ${page !== "new" ? "home-page-hidden" : ""}`}>
-          <h2>选择存档</h2>
-          <label className="file-action save-import-action">
-            上传存档文件
-            <input
-              type="file"
-              accept="application/json,.json"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) importPlayerSave(file);
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
-          {autosave && (
-            <article className="unfinished-save">
+        {page === "new" && (
+          <div className="home-save-browser">
+            <header>
               <div>
-                <strong>未完成战局</strong>
-                <span>
-                  {new Date(autosave.savedAt).toLocaleString("zh-CN")} · {autosave.units.length}人 · 自动保存
-                </span>
+                <h2>选择战局</h2>
+                <span>选择一个存档进入游戏，或创建新的战局</span>
               </div>
-              <button onClick={() => loadGame(autosave, newGameTeam)}>继续</button>
-              <button onClick={clearUnfinishedGame}>放弃</button>
-            </article>
-          )}
-          {!autosave && !saves.length && <p>暂无存档，可直接开始新游戏。</p>}
-          {saves.map((save) => (
-            <article key={save.savedAt}>
-              <button
-                className={`save-icon ${save.icon ?? "map"}`}
-                onClick={() => changeSaveIcon(save.savedAt)}
-                title="更换存档图标"
-                aria-label="更换存档图标"
-              />
-              <div>
-                <strong>{save.name}</strong>
-                <span>
-                  {new Date(save.savedAt).toLocaleString("zh-CN")} · {save.units.length}人
-                </span>
-              </div>
-              <button onClick={() => loadGame(save, newGameTeam)}>进入</button>
-              <button
-                onClick={() => {
-                  const name = window.prompt("新的存档名称", save.name);
-                  if (name != null) renameSave(save.savedAt, name);
-                }}
-              >
-                改名
+              <label className="save-view-team">
+                <span>进入视角</span>
+                <select
+                  value={newGameTeam}
+                  onChange={(event) =>
+                    setNewGameTeam(event.target.value as Team)
+                  }
+                >
+                  <option value="pku">北京大学</option>
+                  <option value="thu">清华大学</option>
+                </select>
+              </label>
+            </header>
+            <div className="home-save-list">
+              {autosave && (
+                <article className="unfinished-save">
+                  <span className="save-icon autosave" aria-hidden="true" />
+                  <div className="save-row-summary">
+                    <strong>未完成战局</strong>
+                    <span>
+                      {new Date(autosave.savedAt).toLocaleString("zh-CN")} · {autosave.units.length}人 · 自动保存
+                    </span>
+                  </div>
+                  <div className="save-row-actions">
+                    <button onClick={() => loadGame(autosave, newGameTeam)}>继续</button>
+                    <button className="delete" onClick={clearUnfinishedGame}>放弃</button>
+                  </div>
+                </article>
+              )}
+              {!autosave && !saves.length && (
+                <p className="save-empty-state">暂无存档，请创建新的战局。</p>
+              )}
+              {saves.map((save) => (
+                <article key={save.savedAt}>
+                  <button
+                    className={`save-icon ${save.icon ?? "map"}`}
+                    onClick={() => changeSaveIcon(save.savedAt)}
+                    title="更换存档图标"
+                    aria-label={`更换“${save.name}”的存档图标`}
+                  />
+                  <div className="save-row-summary">
+                    <strong>{save.name}</strong>
+                    <span>
+                      {new Date(save.savedAt).toLocaleString("zh-CN")} · {save.units.length}人
+                    </span>
+                  </div>
+                  <div className="save-row-actions">
+                    <button onClick={() => loadGame(save, newGameTeam)}>进入</button>
+                    <button
+                      onClick={() => {
+                        const name = window.prompt("新的存档名称", save.name);
+                        if (name != null) renameSave(save.savedAt, name);
+                      }}
+                    >
+                      改名
+                    </button>
+                    <button onClick={() => changeSaveIcon(save.savedAt)}>图标</button>
+                    <button onClick={() => exportSave(save)}>导出</button>
+                    <button className="delete" onClick={() => deleteSave(save.savedAt)}>
+                      删除
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <footer className="save-browser-actions">
+              <button className="save-create" onClick={() => setPage("create-game")}>
+                创建新战局
               </button>
-              <button onClick={() => exportSave(save)}>导出</button>
-              <button className="delete" onClick={() => deleteSave(save.savedAt)}>
-                删除
-              </button>
-            </article>
-          ))}
-        </div>
+              <label className="file-action save-import-action">
+                导入存档文件
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) importPlayerSave(file);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+            </footer>
+          </div>
+        )}
         {page !== "menu" && (
           <nav className="home-bottom-nav">
-            <button onClick={() => setPage("menu")}>返回主菜单</button>
+            <button
+              onClick={() =>
+                setPage(page === "create-game" ? "new" : "menu")
+              }
+            >
+              {page === "create-game" ? "返回存档列表" : "返回主菜单"}
+            </button>
           </nav>
         )}
       </div>
