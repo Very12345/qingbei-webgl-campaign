@@ -104,6 +104,9 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.cloudflare.com:3478" },
 ];
 
+const EVENT_POPUP_SETTING_KEY = "qingbei-event-popup-enabled";
+const MAX_TIME_SCALE = 64;
+
 const NETWORK_SKINS: Array<UnitState["skin"]> = [
   undefined,
   "ustc",
@@ -386,6 +389,10 @@ export default function Game3D() {
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
     (localStorage.getItem("qingbei-quality-mode") as QualityMode) || "auto",
   );
+  const [eventPopupEnabled, setEventPopupEnabled] = useState(
+    () => localStorage.getItem(EVENT_POPUP_SETTING_KEY) !== "false",
+  );
+  const eventPopupEnabledRef = useRef(eventPopupEnabled);
   const [showPerformance, setShowPerformance] = useState(false);
   const [performanceMetrics, setPerformanceMetrics] =
     useState<PerformanceMetrics>(performanceControllerRef.current.metrics);
@@ -399,6 +406,9 @@ export default function Game3D() {
     site: null,
   });
   const [activeEvents, setActiveEvents] = useState<EventCard[]>([]);
+  const [eventToast, setEventToast] = useState<EventCard | null>(null);
+  const eventToastQueueRef = useRef<EventCard[]>([]);
+  const eventToastTimerRef = useRef<number | null>(null);
   const [victoryBroadcast, setVictoryBroadcast] = useState<{
     winner: Team;
     title: string;
@@ -415,11 +425,28 @@ export default function Game3D() {
         ...event,
         atHour: campaign.elapsedHours,
       });
-    setActiveEvents((current) =>
-      current.some((item) => item.id === event.id)
-        ? current
-        : [...current, event],
-    );
+    if (eventPopupEnabledRef.current) {
+      setActiveEvents((current) =>
+        current.some((item) => item.id === event.id)
+          ? current
+          : [...current, event],
+      );
+      return;
+    }
+    eventToastQueueRef.current.push(event);
+    if (eventToastTimerRef.current == null) {
+      const showNextEvent = () => {
+        const next = eventToastQueueRef.current.shift();
+        if (!next) {
+          setEventToast(null);
+          eventToastTimerRef.current = null;
+          return;
+        }
+        setEventToast(next);
+        eventToastTimerRef.current = window.setTimeout(showNextEvent, 4200);
+      };
+      showNextEvent();
+    }
   }, []);
   const [stats, setStats] = useState<BattleStats>({
     pku: 0,
@@ -599,6 +626,30 @@ export default function Game3D() {
   useEffect(() => {
     timeScaleRef.current = timeScale;
   }, [timeScale]);
+  useEffect(() => {
+    eventPopupEnabledRef.current = eventPopupEnabled;
+    localStorage.setItem(
+      EVENT_POPUP_SETTING_KEY,
+      eventPopupEnabled ? "true" : "false",
+    );
+    if (!eventPopupEnabled) {
+      setActiveEvents([]);
+    } else {
+      if (eventToastTimerRef.current != null)
+        window.clearTimeout(eventToastTimerRef.current);
+      eventToastQueueRef.current = [];
+      eventToastTimerRef.current = null;
+      setEventToast(null);
+    }
+  }, [eventPopupEnabled]);
+  useEffect(
+    () => () => {
+      if (eventToastTimerRef.current != null)
+        window.clearTimeout(eventToastTimerRef.current);
+      eventToastQueueRef.current = [];
+    },
+    [],
+  );
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
@@ -1606,7 +1657,7 @@ export default function Game3D() {
     Math.max(
       300,
       3_000 /
-        Math.max(0.5, Math.min(16, timeScaleRef.current)),
+        Math.max(0.5, Math.min(MAX_TIME_SCALE, timeScaleRef.current)),
     );
   clientActionSenderRef.current = (action) => {
     if (lanHostRef.current || !guestHasAuthoritativeStateRef.current)
@@ -3179,7 +3230,7 @@ export default function Game3D() {
       rest = splitAt < 0 ? "" : withoutApi.slice(splitAt + 1).trim(),
       args = rest.split(/\s+/).filter(Boolean);
     if (action === "help")
-      return "API: status | players | ai <pku|thu> | config | set <name|maxplayers|sameteam|turn-url|turn-user|turn-credential> <值> | saves | maps | map <savedAt> | logs [数量] | new [名称] | resume [名称/ID] | save | timescale <0.5-16> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
+      return "API: status | players | ai <pku|thu> | config | set <name|maxplayers|sameteam|turn-url|turn-user|turn-credential> <值> | saves | maps | map <savedAt> | logs [数量] | new [名称] | resume [名称/ID] | save | timescale <0.5-64> | resource <pku|thu> <数量> | mobilize <pku|thu> <defend|guard|standby> | say <文本>";
     if (action === "status") {
       const summary = buildServerSummary(activeServerIdRef.current ?? "");
       return JSON.stringify({
@@ -3400,10 +3451,10 @@ export default function Game3D() {
       return "已生成兼容模式邀请码";
     }
     if (action === "timescale") {
-      const value = Math.min(16, Math.max(0.5, Number(args[0])));
+      const value = Math.min(MAX_TIME_SCALE, Math.max(0.5, Number(args[0])));
       if (!Number.isFinite(value)) throw new Error("倍率必须是数字");
       setTimeScale(value);
-      return `时间倍率已设为 ${value}×`;
+      return `时间倍率已设为 ${value}×${value > 16 ? "；超过16×可能造成卡顿" : ""}`;
     }
     if (action === "resource") {
       const team = args[0] as Team,
@@ -3981,6 +4032,7 @@ export default function Game3D() {
               showSites={showSites}
               showControl={showControl}
               autoDay={autoDay}
+              eventPopupEnabled={eventPopupEnabled}
               timeScale={timeScale}
               qualityMode={qualityMode}
               showPerformance={showPerformance}
@@ -3988,6 +4040,7 @@ export default function Game3D() {
               onShowSites={setShowSites}
               onShowControl={setShowControl}
               onAutoDay={setAutoDay}
+              onEventPopupEnabled={setEventPopupEnabled}
               onTimeScale={setTimeScale}
               onQualityMode={setQualityMode}
               onShowPerformance={setShowPerformance}
@@ -4041,24 +4094,39 @@ export default function Game3D() {
                       />
                     </label>
                     <label>
+                      <span>事件弹窗</span>
+                      <input
+                        type="checkbox"
+                        checked={eventPopupEnabled}
+                        onChange={(event) =>
+                          setEventPopupEnabled(event.target.checked)
+                        }
+                      />
+                    </label>
+                    <label>
                       <span>时间倍率</span>
                       <input
                         type="number"
                         min="0.5"
-                        max="16"
+                        max="64"
                         step="0.1"
                         value={timeScale}
                         disabled={timeScaleLocked}
                         onChange={(event) =>
                           setTimeScale(
                             Math.min(
-                              16,
+                              MAX_TIME_SCALE,
                               Math.max(0.5, Number(event.target.value) || 0.5),
                             ),
                           )
                         }
                       />
                     </label>
+                    {timeScale > 16 && (
+                      <small className="time-scale-warning">
+                        超过16×可能造成卡顿或降低画面流畅度
+                      </small>
+                    )}
                     <button onClick={() => setPauseSettingsOpen(false)}>
                       完成
                     </button>
@@ -4308,6 +4376,13 @@ export default function Game3D() {
         </aside>
       )}
       <div className="command-notice">{notice}</div>
+      {eventToast && screen === "game" && (
+        <aside className="event-mini-toast" role="status" aria-live="polite">
+          <small>事件发生</small>
+          <strong>{eventToast.title}</strong>
+          <span>{eventToast.effect}</span>
+        </aside>
+      )}
       {campContext && (
         <div
           className="camp-context-menu"

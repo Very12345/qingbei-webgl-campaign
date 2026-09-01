@@ -603,8 +603,8 @@ func (battle *kernelBattle) executeCommand(command string) string {
 		return "已恢复服务器战局"
 	case "timescale":
 		value, err := strconv.ParseFloat(strings.TrimSpace(argument), 64)
-		if err != nil || value < 0.5 || value > 16 {
-			return "用法：timescale <0.5-16>"
+		if err != nil || value < 0.5 || value > 64 {
+			return "用法：timescale <0.5-64>"
 		}
 		battle.mu.Lock()
 		battle.timeScale = value
@@ -612,7 +612,11 @@ func (battle *kernelBattle) executeCommand(command string) string {
 		if instance := battle.currentInstance(); instance != nil {
 			_ = instance.dispatch(map[string]any{"type": "set_time_scale", "value": value})
 		}
-		return fmt.Sprintf("时间倍率已设为 %.1fx", value)
+		warning := ""
+		if value > 16 {
+			warning = "；超过16x可能造成卡顿"
+		}
+		return fmt.Sprintf("时间倍率已设为 %.1fx%s", value, warning)
 	case "resource":
 		fields := strings.Fields(argument)
 		if len(fields) != 2 || (fields[0] != "pku" && fields[0] != "thu") {

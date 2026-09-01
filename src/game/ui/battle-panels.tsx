@@ -60,6 +60,7 @@ export function SettingsDrawer({
   showSites,
   showControl,
   autoDay,
+  eventPopupEnabled,
   timeScale,
   qualityMode,
   showPerformance,
@@ -67,6 +68,7 @@ export function SettingsDrawer({
   onShowSites,
   onShowControl,
   onAutoDay,
+  onEventPopupEnabled,
   onTimeScale,
   onQualityMode,
   onShowPerformance,
@@ -74,6 +76,7 @@ export function SettingsDrawer({
   showSites: boolean;
   showControl: boolean;
   autoDay: boolean;
+  eventPopupEnabled: boolean;
   timeScale: number;
   qualityMode: QualityMode;
   showPerformance: boolean;
@@ -81,6 +84,7 @@ export function SettingsDrawer({
   onShowSites: (value: boolean) => void;
   onShowControl: (value: boolean) => void;
   onAutoDay: (value: boolean) => void;
+  onEventPopupEnabled: (value: boolean) => void;
   onTimeScale: (value: number) => void;
   onQualityMode: (value: QualityMode) => void;
   onShowPerformance: (value: boolean) => void;
@@ -112,22 +116,35 @@ export function SettingsDrawer({
           onChange={(event) => onAutoDay(event.target.checked)}
         />
       </label>
+      <label>
+        <span>事件弹窗</span>
+        <input
+          type="checkbox"
+          checked={eventPopupEnabled}
+          onChange={(event) => onEventPopupEnabled(event.target.checked)}
+        />
+      </label>
       <label className="time-scale-field">
         <span>时间倍率</span>
         <input
           type="number"
           min="0.5"
-          max="16"
+          max="64"
           step="0.1"
           value={timeScale}
           disabled={timeScaleLocked}
           onChange={(event) =>
             onTimeScale(
-              Math.min(16, Math.max(0.5, Number(event.target.value) || 0.5)),
+              Math.min(64, Math.max(0.5, Number(event.target.value) || 0.5)),
             )
           }
         />
         {timeScaleLocked && <small>联机时间倍率由服务器统一控制</small>}
+        {!timeScaleLocked && timeScale > 16 && (
+          <small className="time-scale-warning">
+            超过16×可能造成卡顿或降低画面流畅度
+          </small>
+        )}
       </label>
       <label>
         <span>画质模式</span>

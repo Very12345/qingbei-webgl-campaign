@@ -5349,7 +5349,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return;
       const g = gameRef.current,
         now = performance.now(),
-        combatTimeScale = THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),
+        combatTimeScale = THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 64),
         used = new Set<number>(),
         dead = new Set<number>();
       let ordersChanged = false;
@@ -7170,7 +7170,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         aiThinkInterval = Math.max(
           120,
           difficultySettings.thinkMillisecondsAt1x /
-            THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 16),
+            THREE.MathUtils.clamp(timeScaleRef.current, 0.5, 64),
         );
       if (aiNow < nextAiThinkAt[aiTeam]) return;
       nextAiThinkAt[aiTeam] = aiNow + aiThinkInterval;

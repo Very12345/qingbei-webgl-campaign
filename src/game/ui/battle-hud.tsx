@@ -160,7 +160,7 @@ export function DayScaleControl({
         disabled={locked}
         onChange={(event) => onTimeScale(Number(event.target.value))}
       >
-        {![0.5, 1, 2, 4, 8, 16].includes(timeScale) && (
+        {![0.5, 1, 2, 4, 8, 16, 32, 64].includes(timeScale) && (
           <option value={timeScale}>{timeScale}×</option>
         )}
         <option value={0.5}>0.5×</option>
@@ -169,7 +169,12 @@ export function DayScaleControl({
         <option value={4}>4×</option>
         <option value={8}>8×</option>
         <option value={16}>16×</option>
+        <option value={32}>32×（可能卡顿）</option>
+        <option value={64}>64×（可能卡顿）</option>
       </select>
+      {timeScale > 16 && (
+        <small className="time-scale-warning">超过16×可能造成卡顿</small>
+      )}
     </div>
   );
 }

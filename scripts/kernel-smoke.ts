@@ -2,6 +2,16 @@ import { makeFreshGame } from "../src/game/create-game";
 import { createKernel } from "../src/game/kernel";
 import { strict as assert } from "node:assert";
 
+const speedState = makeFreshGame(),
+  speedKernel = createKernel(speedState),
+  speedStart = speedKernel.snapshot().elapsedHours;
+speedKernel.dispatch({ type: "set_time_scale", value: 64 });
+speedKernel.step(250);
+assert.ok(
+  Math.abs(speedKernel.snapshot().elapsedHours - speedStart - 2.88) < 0.001,
+  "64x must advance the shared simulation kernel at the selected rate",
+);
+
 const state = makeFreshGame();
 state.campaign.warUnlocked = true;
 const kernel = createKernel(state, { aiTeams: ["pku", "thu"] });

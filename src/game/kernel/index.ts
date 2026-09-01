@@ -307,7 +307,7 @@ export function createKernel(
 
   const applyAction = (action: KernelAction) => {
     if (action.type === "set_time_scale") {
-      timeScale = Math.max(0.5, Math.min(16, action.value));
+      timeScale = Math.max(0.5, Math.min(64, action.value));
       return;
     }
     if (action.type === "set_resource") {

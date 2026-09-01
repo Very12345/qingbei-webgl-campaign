@@ -1042,7 +1042,7 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			fmt.Println("  set turn-url <地址>   配置TURN中继（可逗号分隔）")
 			fmt.Println("  set turn-user <名称>  配置TURN用户名")
 			fmt.Println("  set turn-credential   配置TURN凭据")
-			fmt.Println("  timescale <0.5-16>    修改时间倍率")
+			fmt.Println("  timescale <0.5-64>    修改时间倍率（超过16x可能卡顿）")
 			fmt.Println("  resource <阵营> <数>  修改战略资源")
 			fmt.Println("  mobilize <阵营> <姿态>执行总动员")
 			fmt.Println("  version / clear / stop")
