@@ -2736,6 +2736,8 @@ select option {
 }
 .home-save-browser {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: start;
   gap: 12px;
   min-height: min(68vh, 650px);
 }
@@ -2828,13 +2830,19 @@ select option {
 .save-browser-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: start;
   gap: 10px;
 }
 .save-browser-actions > * {
   display: grid;
+  width: 100%;
+  height: 48px;
   min-height: 42px;
+  max-height: 48px;
+  align-self: start;
   place-items: center;
   margin: 0;
+  padding-block: 10px;
 }
 .save-browser-actions .save-create {
   border-color: #e5ca6f;

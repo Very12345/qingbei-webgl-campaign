@@ -71,3 +71,35 @@ assert.equal(
 const delta = commandKernel.networkDelta();
 assert.equal(delta.type, "state_delta");
 assert.ok(delta.revision > 0);
+
+const singlePlayerState = makeFreshGame();
+singlePlayerState.campaign.ai.difficulty = "hard";
+singlePlayerState.campaign.ai.difficultyByTeam = {
+  pku: "hard",
+  thu: "hard",
+};
+const singlePlayerKernel = createKernel(singlePlayerState, {
+  aiTeams: [],
+  mutateInitialState: true,
+});
+singlePlayerKernel.dispatch({
+  type: "set_ai_enabled",
+  team: "pku",
+  enabled: false,
+});
+singlePlayerKernel.dispatch({
+  type: "set_ai_enabled",
+  team: "thu",
+  enabled: true,
+});
+singlePlayerKernel.dispatch({ type: "set_time_scale", value: 16 });
+singlePlayerKernel.run(140, 250);
+assert.ok(
+  singlePlayerState.units.some(
+    (unit) => unit.team === "thu" && unit.targetSiteId != null,
+  ) ||
+    singlePlayerState.sites.some(
+      (site) => site.team === "thu" && site.displayName?.startsWith("清华燕园校区·"),
+    ),
+  "hard single-player opponent incorrectly entered hard-mirror hold mode",
+);

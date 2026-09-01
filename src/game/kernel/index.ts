@@ -572,6 +572,7 @@ export function createKernel(
           difficulty,
           pathfinder,
           random,
+          enabledAiTeams.has(team === "pku" ? "thu" : "pku"),
         );
       state.campaign.ai.intent ??= { pku: "passive", thu: "passive" };
       state.campaign.ai.intent[team] = plan.intent;

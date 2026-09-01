@@ -105,6 +105,7 @@ export function planStrategicOrders(
   difficulty: AiDifficulty,
   pathfinder: KernelPathfinder | null,
   random: () => number,
+  opponentAiEnabled = false,
 ) {
   if (!game.campaign.warUnlocked)
     return {
@@ -166,6 +167,7 @@ export function planStrategicOrders(
     riskSites = enemySites.filter(isHighRiskEventTarget),
     peerHard =
       difficulty === "hard" &&
+      opponentAiEnabled &&
       (game.campaign.ai.difficultyByTeam?.[enemy] ??
         game.campaign.ai.difficulty) === "hard",
     baseProfile = difficultyProfileForPlanner(difficulty, peerHard),
