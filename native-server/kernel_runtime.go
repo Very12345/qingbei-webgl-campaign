@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -14,6 +16,9 @@ import (
 //
 //go:embed kernel_bundle.js
 var kernelBundle string
+
+//go:embed kernel_seed.json.gz
+var kernelSeed []byte
 
 type jsKernelRuntime struct {
 	mu      sync.Mutex
@@ -36,6 +41,22 @@ func newJSKernelRuntime() (*jsKernelRuntime, error) {
 		return nil, fmt.Errorf("embedded JS kernel did not expose QingbeiKernel")
 	}
 	return &jsKernelRuntime{vm: vm, exports: exports.ToObject(vm)}, nil
+}
+
+func loadKernelSeed() (map[string]any, map[string]any, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(kernelSeed))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open embedded kernel seed: %w", err)
+	}
+	defer reader.Close()
+	var payload struct {
+		State   map[string]any
+		NavGrid map[string]any
+	}
+	if err := json.NewDecoder(reader).Decode(&payload); err != nil {
+		return nil, nil, fmt.Errorf("decode embedded kernel seed: %w", err)
+	}
+	return payload.State, payload.NavGrid, nil
 }
 
 func (runtime *jsKernelRuntime) call(name string, arguments ...any) (goja.Value, error) {
@@ -72,8 +93,10 @@ func (runtime *jsKernelRuntime) healthCheck() (map[string]any, error) {
 	return result, nil
 }
 
-func (runtime *jsKernelRuntime) create(initialState any) (*jsKernelInstance, error) {
-	value, err := runtime.call("createKernel", initialState)
+func (runtime *jsKernelRuntime) create(initialState any, options ...any) (*jsKernelInstance, error) {
+	arguments := []any{initialState}
+	arguments = append(arguments, options...)
+	value, err := runtime.call("createKernel", arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +139,10 @@ func (instance *jsKernelInstance) dispatch(action any) error {
 
 func (instance *jsKernelInstance) step(realMilliseconds float64) (map[string]any, error) {
 	return instance.call("step", realMilliseconds)
+}
+
+func (instance *jsKernelInstance) run(iterations int, realMilliseconds float64) (map[string]any, error) {
+	return instance.call("run", iterations, realMilliseconds)
 }
 
 func (instance *jsKernelInstance) snapshot() (map[string]any, error) {

@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build:kernel": "node scripts/build-kernel.mjs",
+    "build:kernel": "node scripts/build-kernel.mjs && tsx scripts/build-kernel-seed.ts",
+    "test:kernel-smoke": "tsx scripts/kernel-smoke.ts",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -22,6 +23,7 @@
     "@types/react-dom": "19.2.3",
     "@types/three": "0.181.0",
     "@vitejs/plugin-react": "5.1.1",
+    "tsx": "^4.20.6",
     "typescript": "5.9.3",
     "vite": "7.2.4"
   },

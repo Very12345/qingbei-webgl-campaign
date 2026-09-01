@@ -24,6 +24,7 @@ import {
   offensiveMomentum as kernelOffensiveMomentum,
   pathCrossesRisk as kernelPathCrossesRisk,
   resolveAggregateCombat as kernelResolveAggregateCombat,
+  runProductionCycles as kernelRunProductionCycles,
   siteEngagedBy as kernelSiteEngagedBy,
 } from "../kernel";
 import { createId } from "../id";
@@ -6959,8 +6960,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           qz.supply = 100;
           spawnUnitsAt(qz, "thu", 8, 1.1);
         });
+      const kernelProduced = kernelRunProductionCycles(
+        g,
+        (team, source, target, count) =>
+          issueOrder(team, source, target, count),
+      );
+      if (kernelProduced) rebuildUnits();
       const productionCycle = Math.floor(campaign.elapsedHours / 6);
-      if (productionCycle > campaign.lastProductionCycle) {
+      if (false && productionCycle > campaign.lastProductionCycle) {
         const firstCycle = Math.max(
           campaign.lastProductionCycle + 1,
           productionCycle - 47,
@@ -7020,7 +7027,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (produced) rebuildUnits();
       }
       const diningCycle = Math.floor(campaign.elapsedHours / 12);
-      if (diningCycle > campaign.lastDiningCycle) {
+      if (false && diningCycle > campaign.lastDiningCycle) {
         const firstCycle = Math.max(
           campaign.lastDiningCycle + 1,
           diningCycle - 47,

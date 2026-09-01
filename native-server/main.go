@@ -806,6 +806,7 @@ func main() {
 	port := flag.Int("port", 17890, "HTTP/WebSocket listen port")
 	noOpen := flag.Bool("no-open", false, "do not start the background battle host")
 	noUpdate := flag.Bool("no-update", false, "disable automatic updates")
+	benchmark := flag.String("benchmark", "", "run a headless JS-kernel benchmark scenario and exit")
 	flag.Parse()
 	if !*noUpdate && version != "dev" {
 		checkForUpdates()
@@ -819,6 +820,15 @@ func main() {
 	kernelHealth, err := kernelRuntime.healthCheck()
 	if err != nil {
 		log.Fatalf("共享JS内核自检失败: %v", err)
+	}
+	if strings.TrimSpace(*benchmark) != "" {
+		result, err := runKernelBenchmark(kernelRuntime, *benchmark)
+		if err != nil {
+			log.Fatalf("内核基准失败: %v", err)
+		}
+		encoded, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(encoded))
+		return
 	}
 	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
 	var hostController *simulationHostController
@@ -926,6 +936,7 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			fmt.Println("  status / battle       查看进程或详细战局状态")
 			fmt.Println("  host / host restart   查看或重启后台战局主机")
 			fmt.Println("  kernel                查看共享JS内核状态")
+			fmt.Println("  benchmark <场景>      无前端运行AI采样矩阵（迁移期）")
 			fmt.Println("  ai <pku|thu>          查看AI生产点和当前战略路线")
 			fmt.Println("  rooms / players       查看战局和在线玩家")
 			fmt.Println("  kick <名称/ID>        移出玩家")
@@ -981,6 +992,14 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			}
 			encoded, _ := json.Marshal(health)
 			fmt.Printf("%s %s\n", paint(ansiCyan, "共享JS内核:"), paint(ansiWhite+ansiBold, string(encoded)))
+		case "benchmark":
+			result, err := runKernelBenchmark(kernelRuntime, strings.TrimSpace(argument))
+			if err != nil {
+				terminalError("内核基准失败: " + err.Error())
+				continue
+			}
+			encoded, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(encoded))
 		case "rooms":
 			rooms := hub.consoleSnapshot()
 			if len(rooms) == 0 {

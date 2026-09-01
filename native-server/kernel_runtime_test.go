@@ -54,3 +54,36 @@ func TestEmbeddedKernelCanAdvanceState(t *testing.T) {
 		t.Fatalf("kernel did not advance time: %#v", state)
 	}
 }
+
+func TestEmbeddedKernelSeedCanRunWithoutBrowser(t *testing.T) {
+	runtime, err := newJSKernelRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, navGrid, err := loadKernelSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := runtime.create(seed, map[string]any{
+		"aiTeams": []string{"pku", "thu"},
+		"navGrid": navGrid,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.dispatch(map[string]any{"type": "set_time_scale", "value": 16}); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 10; index++ {
+		if _, err := instance.step(250); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := instance.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["revision"] != float64(10) {
+		t.Fatalf("unexpected seed revision: %#v", snapshot)
+	}
+}
