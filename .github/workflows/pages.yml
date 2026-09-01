@@ -45,11 +45,17 @@ jobs:
           mkdir -p "$target_dir"
           cd native-server
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-windows-amd64.exe" .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "../$target_dir/qingbei-account-hub-windows-amd64.exe" ./plugins/account-hub
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-linux-amd64" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "../$target_dir/qingbei-account-hub-linux-amd64" ./plugins/account-hub
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-amd64" .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "../$target_dir/qingbei-account-hub-darwin-amd64" ./plugins/account-hub
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-arm64" .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "../$target_dir/qingbei-account-hub-darwin-arm64" ./plugins/account-hub
           upx --best "../$target_dir/qingbei-server-windows-amd64.exe"
+          upx --best "../$target_dir/qingbei-account-hub-windows-amd64.exe"
           upx --best "../$target_dir/qingbei-server-linux-amd64"
+          upx --best "../$target_dir/qingbei-account-hub-linux-amd64"
           cd ..
           for file in "$target_dir"/qingbei-server-*; do
             sha256sum "$file" > "$file.sha256"

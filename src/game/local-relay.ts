@@ -6,6 +6,7 @@ type RelayWireMessage =
   | { type: "ready"; peerId: string }
   | { type: "relay"; peerId: string; data: string }
   | { type: "server_command"; message: string }
+  | { type: "plugin_profile"; profile: Record<string, unknown> }
   | { type: "error"; message: string };
 
 export class RelayDataChannel {
@@ -70,12 +71,14 @@ export class LocalRelayHub {
     private readonly onServerCommand?: (
       command: string,
     ) => string | Promise<string>,
+    private readonly authToken?: string,
   ) {}
 
   connect() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:",
       params = new URLSearchParams({ role: this.role, room: this.roomCode });
     if (this.team) params.set("team", this.team);
+    if (this.authToken) params.set("token", this.authToken);
     this.socket = new WebSocket(`${protocol}//${location.host}/ws?${params}`);
     this.socket.onopen = () => this.onStatus("本地TCP中继已连接");
     this.socket.onerror = () => this.onStatus("无法连接本地服务器WebSocket");
@@ -89,6 +92,14 @@ export class LocalRelayHub {
         const message = JSON.parse(String(event.data)) as RelayWireMessage;
         if (message.type === "error") {
           this.onStatus(message.message);
+          return;
+        }
+        if (message.type === "plugin_profile") {
+          window.dispatchEvent(
+            new CustomEvent("qingbei-plugin-profile", {
+              detail: message.profile,
+            }),
+          );
           return;
         }
         if (

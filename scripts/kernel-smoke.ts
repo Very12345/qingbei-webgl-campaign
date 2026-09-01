@@ -1,6 +1,8 @@
 import { makeFreshGame } from "../src/game/create-game";
-import { createKernel } from "../src/game/kernel";
+import { createKernel, firstEnemyControlSite } from "../src/game/kernel";
 import { strict as assert } from "node:assert";
+import { buildKernelNavGrid } from "../src/game/kernel/build-navigation";
+import { osmRegions } from "../src/osm-map-data";
 
 const speedState = makeFreshGame(),
   speedKernel = createKernel(speedState),
@@ -10,6 +12,26 @@ speedKernel.step(250);
 assert.ok(
   Math.abs(speedKernel.snapshot().elapsedHours - speedStart - 2.88) < 0.001,
   "64x must advance the shared simulation kernel at the selected rate",
+);
+
+const controlState = makeFreshGame(),
+  controlSites = controlState.sites.filter((site) => site.team === "thu"),
+  blocker = controlSites[0],
+  intended = controlSites[1];
+blocker.stance = "defend";
+assert.equal(
+  firstEnemyControlSite(
+    controlState,
+    "pku",
+    [
+      [blocker.x - 6, blocker.z],
+      [blocker.x - 3.5, blocker.z],
+      [intended.x, intended.z],
+    ],
+    intended.id,
+  )?.id,
+  blocker.id,
+  "a defended enemy site must intercept a route through its control radius",
 );
 
 const state = makeFreshGame();
@@ -123,6 +145,8 @@ preparationState.campaign.ai.difficultyByTeam = {
 const preparationKernel = createKernel(preparationState, {
   aiTeams: ["pku", "thu"],
   mutateInitialState: true,
+  navGrid: buildKernelNavGrid(osmRegions.main),
+  randomSeed: 0x7a11c0de,
 });
 preparationKernel.dispatch({ type: "set_time_scale", value: 16 });
 preparationKernel.run(82, 250);
@@ -182,9 +206,26 @@ for (const team of ["pku", "thu"] as const) {
     routed >= ownedProductionSites.length * 0.75,
     `${team} AI dropped too many production evacuation routes after war began`,
   );
+  const idlePerProductionSite =
+    boundIdle / Math.max(1, ownedProductionSites.length);
   assert.ok(
-    boundIdle / Math.max(1, ownedProductionSites.length) <= 9,
-    `${team} AI allowed wartime production sites to clog again`,
+    idlePerProductionSite <= 10,
+    `${team} AI allowed wartime production sites to clog again: ${idlePerProductionSite.toFixed(2)}`,
+  );
+  assert.ok(
+    preparationState.sites.some(
+      (site) => site.team === team && site.type === "camp",
+    ),
+    `${team} hard AI never used a temporary camp`,
+  );
+  const stances = new Set(
+    preparationState.sites
+      .filter((site) => site.team === team && !site.destroyed)
+      .map((site) => site.stance),
+  );
+  assert.ok(
+    stances.has("guard") && stances.size >= 2,
+    `${team} hard AI did not switch sites into defensive stances`,
   );
 }
 

@@ -235,6 +235,7 @@ export function runAiProgression(
   team: Team,
   difficulty: AiDifficulty,
   random: () => number,
+  reserveResources = 0,
 ) {
   if (!game.campaign.research.active[team]) {
     const choices = researchIdsForTeam(team).filter((id) => {
@@ -244,7 +245,7 @@ export function runAiProgression(
         definition.requires.every((required) =>
           hasResearch(game.campaign, team, required),
         ) &&
-        game.resources[team] >= definition.cost
+        game.resources[team] >= definition.cost + reserveResources
       );
     });
     if (choices.length) {
@@ -262,7 +263,8 @@ export function runAiProgression(
     productionChoice = game.campaign.research.completed[team].find(
       (id) =>
         !production[id] &&
-        game.resources[team] >= RESEARCH_DEFINITIONS[id].deploymentCost,
+        game.resources[team] >=
+          RESEARCH_DEFINITIONS[id].deploymentCost + reserveResources,
     );
   if (productionChoice)
     applyProgressionAction(game, {
@@ -276,7 +278,7 @@ export function runAiProgression(
       (decision) =>
         decision.team === team &&
         decisionAvailable(decision, game.campaign) &&
-        game.resources[team] >= decision.cost,
+        game.resources[team] >= decision.cost + reserveResources,
     );
     const selected = choices[Math.floor(random() * Math.min(3, choices.length))];
     if (selected) {

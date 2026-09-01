@@ -20,6 +20,7 @@ import { runProductionCycles } from "./production";
 import { planStrategicOrders } from "./ai";
 import { simulateKernelMovement } from "./movement";
 import { captureSite } from "./capture";
+import { firstEnemyControlSite } from "./control";
 import {
   applyProgressionAction,
   progressDecisions,
@@ -59,6 +60,7 @@ export {
 } from "./production";
 export { simulateKernelMovement, parkBikeAtSite } from "./movement";
 export { captureSite, type CaptureResult } from "./capture";
+export { firstEnemyControlSite, siteControlRadius } from "./control";
 export {
   addTimedStatus,
   statusModifiersFor,
@@ -257,7 +259,7 @@ export function createKernel(
     sourceId: number,
     targetId: number,
     count = Number.POSITIVE_INFINITY,
-    purpose: "combat" | "logistics" = "combat",
+    purpose: "combat" | "logistics" | "probe" = "combat",
   ) => {
     const source = state.sites[sourceId],
       target = state.sites[targetId];
@@ -281,6 +283,31 @@ export function createKernel(
           number,
         ][]);
     if (!path.length) return 0;
+    const blocker =
+        purpose !== "logistics"
+          ? firstEnemyControlSite(state, team, path, targetId)
+          : undefined,
+      effectiveTarget = blocker ?? target,
+      effectivePath = blocker
+        ? pathfinder
+          ? pathfinder.find(
+              source.navX ?? source.x,
+              source.navZ ?? source.z,
+              blocker.navX ?? blocker.x,
+              blocker.navZ ?? blocker.z,
+            )
+          : ([[blocker.navX ?? blocker.x, blocker.navZ ?? blocker.z]] as [
+              number,
+              number,
+            ][])
+        : path;
+    if (!effectivePath.length) return 0;
+    if (blocker && purpose === "combat") {
+      blocker.plannedOrderTargets ??= {};
+      blocker.plannedOrderPaths ??= {};
+      blocker.plannedOrderTargets[team] = target.id;
+      blocker.plannedOrderPaths[team] = clone(path);
+    }
     const idle = state.units.filter(
       (unit) =>
         unit.team === team &&
@@ -289,10 +316,10 @@ export function createKernel(
     );
     const moving = idle.slice(0, Math.max(0, Math.min(idle.length, count)));
     for (const unit of moving) {
-      unit.targetSiteId = targetId;
-      unit.path = clone(path);
+      unit.targetSiteId = effectiveTarget.id;
+      unit.path = clone(effectivePath);
       unit.pathIndex = 0;
-      [unit.tx, unit.tz] = path.at(-1)!;
+      [unit.tx, unit.tz] = effectivePath.at(-1)!;
     }
     const orderChanged =
       source.orderTarget !== targetId || source.orderPurpose !== purpose;
@@ -356,11 +383,36 @@ export function createKernel(
           ? pathfinder.find(unit.x, unit.z, tx, tz)
           : ([[tx, tz]] as [number, number][]);
         if (!path.length) continue;
-        unit.targetSiteId = target?.id;
-        unit.path = path;
+        const blocker = firstEnemyControlSite(
+            state,
+            action.team,
+            path,
+            target?.id,
+          ),
+          effectivePath = blocker
+            ? pathfinder
+              ? pathfinder.find(
+                  unit.x,
+                  unit.z,
+                  blocker.navX ?? blocker.x,
+                  blocker.navZ ?? blocker.z,
+                )
+              : ([[blocker.navX ?? blocker.x, blocker.navZ ?? blocker.z]] as [
+                  number,
+                  number,
+                ][])
+            : path;
+        if (!effectivePath.length) continue;
+        if (blocker && target) {
+          blocker.plannedOrderTargets ??= {};
+          blocker.plannedOrderPaths ??= {};
+          blocker.plannedOrderTargets[action.team] = target.id;
+          blocker.plannedOrderPaths[action.team] = clone(path);
+        }
+        unit.targetSiteId = blocker?.id ?? target?.id;
+        unit.path = effectivePath;
         unit.pathIndex = 0;
-        unit.tx = tx;
-        unit.tz = tz;
+        [unit.tx, unit.tz] = effectivePath.at(-1)!;
       }
       return;
     }
@@ -561,16 +613,16 @@ export function createKernel(
       )
         continue;
       const enemy: Team = team === "pku" ? "thu" : "pku",
-        initialEnemySites =
-          enemy === "pku"
-            ? state.campaign.initialPkuSites
-            : state.campaign.initialThuSites,
+        friendlySiteCount = state.sites.filter(
+          (site) => site.team === team && !site.destroyed,
+        ).length,
+        enemySiteCount = state.sites.filter(
+          (site) => site.team === enemy && !site.destroyed,
+        ).length,
         strategicHours =
           difficulty === "standard"
             ? profile.strategicHours *
-              (initialEnemySites < 75
-                ? 96 / Math.max(40, initialEnemySites)
-                : 1.25)
+              (friendlySiteCount < enemySiteCount ? 1.5 : 1)
             : profile.strategicHours;
       state.campaign.ai.nextStrategicAt[team] =
         state.campaign.elapsedHours + strategicHours;
@@ -587,7 +639,6 @@ export function createKernel(
       state.campaign.ai.intent[team] = plan.intent;
       state.campaign.ai.intentUpdatedAt ??= { pku: 0, thu: 0 };
       state.campaign.ai.intentUpdatedAt[team] = state.campaign.elapsedHours;
-      runAiProgression(state, team, difficulty, random);
       for (const plannedCamp of plan.camps) {
         if (state.resources[team] < 80) break;
         const source = state.sites[plannedCamp.sourceId],
@@ -645,7 +696,7 @@ export function createKernel(
           if (deployed && issuedSource)
             issuedSource.orderIssuedAt = state.campaign.elapsedHours;
           if (
-            difficulty !== "hard" &&
+            (difficulty !== "hard" || order.purpose === "probe") &&
             order.purpose !== "logistics" &&
             state.sites[order.sourceId]?.type !== "camp"
           ) {
@@ -658,6 +709,16 @@ export function createKernel(
             }
           }
         }
+      const activeCamps = state.sites.filter(
+        (site) => site.team === team && site.type === "camp" && !site.destroyed,
+      ).length;
+      runAiProgression(
+        state,
+        team,
+        difficulty,
+        random,
+        difficulty === "hard" && activeCamps < 2 ? 80 : 0,
+      );
     }
   };
 
@@ -900,13 +961,13 @@ export function difficultyProfile(difficulty: AiDifficulty) {
   if (difficulty === "casual")
     return {
       thinkMillisecondsAt1x: 19200,
-      strategicHours: 24,
+      strategicHours: 30,
       routeLimit: 2,
       waveLimit: 1,
     } as const;
   return {
     thinkMillisecondsAt1x: 33000,
-    strategicHours: 9,
+    strategicHours: 24,
     routeLimit: 6,
     waveLimit: 1,
   } as const;

@@ -87,7 +87,11 @@ type BattlefieldEngineContext = {
   playerTeamRef: RefObject<Team>;
   observerAiModeRef: RefObject<boolean>;
   setSelectedUnitCount: Dispatch<SetStateAction<number>>;
-  customMaterialsRef: RefObject<{ unit: string | null; site: string | null }>;
+  customMaterialsRef: RefObject<{
+    unit: string | null;
+    site: string | null;
+    teamUnit: Partial<Record<Team, string>>;
+  }>;
   pushEvent: (event: EventCard) => void;
   pauseOpenRef: RefObject<boolean>;
   screenRef: RefObject<GameScreen>;
@@ -2046,7 +2050,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     addEventListener("keydown", onDirectKeyDown);
     addEventListener("keyup", onDirectKeyUp);
     let customSiteTexture: THREE.Texture | null = null,
-      customUnitTexture: THREE.Texture | null = null,
+      customUnitTextures: Partial<Record<Team, THREE.Texture>> = {},
       unitMaterialRequest = 0,
       siteMaterialRequest = 0;
     const combatEffects: { sprite: THREE.Sprite; born: number }[] = [];
@@ -3907,31 +3911,32 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           .reduce((sum, unit) => sum + unit.strength, 0),
       );
     };
-    const applyMaterials = (unitUrl: string | null, siteUrl: string | null) => {
+    const applyMaterials = (
+      unitUrl: string | null,
+      siteUrl: string | null,
+      teamUnitUrls: Partial<Record<Team, string>> = {},
+    ) => {
       const unitRequest = ++unitMaterialRequest,
         siteRequest = ++siteMaterialRequest;
-      if (unitUrl) {
-        textureLoader.load(unitUrl, (texture) => {
+      Object.values(customUnitTextures).forEach((texture) => texture?.dispose());
+      customUnitTextures = {};
+      for (const team of ["pku", "thu"] as Team[]) {
+        unitBodyMaterials[team].map = unitBallTextures[team];
+        unitBodyMaterials[team].needsUpdate = true;
+        const desiredUrl = teamUnitUrls[team] || unitUrl;
+        if (!desiredUrl) continue;
+        textureLoader.load(desiredUrl, (texture) => {
           if (unitRequest !== unitMaterialRequest) {
             texture.dispose();
             return;
           }
           texture.colorSpace = THREE.SRGBColorSpace;
           texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          customUnitTexture?.dispose();
-          customUnitTexture = texture;
-          unitBodyMaterials.pku.map = texture;
-          unitBodyMaterials.thu.map = texture;
-          unitBodyMaterials.pku.needsUpdate = true;
-          unitBodyMaterials.thu.needsUpdate = true;
+          customUnitTextures[team]?.dispose();
+          customUnitTextures[team] = texture;
+          unitBodyMaterials[team].map = texture;
+          unitBodyMaterials[team].needsUpdate = true;
         });
-      } else {
-        customUnitTexture?.dispose();
-        customUnitTexture = null;
-        unitBodyMaterials.pku.map = unitBallTextures.pku;
-        unitBodyMaterials.thu.map = unitBallTextures.thu;
-        unitBodyMaterials.pku.needsUpdate = true;
-        unitBodyMaterials.thu.needsUpdate = true;
       }
       if (siteUrl) {
         textureLoader.load(siteUrl, (texture) => {
@@ -9696,6 +9701,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,
+      customMaterialsRef.current.teamUnit,
     );
     return () => {
       cancelAnimationFrame(raf);

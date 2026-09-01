@@ -7,7 +7,7 @@ export type KernelIssueOrder = (
   source: SiteState,
   target: SiteState,
   count: number,
-  purpose?: "combat" | "logistics",
+  purpose?: "combat" | "logistics" | "probe",
 ) => number | void;
 
 const teamStatusFactor = (game: GameData, team: Team, key: "production") =>

@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -41,32 +42,35 @@ type wireMessage struct {
 	Team    string `json:"team,omitempty"`
 	Data    string `json:"data,omitempty"`
 	Message string `json:"message,omitempty"`
+	Profile any    `json:"profile,omitempty"`
 }
 
 type wsClient struct {
-	conn         net.Conn
-	reader       *bufio.Reader
-	mu           sync.Mutex
-	queueMu      sync.Mutex
-	rateMu       sync.Mutex
-	outbound     chan wireMessage
-	stateSignal  chan struct{}
-	latestState  *wireMessage
-	done         chan struct{}
-	doneOnce     sync.Once
-	room         string
-	role         string
-	team         string
-	nickname     string
-	playerID     string
-	lastRevision int
-	actionWindow time.Time
-	actionCount  int
-	chatWindow   time.Time
-	chatCount    int
-	peerID       string
-	kernelReady  bool
-	hub          *relayHub
+	conn          net.Conn
+	reader        *bufio.Reader
+	mu            sync.Mutex
+	queueMu       sync.Mutex
+	rateMu        sync.Mutex
+	outbound      chan wireMessage
+	stateSignal   chan struct{}
+	latestState   *wireMessage
+	done          chan struct{}
+	doneOnce      sync.Once
+	room          string
+	role          string
+	team          string
+	nickname      string
+	playerID      string
+	accountID     string
+	pluginProfile map[string]any
+	lastRevision  int
+	actionWindow  time.Time
+	actionCount   int
+	chatWindow    time.Time
+	chatCount     int
+	peerID        string
+	kernelReady   bool
+	hub           *relayHub
 }
 
 func (c *wsClient) sendJSON(message wireMessage) error {
@@ -695,9 +699,10 @@ type consoleRoom struct {
 }
 
 type consolePlayer struct {
-	id       string
-	nickname string
-	team     string
+	ID        string `json:"id"`
+	Nickname  string `json:"nickname"`
+	Team      string `json:"team"`
+	AccountID string `json:"accountId,omitempty"`
 }
 
 func (hub *relayHub) consoleSnapshot() []consoleRoom {
@@ -708,9 +713,7 @@ func (hub *relayHub) consoleSnapshot() []consoleRoom {
 		summary := consoleRoom{code: code, host: room.host != nil || room.kernel != nil}
 		for _, guest := range room.guests {
 			summary.players = append(summary.players, consolePlayer{
-				id:       guest.peerID,
-				nickname: guest.nickname,
-				team:     guest.team,
+				ID: guest.peerID, Nickname: guest.nickname, Team: guest.team, AccountID: guest.accountID,
 			})
 		}
 		rooms = append(rooms, summary)
@@ -804,7 +807,7 @@ func (hub *relayHub) closeAll() {
 	}
 }
 
-func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.Request) {
+func websocketHandler(hub *relayHub, plugins *pluginManager, writer http.ResponseWriter, request *http.Request) {
 	if !strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
 		http.Error(writer, "websocket upgrade required", http.StatusUpgradeRequired)
 		return
@@ -828,6 +831,34 @@ func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.R
 		http.Error(writer, "invalid room parameters", http.StatusBadRequest)
 		return
 	}
+	peerID := randomID()
+	var pluginProfile map[string]any
+	accountID := ""
+	if role == "guest" {
+		hub.mu.RLock()
+		roomState := hub.rooms[room]
+		var authPlugin string
+		if roomState != nil && roomState.kernel != nil {
+			authPlugin = roomState.kernel.spec.AuthPlugin
+		}
+		hub.mu.RUnlock()
+		if authPlugin != "" {
+			if plugins == nil {
+				http.Error(writer, "authentication plugin unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			result, err := plugins.authorizeJoin(authPlugin, request.URL.Query().Get("token"), room, team, peerID)
+			if err != nil || !result.Allow {
+				message := result.Message
+				if message == "" {
+					message = "请先登录匹配大厅"
+				}
+				http.Error(writer, message, http.StatusUnauthorized)
+				return
+			}
+			accountID, pluginProfile = result.AccountID, result.Profile
+		}
+	}
 	hijacker, ok := writer.(http.Hijacker)
 	if !ok {
 		http.Error(writer, "websocket unavailable", http.StatusInternalServerError)
@@ -849,16 +880,18 @@ func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.R
 		return
 	}
 	client := &wsClient{
-		conn:        conn,
-		reader:      buffer.Reader,
-		outbound:    make(chan wireMessage, 512),
-		stateSignal: make(chan struct{}, 1),
-		done:        make(chan struct{}),
-		room:        room,
-		role:        role,
-		team:        team,
-		peerID:      randomID(),
-		hub:         hub,
+		conn:          conn,
+		reader:        buffer.Reader,
+		outbound:      make(chan wireMessage, 512),
+		stateSignal:   make(chan struct{}, 1),
+		done:          make(chan struct{}),
+		room:          room,
+		role:          role,
+		team:          team,
+		peerID:        peerID,
+		accountID:     accountID,
+		pluginProfile: pluginProfile,
+		hub:           hub,
 	}
 	if err := hub.register(client); err != nil {
 		_ = client.writeJSON(wireMessage{Type: "error", Message: err.Error()})
@@ -866,6 +899,9 @@ func websocketHandler(hub *relayHub, writer http.ResponseWriter, request *http.R
 		return
 	}
 	go client.writerLoop()
+	if client.pluginProfile != nil {
+		_ = client.sendJSON(wireMessage{Type: "plugin_profile", Profile: client.pluginProfile})
+	}
 	hub.announce(client)
 	client.readLoop()
 }
@@ -892,11 +928,24 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "do not open the local player page")
 	noUpdate := flag.Bool("no-update", false, "disable automatic updates")
 	benchmark := flag.String("benchmark", "", "run a headless JS-kernel benchmark scenario and exit")
+	configPath := flag.String("config", "", "JSON configuration file for kernels and plugins")
 	flag.Parse()
 	if !*noUpdate && version != "dev" {
 		checkForUpdates()
 	}
 
+	resolvedConfigPath := strings.TrimSpace(*configPath)
+	if resolvedConfigPath == "" {
+		if executable, executableError := os.Executable(); executableError == nil {
+			resolvedConfigPath = filepath.Join(filepath.Dir(executable), "qingbei-server.json")
+		} else {
+			resolvedConfigPath = "qingbei-server.json"
+		}
+	}
+	configuration, configRoot, err := loadServerConfig(resolvedConfigPath)
+	if err != nil {
+		log.Fatalf("读取服务器配置失败: %v", err)
+	}
 	hub := newRelayHub()
 	kernelRuntime, err := newJSKernelRuntime()
 	if err != nil {
@@ -915,12 +964,27 @@ func main() {
 		fmt.Println(string(encoded))
 		return
 	}
-	battle, err := newKernelBattle(kernelRuntime, hub)
-	if err != nil {
-		log.Fatalf("启动共享内核战局失败: %v", err)
+	plugins := newPluginManager(configRoot)
+	serverOrigin := fmt.Sprintf("http://127.0.0.1:%d", *port)
+	if err := plugins.start(configuration.Plugins, serverOrigin); err != nil {
+		log.Fatalf("启动必需插件失败: %v", err)
 	}
-	battle.start()
-	defer battle.shutdown()
+	defer plugins.shutdown()
+	manager := newKernelManager(hub, plugins, configuration.MaxKernels)
+	for index := 0; index < configuration.InitialKernels; index++ {
+		name := "清北联机服务器"
+		if configuration.InitialKernels > 1 {
+			name = fmt.Sprintf("清北联机服务器 %d", index+1)
+		}
+		var initialRuntime *jsKernelRuntime
+		if index == 0 {
+			initialRuntime = kernelRuntime
+		}
+		if _, err := manager.createWithRuntime(battleSpec{Name: name, Mode: "standard", MaxPlayers: 4, AllowSameTeam: true, TimeScale: 1}, initialRuntime); err != nil {
+			log.Fatalf("启动第 %d 个共享内核战局失败: %v", index+1, err)
+		}
+	}
+	defer manager.shutdown()
 	webRoot, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -929,9 +993,13 @@ func main() {
 	mux.HandleFunc("/api/info", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		info := map[string]any{"name": "qingbei-local-server", "version": version, "kernel": kernelHealth}
-		info["battleHost"] = battle.snapshot()
-		info["roomCode"] = battle.roomCode
-		info["configuration"] = battle.infoConfiguration()
+		if battle := manager.activeBattle(); battle != nil {
+			info["battleHost"] = battle.snapshot()
+			info["roomCode"] = battle.roomCode
+			info["configuration"] = battle.infoConfiguration()
+		}
+		info["battles"] = manager.describe()
+		info["plugins"] = plugins.status()
 		_ = json.NewEncoder(writer).Encode(info)
 	})
 	mux.HandleFunc("/api/room", func(writer http.ResponseWriter, request *http.Request) {
@@ -951,18 +1019,26 @@ func main() {
 		_ = json.NewEncoder(writer).Encode(map[string]any{"online": online, "roomCode": code, "counts": counts, "players": players})
 	})
 	mux.HandleFunc("/ws", func(writer http.ResponseWriter, request *http.Request) {
-		websocketHandler(hub, writer, request)
+		websocketHandler(hub, plugins, writer, request)
 	})
+	registerInternalAPI(mux, manager, plugins)
+	plugins.registerRoutes(mux)
 	fileServer := embeddedWebServer(webRoot)
 	mux.Handle("/qingbei-webgl-campaign/", http.StripPrefix("/qingbei-webgl-campaign/", fileServer))
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+		if configuration.LandingPlugin != "" {
+			http.Redirect(writer, request, "/plugins/"+normalizePluginID(configuration.LandingPlugin)+"/", http.StatusTemporaryRedirect)
+			return
+		}
 		http.Redirect(writer, request, "/qingbei-webgl-campaign/?local=1", http.StatusTemporaryRedirect)
 	})
 
 	address := fmt.Sprintf(":%d", *port)
 	playerURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1", *port)
 	printTerminalBanner(version)
-	fmt.Printf("%s %s\n", paint(ansiYellow+ansiBold, "当前战局码:"), battle.roomCode)
+	for _, runningBattle := range manager.list() {
+		fmt.Printf("%s %s · %s\n", paint(ansiYellow+ansiBold, "内核战局:"), runningBattle.roomCode, runningBattle.name)
+	}
 	fmt.Printf("%s %s\n", paint(ansiGreen+ansiBold, "本机玩家地址:"), playerURL)
 	for _, host := range localIPv4Addresses() {
 		fmt.Printf("%s http://%s:%d/qingbei-webgl-campaign/?local=1\n", paint(ansiMagenta+ansiBold, "局域网玩家地址:"), host, *port)
@@ -972,7 +1048,7 @@ func main() {
 	if !*noOpen {
 		// 保持终端为唯一管理界面；玩家页面由用户按需打开。
 	}
-	go runConsole(hub, server, battle, kernelRuntime)
+	go runConsole(hub, server, manager, kernelRuntime, plugins)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
@@ -1002,7 +1078,7 @@ func embeddedWebServer(webRoot fs.FS) http.Handler {
 	})
 }
 
-func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernelRuntime *jsKernelRuntime) {
+func runConsole(hub *relayHub, server *http.Server, manager *kernelManager, kernelRuntime *jsKernelRuntime, plugins *pluginManager) {
 	fmt.Println()
 	terminalSuccess("服务器终端已就绪。输入 help 查看可用命令；支持上下文 API 指令。")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -1016,6 +1092,7 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			continue
 		}
 		command, argument, _ := strings.Cut(line, " ")
+		battle := manager.activeBattle()
 		switch strings.ToLower(command) {
 		case "help", "?":
 			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
@@ -1025,6 +1102,11 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			fmt.Println("  benchmark <场景>      无前端运行AI采样矩阵（迁移期）")
 			fmt.Println("  ai <pku|thu>          查看AI生产点和当前战略路线")
 			fmt.Println("  rooms / players       查看战局和在线玩家")
+			fmt.Println("  kernels               查看所有独立JS内核")
+			fmt.Println("  use <战局码>          选择终端操作的内核")
+			fmt.Println("  newkernel [名称]      按需创建独立内核")
+			fmt.Println("  stopkernel <战局码>   保存并停止指定内核")
+			fmt.Println("  plugins               查看插件进程状态")
 			fmt.Println("  kick <名称/ID>        移出玩家")
 			fmt.Println("  say <消息>            广播系统消息")
 			fmt.Println(paint(ansiYellow+ansiBold, "战局与存档"))
@@ -1055,6 +1137,10 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			}
 			fmt.Printf("%s %s  %s %d  %s %d\n", paint(ansiCyan, "版本"), paint(ansiWhite+ansiBold, version), paint(ansiCyan, "运行中战局"), len(rooms), paint(ansiCyan, "在线玩家"), players)
 		case "host":
+			if battle == nil {
+				terminalWarning("当前没有已选择的内核；使用 newkernel 创建。")
+				continue
+			}
 			snapshot := battle.snapshot()
 			fmt.Printf("%s %s\n", paint(ansiCyan, "共享内核:"), paint(ansiWhite+ansiBold, snapshot.Status))
 			fmt.Printf("%s %s\n", paint(ansiCyan, "战局码:"), paint(ansiYellow+ansiBold, battle.roomCode))
@@ -1062,7 +1148,11 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 				terminalError("最近错误: " + snapshot.Error)
 			}
 		case "kernel":
-			health, err := kernelRuntime.healthCheck()
+			runtimeToCheck := kernelRuntime
+			if battle != nil {
+				runtimeToCheck = battle.runtime
+			}
+			health, err := runtimeToCheck.healthCheck()
 			if err != nil {
 				terminalError("共享JS内核错误: " + err.Error())
 				continue
@@ -1090,16 +1180,66 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 				}
 				fmt.Printf("%s  %s  %s\n", paint(ansiMagenta+ansiBold, room.code), paint(ansiGreen, state), paint(ansiWhite, fmt.Sprintf("%d 名玩家", len(room.players))))
 			}
+		case "kernels":
+			battles := manager.list()
+			if len(battles) == 0 {
+				terminalWarning("当前没有运行中的独立内核。")
+				continue
+			}
+			for _, candidate := range battles {
+				marker := " "
+				if battle != nil && candidate.roomCode == battle.roomCode {
+					marker = "*"
+				}
+				fmt.Printf("%s %s · %s · %d 名玩家\n", marker, paint(ansiMagenta+ansiBold, candidate.roomCode), candidate.name, len(candidate.playerSnapshot()))
+			}
+		case "use":
+			if !manager.selectBattle(argument) {
+				terminalWarning("未找到该内核战局。")
+			} else {
+				terminalSuccess("终端已切换到战局 " + normalizeCode(argument))
+			}
+		case "newkernel":
+			name := strings.TrimSpace(argument)
+			if name == "" {
+				name = "清北联机服务器"
+			}
+			created, err := manager.create(battleSpec{Name: name, Mode: "standard", MaxPlayers: 4, AllowSameTeam: true, TimeScale: 1})
+			if err != nil {
+				terminalError("创建内核失败: " + err.Error())
+				continue
+			}
+			manager.selectBattle(created.roomCode)
+			terminalSuccess("独立内核已创建，战局码 " + created.roomCode)
+		case "stopkernel":
+			code := normalizeCode(argument)
+			if code == "" && battle != nil {
+				code = battle.roomCode
+			}
+			if err := manager.remove(code); err != nil {
+				terminalError(err.Error())
+			} else {
+				terminalSuccess("内核战局已保存并停止：" + code)
+			}
+		case "plugins":
+			statuses := plugins.status()
+			if len(statuses) == 0 {
+				terminalInfo("未加载插件。")
+				continue
+			}
+			for _, status := range statuses {
+				fmt.Printf("%s · %s · %s\n", status["id"], status["name"], status["status"])
+			}
 		case "players":
 			rooms := hub.consoleSnapshot()
 			shown := 0
 			for _, room := range rooms {
 				for _, player := range room.players {
-					name := player.nickname
+					name := player.Nickname
 					if name == "" {
 						name = "（正在进入）"
 					}
-					fmt.Printf("%s · %s · %s · 房间 %s\n", player.id[:8], name, teamName(player.team), room.code)
+					fmt.Printf("%s · %s · %s · 房间 %s\n", player.ID[:8], name, teamName(player.Team), room.code)
 					shown++
 				}
 			}
@@ -1114,16 +1254,16 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			deliveries := hub.broadcastSystemMessage(argument)
 			log.Printf("[公告] %s（发送 %d 个连接）\n", strings.TrimSpace(argument), deliveries)
 		case "save", "new", "resume":
-			if hub.sendHostCommand(line) == 0 {
+			if battle == nil {
 				terminalWarning("共享内核战局尚未就绪，请稍后重试。")
 			} else {
-				terminalSuccess("命令已发送。")
+				terminalCommandResult(battle.executeCommand(line))
 			}
 		case "battle":
-			if hub.sendHostCommand("status") == 0 {
+			if battle == nil {
 				terminalWarning("共享内核战局尚未就绪，请稍后重试。")
 			} else {
-				terminalInfo("正在读取战局状态...")
+				terminalCommandResult(battle.executeCommand("status"))
 			}
 		case "kick":
 			if hub.kickPlayer(argument) {
@@ -1137,8 +1277,8 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			clearConsole()
 		case "stop", "exit", "quit":
 			terminalWarning("正在保存战局、断开玩家并停止服务器...")
-			if hub.sendHostCommand("save") > 0 {
-				time.Sleep(350 * time.Millisecond)
+			for _, runningBattle := range manager.list() {
+				_ = runningBattle.executeCommand("save")
 			}
 			hub.broadcastSystemMessage("服务器正在停止")
 			hub.closeAll()
@@ -1147,10 +1287,10 @@ func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernel
 			cancel()
 			return
 		default:
-			if hub.sendHostCommand(line) == 0 {
+			if battle == nil {
 				terminalWarning("共享内核战局尚未就绪；命令暂未发送。")
 			} else {
-				terminalInfo("API 命令已发送。")
+				terminalCommandResult(battle.executeCommand(line))
 			}
 		}
 	}

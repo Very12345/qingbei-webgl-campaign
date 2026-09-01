@@ -398,12 +398,17 @@ export default function Game3D() {
     useState<PerformanceMetrics>(performanceControllerRef.current.metrics);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
   const [siteMaterialUrl, setSiteMaterialUrl] = useState<string | null>(null);
+  const [pluginTeamMaterialUrls, setPluginTeamMaterialUrls] = useState<
+    Partial<Record<Team, string>>
+  >({});
   const customMaterialsRef = useRef<{
     unit: string | null;
     site: string | null;
+    teamUnit: Partial<Record<Team, string>>;
   }>({
     unit: null,
     site: null,
+    teamUnit: {},
   });
   const [activeEvents, setActiveEvents] = useState<EventCard[]>([]);
   const [eventToast, setEventToast] = useState<EventCard | null>(null);
@@ -740,9 +745,34 @@ export default function Game3D() {
     customMaterialsRef.current = {
       unit: unitMaterialUrl,
       site: siteMaterialUrl,
+      teamUnit: pluginTeamMaterialUrls,
     };
-    sceneApi.current?.applyMaterials(unitMaterialUrl, siteMaterialUrl);
-  }, [unitMaterialUrl, siteMaterialUrl]);
+    sceneApi.current?.applyMaterials(
+      unitMaterialUrl,
+      siteMaterialUrl,
+      pluginTeamMaterialUrls,
+    );
+  }, [unitMaterialUrl, siteMaterialUrl, pluginTeamMaterialUrls]);
+  useEffect(() => {
+    const receivePluginProfile = (event: Event) => {
+      const profile = (event as CustomEvent<Record<string, unknown>>).detail,
+        cosmetic = profile?.cosmetic as
+          | { team?: unknown; url?: unknown }
+          | undefined;
+      if (
+        (cosmetic?.team === "pku" || cosmetic?.team === "thu") &&
+        typeof cosmetic.url === "string" &&
+        cosmetic.url.length <= 2_048
+      ) {
+        setPluginTeamMaterialUrls({ [cosmetic.team]: cosmetic.url });
+      } else {
+        setPluginTeamMaterialUrls({});
+      }
+    };
+    window.addEventListener("qingbei-plugin-profile", receivePluginProfile);
+    return () =>
+      window.removeEventListener("qingbei-plugin-profile", receivePluginProfile);
+  }, []);
 
   useBattlefieldEngine({
     screen,
@@ -2791,12 +2821,15 @@ export default function Game3D() {
       clientId = createId();
     if (localRelayModeRef.current) {
       const status = await localRoomStatus(roomCode),
-        forcedTeam =
-          status.players === 1
-            ? status.counts.pku === 1
-              ? "thu"
-              : "pku"
-            : null;
+        pluginTeam = new URLSearchParams(location.search).get("pluginTeam"),
+        forcedTeam: Team | null =
+          pluginTeam === "pku" || pluginTeam === "thu"
+            ? pluginTeam
+            : status.players === 1
+              ? status.counts.pku === 1
+                ? "thu"
+                : "pku"
+              : null;
       if (!status.online) throw new Error("本地服务器房间尚未启动");
       lastAutomaticRoomCodeRef.current = roomCode;
       setTeamSelection({
@@ -2999,6 +3032,8 @@ export default function Game3D() {
           team,
           (channel) => bindLanChannel(channel, false),
           setLanStatus,
+          undefined,
+          new URLSearchParams(location.search).get("pluginToken") ?? undefined,
         );
         localRelayHubRef.current = hub;
         hub.connect();

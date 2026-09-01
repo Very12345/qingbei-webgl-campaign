@@ -89,7 +89,7 @@ export type PlannedAiOrder = {
   sourceId: number;
   targetId: number;
   count: number;
-  purpose?: "combat" | "logistics";
+  purpose?: "combat" | "logistics" | "probe";
 };
 
 export type PlannedAiCamp = {
@@ -111,6 +111,12 @@ const planPreparationOrders = (
       orders: [] as PlannedAiOrder[],
       camps: [] as PlannedAiCamp[],
     };
+  for (const site of game.sites) {
+    if (site.team !== team || site.destroyed) continue;
+    const valuable = site.type === "capital" || site.type === "target";
+    site.stance = valuable ? "guard" : "standby";
+    site.dispatchRatio = valuable ? 0.7 : 1;
+  }
   const idleCounts = new Map<number, number>(),
     incomingCounts = new Map<number, number>();
   for (const unit of game.units) {
@@ -238,7 +244,13 @@ export function planStrategicOrders(
     enemyProduction = enemySites.filter(
       (site) => site.type === "dorm" || site.type === "dining",
     ),
-    riskSites = enemySites.filter(isHighRiskEventTarget),
+    riskSites = enemySites.filter(
+      (site) =>
+        isHighRiskEventTarget(site) ||
+        site.stance === "defend" ||
+        site.type === "camp" ||
+        defendersAt(site) >= 8,
+    ),
     peerHard =
       difficulty === "hard" &&
       opponentAiEnabled &&
@@ -252,6 +264,14 @@ export function planStrategicOrders(
     casualtyPressure =
       game.deaths[team] /
       Math.max(1, game.deaths[enemy]),
+    friendlyStrength = game.units
+      .filter((unit) => unit.team === team && unit.hp > 0)
+      .reduce((sum, unit) => sum + unit.strength, 0),
+    enemyStrength = game.units
+      .filter((unit) => unit.team === enemy && unit.hp > 0)
+      .reduce((sum, unit) => sum + unit.strength, 0),
+    forceDisadvantage =
+      peerHard && friendlyStrength < Math.max(500, enemyStrength * 0.68),
     stalemateEscalation = Math.max(
       0,
       Math.min(
@@ -266,13 +286,25 @@ export function planStrategicOrders(
         hostileGroups.size >= 2 ||
         hostileStrength >= 20 ||
         (game.deaths[team] >= 120 && casualtyPressure >= 0.9)),
-    siteDelta = friendlySites.length - enemySites.length,
+    initialFriendlySites =
+      team === "pku"
+        ? game.campaign.initialPkuSites
+        : game.campaign.initialThuSites,
     initialEnemySites =
       enemy === "pku"
         ? game.campaign.initialPkuSites
         : game.campaign.initialThuSites,
+    controlAdvantage =
+      friendlySites.length / Math.max(1, initialFriendlySites) -
+      enemySites.length / Math.max(1, initialEnemySites),
     profile = peerHard
-      ? stalemateEscalation >= 0.72
+      ? forceDisadvantage
+        ? {
+            ...baseProfile,
+            waveLimit: 0,
+            dispatchRatio: 0.35,
+          }
+      : stalemateEscalation >= 0.72
         ? {
             ...baseProfile,
             waveLimit: 3,
@@ -280,9 +312,14 @@ export function planStrategicOrders(
           }
         : {
             ...baseProfile,
-            waveLimit: siteDelta > 2 ? 0 : 1,
+            waveLimit: 1,
             dispatchRatio:
-              siteDelta < -2 ? 0.68 : siteDelta > 2 ? 0.35 : 0.44,
+              controlAdvantage < -0.05
+                ? 0.68
+                : controlAdvantage > 0.05
+                  ? 0.08
+                  : 0.44,
+            cautiousProbe: controlAdvantage > 0.05,
           }
       : difficulty === "hard"
         ? adaptiveResistance
@@ -297,8 +334,8 @@ export function planStrategicOrders(
         : difficulty === "standard" && enemySites.length <= 10
         ? {
             ...baseProfile,
-            waveLimit: 12,
-            dispatchRatio: 0.7,
+            waveLimit: 5,
+            dispatchRatio: 0.58,
           }
         : baseProfile,
     staleAfterHours =
@@ -341,7 +378,7 @@ export function planStrategicOrders(
     committedByTarget = new Map<number, number>(),
     orders: PlannedAiOrder[] = [],
     reinforcementSources = new Set<number>();
-  if (peerHard && stalemateEscalation < 0.72 && siteDelta > 2)
+  if (peerHard && stalemateEscalation < 0.72 && controlAdvantage > 0.05)
     for (const site of friendlySites) {
       const target = site.orderTarget == null ? undefined : game.sites[site.orderTarget];
       if (!target || target.team === team) continue;
@@ -398,6 +435,7 @@ export function planStrategicOrders(
     .filter(
       (site) =>
         (site.type === "dorm" || site.type === "dining") &&
+        !hostileGroups.has(site.id) &&
         (site.orderTarget == null ||
           (site.orderPurpose === "logistics" &&
             (game.sites[site.orderTarget]?.team !== team ||
@@ -466,10 +504,42 @@ export function planStrategicOrders(
       return value(b.target) + b.strength - value(a.target) - a.strength;
     })
     .slice(0, difficulty === "hard" ? 3 : 1);
+  if (difficulty === "hard")
+    for (const site of friendlySites) {
+      const incoming = hostileGroups.get(site.id) ?? 0,
+        production = site.type === "dorm" || site.type === "dining",
+        valuable =
+          production ||
+          site.type === "capital" ||
+          site.type === "target",
+        frontline = enemySites.some(
+          (enemySite) =>
+            Math.hypot(enemySite.x - site.x, enemySite.z - site.z) < 8,
+        );
+      if (incoming > 0 || (forceDisadvantage && (frontline || valuable))) {
+        site.stance = "defend";
+        site.dispatchRatio = 0.35;
+        if (
+          site.orderTarget != null &&
+          game.sites[site.orderTarget]?.team === enemy
+        ) {
+          site.orderTarget = undefined;
+          site.orderPath = undefined;
+          site.orderPurpose = undefined;
+          site.orderIssuedAt = undefined;
+        }
+      } else if (frontline || (valuable && !production)) {
+        site.stance = "guard";
+        site.dispatchRatio = 0.7;
+      } else {
+        site.stance = "standby";
+        site.dispatchRatio = 1;
+      }
+    }
   for (const threat of threatened) {
     let needed = Math.max(
       0,
-      Math.ceil(threat.strength * (difficulty === "hard" ? 1.25 : 1.05)) -
+      Math.ceil(threat.strength * (difficulty === "hard" ? 1.35 : 1.05)) -
         idleAt(threat.target),
     );
     if (needed <= 0) continue;
@@ -637,17 +707,22 @@ export function planStrategicOrders(
     if (!target) continue;
     const alreadyCommitted = committedByTarget.get(target.target.id) ?? 0,
       remainingRequired = Math.max(1, target.required - alreadyCommitted),
+      cautiousProbe =
+        "cautiousProbe" in profile && profile.cautiousProbe === true,
       count = Math.min(
         available,
-        Math.max(
-          remainingRequired,
-          Math.ceil(available * profile.dispatchRatio),
-        ),
+        cautiousProbe
+          ? Math.max(2, Math.ceil(available * profile.dispatchRatio))
+          : Math.max(
+              remainingRequired,
+              Math.ceil(available * profile.dispatchRatio),
+            ),
       );
     orders.push({
       sourceId: source.id,
       targetId: target.target.id,
       count,
+      purpose: cautiousProbe ? "probe" : "combat",
     });
     const committed = alreadyCommitted + count;
     committedByTarget.set(target.target.id, committed);
@@ -661,6 +736,31 @@ export function planStrategicOrders(
       game.campaign.ai.failedGoals[unsafeGoalKey] = 0;
   }
   const camps: PlannedAiCamp[] = [];
+  if (
+    difficulty === "hard" &&
+    pathfinder &&
+    enemyProduction.length > 0 &&
+    riskSites.length > 0
+  )
+    unsafeRouteNeeded ||= sources.slice(0, 3).some((source) =>
+      enemyProduction.slice(0, 5).some((target) =>
+        pathCrossesPlannerRisk(
+          pathfinder.find(
+            source.navX ?? source.x,
+            source.navZ ?? source.z,
+            target.navX ?? target.x,
+            target.navZ ?? target.z,
+          ),
+          riskSites,
+        ),
+      ),
+    );
+  if (difficulty === "hard" && pathfinder && enemyProduction.length > 0)
+    unsafeRouteNeeded ||= sources.slice(0, 3).some((source) =>
+      enemyProduction
+        .slice(0, 5)
+        .some((target) => Math.hypot(target.x - source.x, target.z - source.z) > 12),
+    );
   if (
     difficulty !== "casual" &&
     pathfinder &&
@@ -685,18 +785,20 @@ export function planStrategicOrders(
           target.navX ?? target.x,
           target.navZ ?? target.z,
         );
-        if (!pathCrossesPlannerRisk(direct, riskSites)) continue;
         const crossed = riskSites.find((risk) =>
           direct.some(
             ([x, z]) => Math.hypot(x - risk.x, z - risk.z) < 5.2,
           ),
-        );
-        if (!crossed) continue;
-        const detours: PlannedAiCamp[] = [];
-        for (let index = 0; index < 6; index++) {
-          const angle = (index / 6) * Math.PI * 2,
-            candidateX = crossed.x + Math.cos(angle) * 7.2,
-            candidateZ = crossed.z + Math.sin(angle) * 7.2,
+        ),
+          midpoint = direct[Math.floor(direct.length * 0.52)];
+        if (!crossed && (!midpoint || direct.length < 12)) continue;
+        const anchorX = crossed?.x ?? midpoint?.[0] ?? source.x,
+          anchorZ = crossed?.z ?? midpoint?.[1] ?? source.z;
+        const detours: Array<PlannedAiCamp & { score: number }> = [];
+        for (let index = 0; index < 12; index++) {
+          const angle = (index / 12) * Math.PI * 2,
+            candidateX = anchorX + Math.cos(angle) * 8.8,
+            candidateZ = anchorZ + Math.sin(angle) * 8.8,
             open = nearestOpenIndex(pathfinder.grid, candidateX, candidateZ);
           if (open < 0) continue;
           const [x, z] = navPoint(pathfinder.grid, open);
@@ -722,24 +824,27 @@ export function planStrategicOrders(
               target.navX ?? target.x,
               target.navZ ?? target.z,
             );
-          if (
-            !first.length ||
-            !second.length ||
-            pathCrossesPlannerRisk(first, riskSites) ||
-            pathCrossesPlannerRisk(second, riskSites)
-          )
-            continue;
+          if (!first.length || !second.length) continue;
+          const riskSteps = [...first, ...second].reduce(
+            (total, [pathX, pathZ]) =>
+              total +
+              (riskSites.some(
+                (risk) => Math.hypot(pathX - risk.x, pathZ - risk.z) < 5.2,
+              )
+                ? 1
+                : 0),
+            0,
+          );
           detours.push({
             sourceId: source.id,
             targetId: target.id,
             x,
             z,
             pathToTarget: second,
+            score: riskSteps * 20 + first.length + second.length,
           });
         }
-        detours.sort(
-          (a, b) => a.pathToTarget.length - b.pathToTarget.length,
-        );
+        detours.sort((a, b) => a.score - b.score);
         if (detours[0]) {
           camps.push(detours[0]);
           break outer;
@@ -758,8 +863,8 @@ const difficultyProfileForPlanner = (
       ? { waveLimit: 1, minimumSource: 13, dispatchRatio: 0.44, randomness: 7, pathCandidates: 8 }
       : { waveLimit: 6, minimumSource: 6, dispatchRatio: 0.78, randomness: 4, pathCandidates: 10 }
     : difficulty === "casual"
-      ? { waveLimit: 1, minimumSource: 12, dispatchRatio: 0.22, randomness: 14, pathCandidates: 4 }
-      : { waveLimit: 2, minimumSource: 10, dispatchRatio: 0.5, randomness: 8, pathCandidates: 7 };
+      ? { waveLimit: 1, minimumSource: 14, dispatchRatio: 0.16, randomness: 14, pathCandidates: 4 }
+      : { waveLimit: 2, minimumSource: 10, dispatchRatio: 0.4, randomness: 8, pathCandidates: 7 };
 
 const pathCrossesPlannerRisk = (
   path: [number, number][] | undefined,

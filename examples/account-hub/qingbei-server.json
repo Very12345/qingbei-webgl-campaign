@@ -1,0 +1,17 @@
+{
+  "initialKernels": 0,
+  "maxKernels": 4,
+  "landingPlugin": "account-hub",
+  "plugins": [
+    {
+      "id": "account-hub",
+      "name": "账号与匹配大厅",
+      "command": "./qingbei-account-hub",
+      "basePath": "/plugins/account-hub/",
+      "required": true,
+      "env": {
+        "QINGBEI_ACCOUNT_DATA": "./data/accounts.json"
+      }
+    }
+  ]
+}

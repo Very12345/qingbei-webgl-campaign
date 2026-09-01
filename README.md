@@ -32,6 +32,8 @@ https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qin
 
 默认端口为 `17890`，可用 `--port 端口` 修改；`--no-open` 禁止自动打开浏览器，`--no-update` 禁止自动更新。程序会从GitHub Releases下载与校验新版本，并在所有房间空闲后自动替换和重启。Release由 `.github/workflows/release-local-server.yml` 在推送版本标签时自动构建。
 
+服务器支持多个战局各自占用独立 JS VM，并能通过 JSON 配置启动外部插件进程。内置示例插件提供账号、个人主页、PvP匹配、三档人机、双阵营经验、倍速卡和阵营材质饰品。配置格式、内部战局 API 与 Hook 协议见 [插件开发文档](docs/plugins.md)，可直接使用 [账号大厅示例配置](examples/account-hub/qingbei-server.json) 组合原版服务器和插件二进制。
+
 ## 操作
 
 - 从北大据点拖向敌方据点下达进攻命令，拖向友方据点下达增援命令。

@@ -59,18 +59,24 @@ jobs:
           CGO_ENABLED: 0
         run: |
           output="../qingbei-server-${GOOS}-${GOARCH}${{ matrix.suffix }}"
+          plugin_output="../qingbei-account-hub-${GOOS}-${GOARCH}${{ matrix.suffix }}"
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "$output" .
+          go build -trimpath -ldflags "-s -w" -o "$plugin_output" ./plugins/account-hub
           if [ "${GOOS}" != "darwin" ]; then
             upx --best "$output"
+            upx --best "$plugin_output"
           fi
           cd ..
           sha256sum "$(basename "$output")" > "$(basename "$output").sha256"
+          sha256sum "$(basename "$plugin_output")" > "$(basename "$plugin_output").sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
             qingbei-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}.sha256
+            qingbei-account-hub-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+            qingbei-account-hub-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}.sha256
 
   wait-for-pages:
     runs-on: ubuntu-latest

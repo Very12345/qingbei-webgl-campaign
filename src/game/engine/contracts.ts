@@ -6,7 +6,11 @@ export type BattlefieldToolMode = "simplify-lines" | "multi-route" | null;
 export type BattlefieldSceneApi = {
   sync: () => void;
   focus: (region: RegionId) => void;
-  applyMaterials: (unitUrl: string | null, siteUrl: string | null) => void;
+  applyMaterials: (
+    unitUrl: string | null,
+    siteUrl: string | null,
+    teamUnitUrls?: Partial<Record<Team, string>>,
+  ) => void;
   clearUnitSelection: () => void;
   setLayers: (sites: boolean, control: boolean) => void;
   setPerspective: (team: Team) => void;

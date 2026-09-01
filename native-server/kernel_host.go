@@ -15,21 +15,24 @@ import (
 )
 
 type kernelBattle struct {
-	runtime       *jsKernelRuntime
-	hub           *relayHub
-	roomCode      string
-	mu            sync.RWMutex
-	instance      *jsKernelInstance
-	status        string
-	lastError     string
-	name          string
-	maxPlayers    int
-	allowSameTeam bool
-	timeScale     float64
-	stop          chan struct{}
-	stopped       chan struct{}
-	chat          []map[string]any
-	vote          *kernelDecisionVote
+	runtime        *jsKernelRuntime
+	hub            *relayHub
+	plugins        *pluginManager
+	roomCode       string
+	mu             sync.RWMutex
+	instance       *jsKernelInstance
+	status         string
+	lastError      string
+	name           string
+	maxPlayers     int
+	allowSameTeam  bool
+	timeScale      float64
+	stop           chan struct{}
+	stopped        chan struct{}
+	chat           []map[string]any
+	vote           *kernelDecisionVote
+	spec           battleSpec
+	resultReported bool
 }
 
 type simulationHostSnapshot struct {
@@ -47,17 +50,35 @@ type kernelDecisionVote struct {
 }
 
 func newKernelBattle(runtime *jsKernelRuntime, hub *relayHub) (*kernelBattle, error) {
+	return newKernelBattleWithSpec(runtime, hub, nil, battleSpec{AllowSameTeam: true})
+}
+
+func newKernelBattleWithSpec(runtime *jsKernelRuntime, hub *relayHub, plugins *pluginManager, spec battleSpec) (*kernelBattle, error) {
+	if strings.TrimSpace(spec.Name) == "" {
+		spec.Name = "清北联机服务器"
+	}
+	if spec.MaxPlayers < 2 || spec.MaxPlayers > 8 {
+		spec.MaxPlayers = 4
+	}
+	if spec.TimeScale < 0.5 || spec.TimeScale > 64 {
+		spec.TimeScale = 1
+	}
+	if spec.Mode == "" {
+		spec.Mode = "standard"
+	}
 	battle := &kernelBattle{
 		runtime:       runtime,
 		hub:           hub,
+		plugins:       plugins,
 		roomCode:      strings.ToUpper(randomID()[:10]),
 		status:        "正在初始化共享内核",
-		name:          "清北联机服务器",
-		maxPlayers:    4,
-		allowSameTeam: true,
-		timeScale:     1,
+		name:          spec.Name,
+		maxPlayers:    spec.MaxPlayers,
+		allowSameTeam: spec.AllowSameTeam,
+		timeScale:     spec.TimeScale,
 		stop:          make(chan struct{}),
 		stopped:       make(chan struct{}),
+		spec:          spec,
 	}
 	if err := battle.reset(); err != nil {
 		return nil, err
@@ -80,6 +101,17 @@ func (battle *kernelBattle) reset() error {
 	if err != nil {
 		return err
 	}
+	if campaign, ok := seed["campaign"].(map[string]any); ok {
+		if ai, ok := campaign["ai"].(map[string]any); ok {
+			difficulties := battle.spec.DifficultyByTeam
+			if len(difficulties) == 0 && battle.spec.Difficulty != "" {
+				difficulties = map[string]string{"pku": battle.spec.Difficulty, "thu": battle.spec.Difficulty}
+			}
+			if len(difficulties) > 0 {
+				ai["difficultyByTeam"] = difficulties
+			}
+		}
+	}
 	instance, err := battle.runtime.create(seed, map[string]any{
 		"aiTeams":               []string{"pku", "thu"},
 		"navGrid":               navGrid,
@@ -95,6 +127,7 @@ func (battle *kernelBattle) reset() error {
 	battle.mu.Lock()
 	battle.instance = instance
 	battle.lastError = ""
+	battle.resultReported = false
 	battle.mu.Unlock()
 	return nil
 }
@@ -133,7 +166,7 @@ func (battle *kernelBattle) run() {
 			for _, team := range []string{"pku", "thu"} {
 				enabled := true
 				for _, player := range players {
-					if player.team == team {
+					if player.Team == team {
 						enabled = false
 						break
 					}
@@ -155,6 +188,7 @@ func (battle *kernelBattle) run() {
 				continue
 			}
 			battle.broadcast(delta, "")
+			battle.reportOutcome(delta)
 		}
 	}
 }
@@ -209,7 +243,44 @@ func (battle *kernelBattle) infoConfiguration() map[string]any {
 		"maxPlayers":    battle.maxPlayers,
 		"allowSameTeam": battle.allowSameTeam,
 		"timeScale":     battle.timeScale,
+		"mode":          battle.spec.Mode,
+		"difficulty":    battle.spec.Difficulty,
+		"authPlugin":    battle.spec.AuthPlugin,
+		"metadata":      battle.spec.Metadata,
 	}
+}
+
+func (battle *kernelBattle) reportOutcome(delta map[string]any) {
+	battle.mu.Lock()
+	if battle.resultReported {
+		battle.mu.Unlock()
+		return
+	}
+	campaign, _ := delta["campaign"].(map[string]any)
+	outcome, _ := campaign["outcome"].(map[string]any)
+	winner, _ := outcome["winner"].(string)
+	if winner != "pku" && winner != "thu" {
+		battle.mu.Unlock()
+		return
+	}
+	battle.resultReported = true
+	spec := battle.spec
+	battle.mu.Unlock()
+	if battle.plugins == nil || spec.AuthPlugin == "" {
+		return
+	}
+	players := battle.playerSnapshot()
+	battle.plugins.notify(spec.AuthPlugin, "/hooks/battle/result", map[string]any{
+		"roomCode":     battle.roomCode,
+		"winner":       winner,
+		"reason":       outcome["reason"],
+		"elapsedHours": delta["elapsedHours"],
+		"deaths":       delta["deaths"],
+		"mode":         spec.Mode,
+		"difficulty":   spec.Difficulty,
+		"metadata":     spec.Metadata,
+		"players":      players,
+	})
 }
 
 func (battle *kernelBattle) playerSnapshot() []consolePlayer {
@@ -221,7 +292,7 @@ func (battle *kernelBattle) playerSnapshot() []consolePlayer {
 	}
 	players := make([]consolePlayer, 0, len(room.guests))
 	for _, guest := range room.guests {
-		players = append(players, consolePlayer{id: guest.peerID, nickname: guest.nickname, team: guest.team})
+		players = append(players, consolePlayer{ID: guest.peerID, Nickname: guest.nickname, Team: guest.team, AccountID: guest.accountID})
 	}
 	return players
 }
@@ -504,8 +575,8 @@ func (battle *kernelBattle) finalizeVoteIfComplete(voteID string) {
 		return
 	}
 	for _, player := range battle.playerSnapshot() {
-		if player.team == vote.Team {
-			if _, exists := vote.Votes[player.id]; !exists {
+		if player.Team == vote.Team {
+			if _, exists := vote.Votes[player.ID]; !exists {
 				return
 			}
 		}
@@ -523,11 +594,11 @@ func (battle *kernelBattle) finalizeVote(voteID string) {
 	}
 	yes, no, eligible := 0, 0, 0
 	for _, player := range players {
-		if player.team != vote.Team {
+		if player.Team != vote.Team {
 			continue
 		}
 		eligible++
-		if vote.Votes[player.id] {
+		if vote.Votes[player.ID] {
 			yes++
 		} else {
 			no++
