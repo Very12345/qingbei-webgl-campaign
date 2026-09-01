@@ -84,6 +84,7 @@ func (battle *kernelBattle) reset() error {
 		"aiTeams":               []string{"pku", "thu"},
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
+		"randomSeed":            kernelRandomSeed(),
 	})
 	if err != nil {
 		return err
@@ -872,6 +873,14 @@ func intValue(value any, fallback int) int {
 	default:
 		return fallback
 	}
+}
+
+func kernelRandomSeed() float64 {
+	value, err := strconv.ParseUint(randomID()[:8], 16, 32)
+	if err != nil {
+		return float64(uint64(time.Now().UnixNano()) & 0xffffffff)
+	}
+	return float64(value)
 }
 
 func allowClientRate(client *wsClient, chat bool, limit int, window time.Duration) bool {

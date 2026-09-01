@@ -43,6 +43,10 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      - uses: crazy-max/ghaction-upx@v4
+        if: matrix.goos != 'darwin'
+        with:
+          install-only: true
       - name: Build shared JS kernel
         run: |
           npm ci
@@ -57,8 +61,6 @@ jobs:
           output="../qingbei-server-${GOOS}-${GOARCH}${{ matrix.suffix }}"
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "$output" .
           if [ "${GOOS}" != "darwin" ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq upx-ucl
             upx --best "$output"
           fi
           cd ..

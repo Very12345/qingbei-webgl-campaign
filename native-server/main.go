@@ -105,6 +105,11 @@ func (c *wsClient) writerLoop() {
 			return
 		case message := <-c.outbound:
 			if err := c.writeJSON(message); err != nil {
+				select {
+				case <-c.done:
+					return
+				default:
+				}
 				log.Printf("连接 %s 写入失败：%v\n", c.peerID[:8], err)
 				c.shutdown()
 				return
@@ -115,6 +120,11 @@ func (c *wsClient) writerLoop() {
 				return
 			case message := <-c.outbound:
 				if err := c.writeJSON(message); err != nil {
+					select {
+					case <-c.done:
+						return
+					default:
+					}
 					log.Printf("连接 %s 写入失败：%v\n", c.peerID[:8], err)
 					c.shutdown()
 					return
@@ -128,6 +138,11 @@ func (c *wsClient) writerLoop() {
 					if err := c.writeJSON(*message); err == nil {
 						continue
 					} else {
+						select {
+						case <-c.done:
+							return
+						default:
+						}
 						log.Printf("连接 %s 状态写入失败：%v\n", c.peerID[:8], err)
 					}
 					c.shutdown()

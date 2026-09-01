@@ -118,6 +118,7 @@ export type KernelOptions = {
   fixedStepMilliseconds?: number;
   aiTeams?: Team[];
   mutateInitialState?: boolean;
+  randomSeed?: number;
 };
 
 export type KernelEnvelope = {
@@ -202,6 +203,18 @@ export function createKernel(
 ): KernelInstance {
   const state = options.mutateInitialState ? initialState : clone(initialState);
   normalizeKernelState(state);
+  if (Number.isFinite(options.randomSeed)) {
+    const seed = (options.randomSeed as number) >>> 0;
+    state.campaign.ai.seed = seed;
+    state.campaign.ai.seedByTeam = {
+      pku: seed ^ 0x504b5501,
+      thu: seed ^ 0x54485501,
+    };
+    state.campaign.ai.personality = {
+      pku: ["学术联动", "快速穿插", "燕园坚守"][seed % 3],
+      thu: ["工程统筹", "紫荆纵深", "主楼反攻"][(seed >>> 3) % 3],
+    };
+  }
   let revision = 0,
     timeScale = 1,
     accumulator = 0,
