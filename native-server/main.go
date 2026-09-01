@@ -847,7 +847,13 @@ func websocketHandler(hub *relayHub, plugins *pluginManager, writer http.Respons
 				http.Error(writer, "authentication plugin unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			result, err := plugins.authorizeJoin(authPlugin, request.URL.Query().Get("token"), room, team, peerID)
+			token := request.URL.Query().Get("token")
+			if token == "" {
+				if cookie, cookieError := request.Cookie("qingbei_hub"); cookieError == nil {
+					token = cookie.Value
+				}
+			}
+			result, err := plugins.authorizeJoin(authPlugin, token, room, team, peerID)
 			if err != nil || !result.Allow {
 				message := result.Message
 				if message == "" {

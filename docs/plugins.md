@@ -133,7 +133,8 @@ X-Qingbei-Plugin-Secret: <QINGBEI_PLUGIN_SECRET>
 
 源码位于 `native-server/plugins/account-hub`。它使用单个 JSON 文件持久化账号和进度，不依赖数据库或 Node.js：
 
-- ID/密码注册与 30 天会话；密码使用随机盐和 120,000 轮 SHA-256 派生后保存。
+- ID/密码注册与 30 天 HttpOnly 会话；密码使用随机盐和 210,000 轮 PBKDF2-HMAC-SHA256 派生后保存，旧账号会在下次成功登录时自动迁移。
+- 默认加入链接不包含会话令牌；服务器从同源 Cookie 完成 WebSocket 鉴权，并对连续登录失败实施十分钟限速。
 - 北大、清华经验与独立等级。
 - 休闲/标准/困难人机分别按胜负奖励不同经验。
 - PvP 自动匹配，胜方 120、负方 60 经验。

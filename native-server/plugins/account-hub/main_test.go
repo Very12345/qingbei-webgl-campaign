@@ -17,7 +17,8 @@ func newTestHub(t *testing.T) (*hubServer, *http.ServeMux) {
 		serverOrigin: "http://127.0.0.1:1", dataFile: filepath.Join(t.TempDir(), "accounts.json"),
 		data:     persistedData{Users: map[string]*userRecord{}, Matches: map[string]*matchRecord{}},
 		sessions: map[string]sessionRecord{}, ready: map[string]map[string]string{},
-		client: &http.Client{Timeout: time.Second},
+		loginAttempts: map[string]loginAttempt{},
+		client:        &http.Client{Timeout: time.Second},
 	}
 	mux := http.NewServeMux()
 	server.routes(mux)
@@ -43,21 +44,22 @@ func TestRegisterProfileAndAuthorizedJoin(t *testing.T) {
 	if registration.Code != http.StatusCreated {
 		t.Fatalf("register returned %d: %s", registration.Code, registration.Body.String())
 	}
-	var created struct {
-		Token string `json:"token"`
-	}
-	_ = json.Unmarshal(registration.Body.Bytes(), &created)
-	if created.Token == "" {
+	cookies := registration.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Value == "" {
 		t.Fatal("registration did not issue a session token")
 	}
-	profile := requestJSON(t, mux, http.MethodGet, "/api/me", nil, created.Token)
+	token := cookies[0].Value
+	if bytes.Contains(registration.Body.Bytes(), []byte(token)) {
+		t.Fatal("HttpOnly session token leaked into the JSON response")
+	}
+	profile := requestJSON(t, mux, http.MethodGet, "/api/me", nil, token)
 	if profile.Code != http.StatusOK {
 		t.Fatalf("profile returned %d", profile.Code)
 	}
 	server.mu.Lock()
 	server.data.Matches["ROOM12345"] = &matchRecord{RoomCode: "ROOM12345", Mode: "ai", Difficulty: "hard", Participants: map[string]string{"player_01": "pku"}}
 	server.mu.Unlock()
-	request := httptest.NewRequest(http.MethodPost, "/hooks/player/join", bytes.NewReader([]byte(`{"token":"`+created.Token+`","roomCode":"ROOM12345","team":"pku","peerId":"peer"}`)))
+	request := httptest.NewRequest(http.MethodPost, "/hooks/player/join", bytes.NewReader([]byte(`{"token":"`+token+`","roomCode":"ROOM12345","team":"pku","peerId":"peer"}`)))
 	request.Header.Set("X-Qingbei-Plugin-Secret", "test-secret")
 	authorized := httptest.NewRecorder()
 	mux.ServeHTTP(authorized, request)

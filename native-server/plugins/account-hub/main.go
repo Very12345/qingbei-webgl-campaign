@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,6 +29,7 @@ type userRecord struct {
 	ID                string            `json:"id"`
 	Salt              string            `json:"salt"`
 	PasswordHash      string            `json:"passwordHash"`
+	PasswordScheme    string            `json:"passwordScheme,omitempty"`
 	Experience        map[string]int    `json:"experience"`
 	SpeedCards        map[string]int    `json:"speedCards"`
 	Cosmetics         []string          `json:"cosmetics"`
@@ -54,38 +57,44 @@ type sessionRecord struct {
 	ExpiresAt time.Time
 }
 
+type loginAttempt struct {
+	Count   int
+	ResetAt time.Time
+}
+
 type queueEntry struct {
 	UserID    string
-	Token     string
 	Preferred string
 	JoinedAt  time.Time
 }
 
 type hubServer struct {
-	mu           sync.Mutex
-	pluginID     string
-	pluginSecret string
-	serverOrigin string
-	dataFile     string
-	data         persistedData
-	sessions     map[string]sessionRecord
-	waiting      *queueEntry
-	ready        map[string]map[string]string
-	client       *http.Client
+	mu            sync.Mutex
+	pluginID      string
+	pluginSecret  string
+	serverOrigin  string
+	dataFile      string
+	data          persistedData
+	sessions      map[string]sessionRecord
+	loginAttempts map[string]loginAttempt
+	waiting       *queueEntry
+	ready         map[string]map[string]string
+	client        *http.Client
 }
 
 func main() {
 	port := envOr("QINGBEI_PLUGIN_PORT", "17910")
 	dataFile := envOr("QINGBEI_ACCOUNT_DATA", "qingbei-account-hub.json")
 	server := &hubServer{
-		pluginID:     envOr("QINGBEI_PLUGIN_ID", "account-hub"),
-		pluginSecret: os.Getenv("QINGBEI_PLUGIN_SECRET"),
-		serverOrigin: strings.TrimRight(envOr("QINGBEI_SERVER_ORIGIN", "http://127.0.0.1:17890"), "/"),
-		dataFile:     dataFile,
-		data:         persistedData{Users: map[string]*userRecord{}, Matches: map[string]*matchRecord{}},
-		sessions:     map[string]sessionRecord{},
-		ready:        map[string]map[string]string{},
-		client:       &http.Client{Timeout: 8 * time.Second},
+		pluginID:      envOr("QINGBEI_PLUGIN_ID", "account-hub"),
+		pluginSecret:  os.Getenv("QINGBEI_PLUGIN_SECRET"),
+		serverOrigin:  strings.TrimRight(envOr("QINGBEI_SERVER_ORIGIN", "http://127.0.0.1:17890"), "/"),
+		dataFile:      dataFile,
+		data:          persistedData{Users: map[string]*userRecord{}, Matches: map[string]*matchRecord{}},
+		sessions:      map[string]sessionRecord{},
+		loginAttempts: map[string]loginAttempt{},
+		ready:         map[string]map[string]string{},
+		client:        &http.Client{Timeout: 8 * time.Second},
 	}
 	if err := server.load(); err != nil {
 		log.Fatalf("读取账号数据失败: %v", err)
@@ -128,6 +137,11 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 		data, _ := staticFiles.ReadFile("static/index.html")
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.Header().Set("Cache-Control", "no-cache")
+		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		writer.Header().Set("Referrer-Policy", "no-referrer")
+		writer.Header().Set("X-Content-Type-Options", "nosniff")
+		writer.Header().Set("X-Frame-Options", "DENY")
+		writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		_, _ = writer.Write(data)
 	})
 }
@@ -163,8 +177,8 @@ func (server *hubServer) register(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	id := normalizeUserID(input.ID)
-	if len(id) < 3 || len(id) > 24 || len(input.Password) < 6 || len(input.Password) > 72 {
-		writeError(writer, http.StatusBadRequest, "ID需为3—24位字母、数字、下划线；密码至少6位")
+	if len(id) < 3 || len(id) > 24 || len(input.Password) < 8 || len(input.Password) > 72 {
+		writeError(writer, http.StatusBadRequest, "ID需为3—24位字母、数字、下划线；密码至少8位")
 		return
 	}
 	salt := randomToken(16)
@@ -174,14 +188,14 @@ func (server *hubServer) register(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusConflict, "这个ID已经注册")
 		return
 	}
-	server.data.Users[id] = &userRecord{ID: id, Salt: salt, PasswordHash: passwordHash(input.Password, salt), Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, Cosmetics: []string{}, SelectedCosmetics: map[string]string{}, CreatedAt: time.Now()}
+	server.data.Users[id] = &userRecord{ID: id, Salt: salt, PasswordHash: passwordHash(input.Password, salt), PasswordScheme: "pbkdf2-sha256-v1", Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, Cosmetics: []string{}, SelectedCosmetics: map[string]string{}, CreatedAt: time.Now()}
 	if err := server.saveLocked(); err != nil {
 		writeError(writer, http.StatusInternalServerError, "保存账号失败")
 		return
 	}
 	token := server.newSessionLocked(id)
-	server.writeSession(writer, token)
-	writeJSON(writer, http.StatusCreated, map[string]any{"token": token, "profile": server.publicProfileLocked(server.data.Users[id])})
+	server.writeSession(writer, request, token)
+	writeJSON(writer, http.StatusCreated, map[string]any{"profile": server.publicProfileLocked(server.data.Users[id])})
 }
 
 func (server *hubServer) login(writer http.ResponseWriter, request *http.Request) {
@@ -199,14 +213,38 @@ func (server *hubServer) login(writer http.ResponseWriter, request *http.Request
 	id := normalizeUserID(input.ID)
 	server.mu.Lock()
 	defer server.mu.Unlock()
+	attempt := server.loginAttempts[id]
+	if time.Now().After(attempt.ResetAt) {
+		attempt = loginAttempt{ResetAt: time.Now().Add(10 * time.Minute)}
+	}
+	if attempt.Count >= 5 {
+		writeError(writer, http.StatusTooManyRequests, "登录尝试过多，请十分钟后再试")
+		return
+	}
 	user := server.data.Users[id]
-	if user == nil || subtle.ConstantTimeCompare([]byte(user.PasswordHash), []byte(passwordHash(input.Password, user.Salt))) != 1 {
+	validPassword := false
+	if user != nil {
+		derived := passwordHash(input.Password, user.Salt)
+		if user.PasswordScheme == "" {
+			derived = legacyPasswordHash(input.Password, user.Salt)
+		}
+		validPassword = subtle.ConstantTimeCompare([]byte(user.PasswordHash), []byte(derived)) == 1
+	}
+	if !validPassword {
+		attempt.Count++
+		server.loginAttempts[id] = attempt
 		writeError(writer, http.StatusUnauthorized, "ID或密码不正确")
 		return
 	}
+	delete(server.loginAttempts, id)
+	if user.PasswordScheme == "" {
+		user.PasswordHash = passwordHash(input.Password, user.Salt)
+		user.PasswordScheme = "pbkdf2-sha256-v1"
+		_ = server.saveLocked()
+	}
 	token := server.newSessionLocked(id)
-	server.writeSession(writer, token)
-	writeJSON(writer, http.StatusOK, map[string]any{"token": token, "profile": server.publicProfileLocked(user)})
+	server.writeSession(writer, request, token)
+	writeJSON(writer, http.StatusOK, map[string]any{"profile": server.publicProfileLocked(user)})
 }
 
 func (server *hubServer) logout(writer http.ResponseWriter, request *http.Request) {
@@ -226,7 +264,7 @@ func (server *hubServer) me(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusUnauthorized, "尚未登录")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"profile": server.publicProfileLocked(user), "token": server.token(request)})
+	writeJSON(writer, http.StatusOK, map[string]any{"profile": server.publicProfileLocked(user)})
 }
 
 func (server *hubServer) selectCosmetic(writer http.ResponseWriter, request *http.Request) {
@@ -310,7 +348,7 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "ai", Difficulty: input.Difficulty, Participants: map[string]string{userID: input.Team}, CreatedAt: time.Now()}
 	_ = server.saveLocked()
 	server.mu.Unlock()
-	writeJSON(writer, http.StatusCreated, map[string]any{"roomCode": room, "joinUrl": server.joinURL(room, input.Team, token)})
+	writeJSON(writer, http.StatusCreated, map[string]any{"roomCode": room, "joinUrl": server.joinURL(room, input.Team)})
 }
 
 func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.Request) {
@@ -337,7 +375,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		return
 	}
 	if server.waiting == nil || server.waiting.UserID == user.ID || time.Since(server.waiting.JoinedAt) > 10*time.Minute {
-		server.waiting = &queueEntry{UserID: user.ID, Token: token, Preferred: input.PreferredTeam, JoinedAt: time.Now()}
+		server.waiting = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, JoinedAt: time.Now()}
 		server.mu.Unlock()
 		writeJSON(writer, http.StatusAccepted, map[string]any{"queued": true})
 		return
@@ -364,8 +402,8 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	}
 	server.mu.Lock()
 	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "pvp", Participants: map[string]string{first.UserID: firstTeam, secondID: secondTeam}, CreatedAt: time.Now()}
-	server.ready[first.UserID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, firstTeam, first.Token)}
-	server.ready[secondID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, secondTeam, token)}
+	server.ready[first.UserID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, firstTeam)}
+	server.ready[secondID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, secondTeam)}
 	_ = server.saveLocked()
 	response := server.ready[secondID]
 	server.mu.Unlock()
@@ -528,8 +566,8 @@ func (server *hubServer) deleteBattle(room string) {
 	}
 }
 
-func (server *hubServer) joinURL(room, team, token string) string {
-	return "/qingbei-webgl-campaign/?local=1&join=" + url.QueryEscape(room) + "&pluginToken=" + url.QueryEscape(token) + "&pluginTeam=" + url.QueryEscape(team)
+func (server *hubServer) joinURL(room, team string) string {
+	return "/qingbei-webgl-campaign/?local=1&join=" + url.QueryEscape(room) + "&pluginTeam=" + url.QueryEscape(team)
 }
 func (server *hubServer) refundCard(userID, card string) {
 	if card == "" {
@@ -567,8 +605,9 @@ func (server *hubServer) newSessionLocked(userID string) string {
 	server.sessions[token] = sessionRecord{UserID: userID, ExpiresAt: time.Now().Add(30 * 24 * time.Hour)}
 	return token
 }
-func (server *hubServer) writeSession(writer http.ResponseWriter, token string) {
-	http.SetCookie(writer, &http.Cookie{Name: "qingbei_hub", Value: token, Path: "/", MaxAge: 30 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+func (server *hubServer) writeSession(writer http.ResponseWriter, request *http.Request, token string) {
+	secure := request.TLS != nil || strings.EqualFold(request.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(writer, &http.Cookie{Name: "qingbei_hub", Value: token, Path: "/", MaxAge: 30 * 24 * 3600, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 }
 
 func (server *hubServer) load() error {
@@ -604,13 +643,34 @@ func (server *hubServer) saveLocked() error {
 	}
 	return os.Rename(temporary, server.dataFile)
 }
-func passwordHash(password, salt string) string {
+func legacyPasswordHash(password, salt string) string {
 	value := []byte(salt + "\x00" + password)
 	for index := 0; index < 120000; index++ {
 		sum := sha256.Sum256(value)
 		value = sum[:]
 	}
 	return hex.EncodeToString(value)
+}
+
+func passwordHash(password, salt string) string {
+	const iterations = 210_000
+	key := []byte(password)
+	block := make([]byte, len(salt)+4)
+	copy(block, []byte(salt))
+	binary.BigEndian.PutUint32(block[len(salt):], 1)
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write(block)
+	u := mac.Sum(nil)
+	result := append([]byte(nil), u...)
+	for index := 1; index < iterations; index++ {
+		mac.Reset()
+		_, _ = mac.Write(u)
+		u = mac.Sum(nil)
+		for offset := range result {
+			result[offset] ^= u[offset]
+		}
+	}
+	return hex.EncodeToString(result)
 }
 func randomToken(size int) string {
 	data := make([]byte, size)
@@ -647,6 +707,8 @@ func writeError(writer http.ResponseWriter, status int, message string) {
 }
 func writeJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(value)
 }
