@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,5 +85,27 @@ func TestRewardsAreAppliedOnce(t *testing.T) {
 	}
 	if server.data.Users["winner"].Experience["pku"] != 120 {
 		t.Fatalf("result must be idempotent, got %d XP", server.data.Users["winner"].Experience["pku"])
+	}
+}
+
+func TestSecureProxySessionAndJoinURL(t *testing.T) {
+	_, mux := newTestHub(t)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/register",
+		bytes.NewReader([]byte(`{"id":"secure_proxy","password":"long-password-1"}`)),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	cookies := response.Result().Cookies()
+	if len(cookies) == 0 || !cookies[0].Secure || !cookies[0].HttpOnly {
+		t.Fatal("proxied HTTPS login must issue a Secure HttpOnly cookie")
+	}
+	server, _ := newTestHub(t)
+	joinURL := server.joinURL("ROOM12345", "pku")
+	if strings.Contains(joinURL, "token") || strings.Contains(joinURL, "qingbei_hub") {
+		t.Fatalf("join URL leaked authentication data: %s", joinURL)
 	}
 }
