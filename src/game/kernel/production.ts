@@ -169,7 +169,17 @@ export function runProductionCycles(
         )
           continue;
         const target = game.sites[source.orderTarget];
-        if (!target || target.destroyed || target.team === source.team) {
+        const preparationRoute =
+          !game.campaign.warUnlocked &&
+          target?.team === source.team &&
+          (source.type === "dorm" || source.type === "dining") &&
+          target.type !== "dorm" &&
+          target.type !== "dining";
+        if (
+          !target ||
+          target.destroyed ||
+          (target.team === source.team && !preparationRoute)
+        ) {
           source.orderTarget = undefined;
           source.orderPath = undefined;
           continue;

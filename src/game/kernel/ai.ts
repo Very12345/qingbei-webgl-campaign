@@ -99,6 +99,78 @@ export type PlannedAiCamp = {
   pathToTarget: [number, number][];
 };
 
+const planPreparationOrders = (
+  game: GameData,
+  team: Team,
+  difficulty: AiDifficulty,
+) => {
+  if (difficulty !== "hard")
+    return {
+      intent: "passive" as AiIntent,
+      orders: [] as PlannedAiOrder[],
+      camps: [] as PlannedAiCamp[],
+    };
+  const idleCounts = new Map<number, number>(),
+    incomingCounts = new Map<number, number>();
+  for (const unit of game.units) {
+    if (unit.team !== team || unit.hp <= 0) continue;
+    if (unit.targetSiteId == null)
+      idleCounts.set(unit.siteId, (idleCounts.get(unit.siteId) ?? 0) + 1);
+    else
+      incomingCounts.set(
+        unit.targetSiteId,
+        (incomingCounts.get(unit.targetSiteId) ?? 0) + unit.strength,
+      );
+  }
+  const stagingSites = game.sites.filter(
+      (site) =>
+        site.team === team &&
+        !site.destroyed &&
+        site.type !== "dorm" &&
+        site.type !== "dining" &&
+        site.type !== "camp",
+    ),
+    stagingLoad = new Map(
+      stagingSites.map((site) => [
+        site.id,
+        (idleCounts.get(site.id) ?? 0) + (incomingCounts.get(site.id) ?? 0),
+      ]),
+    ),
+    sources = game.sites
+      .filter(
+        (site) =>
+          site.team === team &&
+          !site.destroyed &&
+          (site.type === "dorm" || site.type === "dining") &&
+          site.orderTarget == null &&
+          (idleCounts.get(site.id) ?? 0) >= 12,
+      )
+      .sort(
+        (a, b) =>
+          (idleCounts.get(b.id) ?? 0) - (idleCounts.get(a.id) ?? 0),
+      )
+      .slice(0, 10),
+    orders: PlannedAiOrder[] = [];
+  for (const source of sources) {
+    const target = [...stagingSites].sort(
+      (a, b) =>
+        Math.hypot(a.x - source.x, a.z - source.z) +
+        (stagingLoad.get(a.id) ?? 0) * 0.32 -
+        Math.hypot(b.x - source.x, b.z - source.z) -
+        (stagingLoad.get(b.id) ?? 0) * 0.32,
+    )[0];
+    if (!target) continue;
+    const count = Math.max(5, (idleCounts.get(source.id) ?? 0) - 6);
+    orders.push({ sourceId: source.id, targetId: target.id, count });
+    stagingLoad.set(target.id, (stagingLoad.get(target.id) ?? 0) + count);
+  }
+  return {
+    intent: "passive" as AiIntent,
+    orders,
+    camps: [] as PlannedAiCamp[],
+  };
+};
+
 export function planStrategicOrders(
   game: GameData,
   team: Team,
@@ -108,11 +180,7 @@ export function planStrategicOrders(
   opponentAiEnabled = false,
 ) {
   if (!game.campaign.warUnlocked)
-    return {
-      intent: "passive" as AiIntent,
-      orders: [] as PlannedAiOrder[],
-      camps: [] as PlannedAiCamp[],
-    };
+    return planPreparationOrders(game, team, difficulty);
   const enemy: Team = team === "pku" ? "thu" : "pku",
     friendlySites = game.sites.filter(
       (site) => site.team === team && !site.destroyed,

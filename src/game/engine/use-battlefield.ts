@@ -85,6 +85,7 @@ type BattlefieldEngineContext = {
   setDirectControl: Dispatch<SetStateAction<boolean>>;
   setNotice: Dispatch<SetStateAction<string>>;
   playerTeamRef: RefObject<Team>;
+  observerAiModeRef: RefObject<boolean>;
   setSelectedUnitCount: Dispatch<SetStateAction<number>>;
   customMaterialsRef: RefObject<{ unit: string | null; site: string | null }>;
   pushEvent: (event: EventCard) => void;
@@ -132,6 +133,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     setDirectControl,
     setNotice,
     playerTeamRef,
+    observerAiModeRef,
     setSelectedUnitCount,
     customMaterialsRef,
     pushEvent,
@@ -2216,6 +2218,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       dispatchRatio = 0.6,
       sourceId?: number,
       intent = false,
+      team?: Team,
     ) => {
       const makeLine = (
           curve: THREE.Curve<THREE.Vector3>,
@@ -2301,7 +2304,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         commandGroup.add(group);
         return group;
       }
-      const color = intent ? 0xffc857 : 0xb9eaf4,
+      const color = intent
+          ? 0xffc857
+          : team === "pku"
+            ? 0xff6f82
+            : team === "thu"
+              ? 0xc984ff
+              : 0xb9eaf4,
         pathPoints = path?.length
           ? [
               a.clone(),
@@ -2397,21 +2406,27 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           s.dispatchRatio ?? 0.6,
           s.id,
             intent,
+            s.team,
         );
         route.traverse((object) => {
           object.userData.commandSourceId = s.id;
         });
         };
-        if (s.team === playerTeamRef.current && s.orderTarget != null)
+        if (
+          (observerAiModeRef.current || s.team === playerTeamRef.current) &&
+          s.orderTarget != null
+        )
           renderSegment(s.orderTarget, s.orderPath, false);
-        const plannedTarget =
-          s.plannedOrderTargets?.[playerTeamRef.current];
-        if (plannedTarget != null)
-          renderSegment(
-            plannedTarget,
-            s.plannedOrderPaths?.[playerTeamRef.current],
-            true,
-          );
+        if (!observerAiModeRef.current) {
+          const plannedTarget =
+            s.plannedOrderTargets?.[playerTeamRef.current];
+          if (plannedTarget != null)
+            renderSegment(
+              plannedTarget,
+              s.plannedOrderPaths?.[playerTeamRef.current],
+              true,
+            );
+        }
       });
     };
     const issueOrder = (
@@ -8626,7 +8641,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       )
         return;
       const humanTeams = new Set<Team>([
-          ...(dedicatedServerHostRef.current ? [] : [playerTeamRef.current]),
+          ...(dedicatedServerHostRef.current || observerAiModeRef.current
+            ? []
+            : [playerTeamRef.current]),
           ...[...lanChannelIdentityRef.current.values()].map(
             (identity) => identity.team,
           ),
@@ -8886,7 +8903,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (now >= nextKernelAiSyncAt) {
           nextKernelAiSyncAt = now + 500;
           const humanTeams = new Set<Team>([
-            ...(dedicatedServerHostRef.current ? [] : [playerTeamRef.current]),
+            ...(dedicatedServerHostRef.current || observerAiModeRef.current
+              ? []
+              : [playerTeamRef.current]),
             ...[...lanChannelIdentityRef.current.values()].map(
               (identity) => identity.team,
             ),

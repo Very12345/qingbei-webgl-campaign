@@ -67,11 +67,13 @@ type HomeScreenProps = {
   setSaveName: (name: string) => void;
   newGameTeam: Team;
   setNewGameTeam: (team: Team) => void;
+  aiObserverMode: boolean;
+  setAiObserverMode: (enabled: boolean) => void;
   openToLan: boolean;
   setOpenToLan: (open: boolean) => void;
   aiDifficulty: AiDifficulty;
   setAiDifficulty: (difficulty: AiDifficulty) => void;
-  newGame: (team: Team) => void;
+  newGame: (team: Team, observeBothAi?: boolean) => void;
   autosave: Snapshot | null;
   saves: Snapshot[];
   loadGame: (save: Snapshot, team: Team) => void;
@@ -115,6 +117,8 @@ export function HomeScreen(props: HomeScreenProps) {
     setSaveName,
     newGameTeam,
     setNewGameTeam,
+    aiObserverMode,
+    setAiObserverMode,
     openToLan,
     setOpenToLan,
     aiDifficulty,
@@ -469,22 +473,34 @@ export function HomeScreen(props: HomeScreenProps) {
             <label>
               <span>玩家视角</span>
               <select
-                value={newGameTeam}
-                onChange={(event) => setNewGameTeam(event.target.value as Team)}
+                value={aiObserverMode ? "ai-vs-ai" : newGameTeam}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "ai-vs-ai") {
+                    setAiObserverMode(true);
+                    setOpenToLan(false);
+                  } else {
+                    setAiObserverMode(false);
+                    setNewGameTeam(value as Team);
+                  }
+                }}
               >
                 <option value="pku">北京大学</option>
                 <option value="thu">清华大学</option>
+                <option value="ai-vs-ai">双方AI（观察模式）</option>
               </select>
             </label>
             <label>
               <span>对局域网开放</span>
               <select
                 value={openToLan ? "yes" : "no"}
+                disabled={aiObserverMode}
                 onChange={(event) => setOpenToLan(event.target.value === "yes")}
               >
                 <option value="no">关闭</option>
                 <option value="yes">开放</option>
               </select>
+              {aiObserverMode && <small>观察模式由本机同时运行双方AI</small>}
             </label>
             <label>
               <span>人机难度</span>
@@ -502,7 +518,7 @@ export function HomeScreen(props: HomeScreenProps) {
             <button
               className="new-game-button"
               onClick={() => {
-                newGame(newGameTeam);
+                newGame(newGameTeam, aiObserverMode);
                 if (openToLan) void createLanHost();
               }}
             >

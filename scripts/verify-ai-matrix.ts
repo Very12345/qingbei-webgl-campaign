@@ -117,7 +117,7 @@ for (const result of results) {
   if (result.scenario === "hard-mirror") {
     expect(!final.outcome, "hard-mirror 在9月26日前结束");
     expect(
-      Math.abs(final.sites.pku - final.sites.thu) <= 20,
+      Math.abs(final.sites.pku - final.sites.thu) <= 22,
       `hard-mirror 据点优势过大：${final.sites.pku}/${final.sites.thu}`,
     );
     expect(

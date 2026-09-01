@@ -240,6 +240,8 @@ export default function Game3D() {
     return "menu";
   });
   const [newGameTeam, setNewGameTeam] = useState<Team>("pku");
+  const [aiObserverMode, setAiObserverMode] = useState(false);
+  const aiObserverModeRef = useRef(false);
   const [openToLan, setOpenToLan] = useState(false);
   const [lanInput, setLanInput] = useState(
     () => new URLSearchParams(location.search).get("join") ?? "",
@@ -667,6 +669,9 @@ export default function Game3D() {
     setRenamingSite(false);
   }, [selected]);
   useEffect(() => {
+    aiObserverModeRef.current = aiObserverMode;
+  }, [aiObserverMode]);
+  useEffect(() => {
     sceneApi.current?.setLayers(showSites, showControl);
     setSelected(null);
     setCampContext(null);
@@ -723,7 +728,8 @@ export default function Game3D() {
     beginDecision,
     beginResearch,
     beginProduction,
-    recordServerLog
+    recordServerLog,
+    observerAiModeRef: aiObserverModeRef,
   });
 
   const snapshotCurrentGame = (name: string): Snapshot => {
@@ -1090,6 +1096,8 @@ export default function Game3D() {
     team: Team = playerTeam,
     serverId: string | null = null,
   ) => {
+    setAiObserverMode(false);
+    aiObserverModeRef.current = false;
     if (!serverId) clearUnfinishedGame();
     const playerSaves = readSaves(),
       sourceSavedAt = serverId
@@ -1389,13 +1397,18 @@ export default function Game3D() {
     localStorage.setItem(SAVE_KEY, JSON.stringify(next));
     setSaves(next);
   };
-  const newGame = (team: Team = playerTeam) => {
+  const newGame = (
+    team: Team = playerTeam,
+    observeBothAi = false,
+  ) => {
     clearUnfinishedGame();
     activePlayerSaveRef.current = null;
     setActiveServerId(null);
     activeServerIdRef.current = null;
     setPlayerTeam(team);
     playerTeamRef.current = team;
+    setAiObserverMode(observeBothAi);
+    aiObserverModeRef.current = observeBothAi;
     gameRef.current = makeFreshGame();
     gameRef.current.campaign.ai.difficulty = aiDifficulty;
     gameRef.current.campaign.ai.difficultyByTeam = {
@@ -4093,6 +4106,8 @@ export default function Game3D() {
           setSaveName={setSaveName}
           newGameTeam={newGameTeam}
           setNewGameTeam={setNewGameTeam}
+          aiObserverMode={aiObserverMode}
+          setAiObserverMode={setAiObserverMode}
           openToLan={openToLan}
           setOpenToLan={setOpenToLan}
           aiDifficulty={aiDifficulty}

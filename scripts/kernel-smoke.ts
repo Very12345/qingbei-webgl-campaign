@@ -103,3 +103,45 @@ assert.ok(
     ),
   "hard single-player opponent incorrectly entered hard-mirror hold mode",
 );
+
+const preparationState = makeFreshGame();
+preparationState.campaign.ai.difficulty = "hard";
+preparationState.campaign.ai.difficultyByTeam = {
+  pku: "hard",
+  thu: "hard",
+};
+const preparationKernel = createKernel(preparationState, {
+  aiTeams: ["pku", "thu"],
+  mutateInitialState: true,
+});
+preparationKernel.dispatch({ type: "set_time_scale", value: 16 });
+preparationKernel.run(82, 250);
+for (const team of ["pku", "thu"] as const) {
+  const productionSites = preparationState.sites.filter(
+      (site) =>
+        site.team === team &&
+        (site.type === "dorm" || site.type === "dining"),
+    ),
+    routedProductionSites = productionSites.filter(
+      (site) => site.orderTarget != null,
+    ).length,
+    boundIdle = productionSites.reduce(
+      (total, site) =>
+        total +
+        preparationState.units.filter(
+          (unit) =>
+            unit.team === team &&
+            unit.siteId === site.id &&
+            unit.targetSiteId == null,
+        ).length,
+      0,
+    );
+  assert.ok(
+    routedProductionSites >= productionSites.length * 0.8,
+    `${team} hard AI did not establish preparation routes from production sites`,
+  );
+  assert.ok(
+    boundIdle <= 100,
+    `${team} hard AI left too many units blocking dormitory production: ${boundIdle}`,
+  );
+}
