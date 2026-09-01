@@ -95,16 +95,22 @@ export function captureSite(
     });
     site.orderTarget = undefined;
     site.orderPath = undefined;
+    site.orderPurpose = undefined;
+    site.orderIssuedAt = undefined;
     return { kind: "qz_conversion", siteId: site.id };
   }
   if (site.type === "camp") {
     site.destroyed = true;
     site.orderTarget = undefined;
     site.orderPath = undefined;
+    site.orderPurpose = undefined;
+    site.orderIssuedAt = undefined;
     for (const source of game.sites)
       if (source.orderTarget === site.id) {
         source.orderTarget = undefined;
         source.orderPath = undefined;
+        source.orderPurpose = undefined;
+        source.orderIssuedAt = undefined;
       }
     for (const unit of game.units)
       if (unit.targetSiteId === site.id || unit.siteId === site.id)
@@ -134,6 +140,9 @@ export function captureSite(
   });
   site.orderTarget = plannedTargetId;
   site.orderPath = plannedPath;
+  site.orderPurpose = plannedTargetId == null ? undefined : "combat";
+  site.orderIssuedAt =
+    plannedTargetId == null ? undefined : game.campaign.elapsedHours;
   if (site.plannedOrderTargets) delete site.plannedOrderTargets[newTeam];
   if (site.plannedOrderPaths) delete site.plannedOrderPaths[newTeam];
   if (site.type === "target" && newTeam === "pku") {

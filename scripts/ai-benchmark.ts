@@ -43,7 +43,7 @@ const navGrid = buildKernelNavGrid(osmRegions.main),
 kernel.dispatch({ type: "set_time_scale", value: 16 });
 
 const start = Date.parse("2026-08-16T08:00:00+08:00"),
-  allDates = [
+  baseDates = [
     "2026-08-19T20:00:00+08:00",
     "2026-08-22T00:00:00+08:00",
     "2026-08-25T00:00:00+08:00",
@@ -52,13 +52,26 @@ const start = Date.parse("2026-08-16T08:00:00+08:00"),
     "2026-09-06T00:00:00+08:00",
     "2026-09-16T00:00:00+08:00",
     "2026-09-18T00:00:00+08:00",
+    "2026-09-20T00:00:00+08:00",
     "2026-09-26T00:00:00+08:00",
   ],
-  dates = scenario.includes("hard-idle")
-    ? allDates.slice(0, 6)
+  longMirrorDates = [
+    ...baseDates,
+    "2026-10-01T00:00:00+08:00",
+    "2026-10-15T00:00:00+08:00",
+    "2026-11-01T00:00:00+08:00",
+    "2026-12-01T00:00:00+08:00",
+    "2027-02-01T00:00:00+08:00",
+    "2027-05-01T00:00:00+08:00",
+    "2027-08-15T00:00:00+08:00",
+  ],
+  dates = scenario === "hard-mirror"
+    ? longMirrorDates
+    : scenario.includes("hard-idle")
+    ? baseDates.slice(0, 6)
     : scenario.includes("standard-idle") || scenario.includes("-vs-")
-      ? allDates.slice(0, 8)
-      : allDates;
+      ? baseDates.slice(0, 9)
+      : baseDates;
 
 const summarize = (state: GameData, date: string) => {
   const sites = { pku: 0, thu: 0 },

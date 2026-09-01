@@ -8,6 +8,7 @@ type Sample = {
   population: { pku: number; thu: number };
   deaths: { pku: number; thu: number };
   routes: Array<{ path?: [number, number][] }>;
+  orders: Array<{ source: string; target?: string; sourceTeam: string }>;
   outcome: null | { winner: "pku" | "thu"; atHour: number };
 };
 
@@ -115,15 +116,49 @@ for (const result of results) {
     );
   }
   if (result.scenario === "hard-mirror") {
-    expect(!final.outcome, "hard-mirror 在9月26日前结束");
+    const september26 = result.samples.find(
+      (sample) => sample.date === "2026-09-26",
+    )!;
+    expect(!september26.outcome, "hard-mirror 在9月26日前结束");
     expect(
-      Math.abs(final.sites.pku - final.sites.thu) <= 22,
-      `hard-mirror 据点优势过大：${final.sites.pku}/${final.sites.thu}`,
+      Math.abs(september26.sites.pku - september26.sites.thu) <= 22,
+      `hard-mirror 据点优势过大：${september26.sites.pku}/${september26.sites.thu}`,
     );
     expect(
-      final.population.pku >= 500 && final.population.thu >= 500,
-      `hard-mirror 有阵营耗尽：${final.population.pku}/${final.population.thu}`,
+      september26.population.pku >= 500 && september26.population.thu >= 500,
+      `hard-mirror 有阵营耗尽：${september26.population.pku}/${september26.population.thu}`,
     );
+    const autumnSamples = result.samples.filter(
+      (sample) =>
+        sample.date >= "2026-10-01" &&
+        sample.date <= "2026-11-01" &&
+        !sample.outcome,
+    );
+    if (autumnSamples.length >= 2) {
+      const signatures = new Set(
+        autumnSamples.map((sample) =>
+          JSON.stringify({
+            sites: sample.sites,
+            deaths: sample.deaths,
+            orders: sample.orders.map((order) => [
+              order.sourceTeam,
+              order.source,
+              order.target,
+            ]),
+          }),
+        ),
+      );
+      expect(
+        signatures.size >= 2,
+        "hard-mirror 在10月到11月间据点、伤亡和兵线完全冻结",
+      );
+      expect(
+        autumnSamples.some(
+          (sample) => sample.routes.length > 0 || sample.orders.length > 0,
+        ),
+        "hard-mirror 在10月后没有任何活动兵线",
+      );
+    }
   }
 }
 

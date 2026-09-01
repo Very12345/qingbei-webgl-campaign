@@ -257,6 +257,7 @@ export function createKernel(
     sourceId: number,
     targetId: number,
     count = Number.POSITIVE_INFINITY,
+    purpose: "combat" | "logistics" = "combat",
   ) => {
     const source = state.sites[sourceId],
       target = state.sites[targetId];
@@ -293,8 +294,14 @@ export function createKernel(
       unit.pathIndex = 0;
       [unit.tx, unit.tz] = path.at(-1)!;
     }
+    const orderChanged =
+      source.orderTarget !== targetId || source.orderPurpose !== purpose;
     source.orderTarget = targetId;
     source.orderPath = clone(path);
+    if (orderChanged)
+      source.orderIssuedAt = state.campaign.elapsedHours;
+    source.orderPurpose = purpose;
+    source.orderIssuedAt ??= state.campaign.elapsedHours;
     return moving.length;
   };
 
@@ -369,6 +376,8 @@ export function createKernel(
         if (action.orderTarget === null) {
           site.orderTarget = undefined;
           site.orderPath = undefined;
+          site.orderPurpose = undefined;
+          site.orderIssuedAt = undefined;
         } else if (action.orderTarget != null) {
           issueOrder(action.team, site.id, action.orderTarget);
         }
@@ -561,7 +570,7 @@ export function createKernel(
             ? profile.strategicHours *
               (initialEnemySites < 75
                 ? 96 / Math.max(40, initialEnemySites)
-                : 1)
+                : 1.25)
             : profile.strategicHours;
       state.campaign.ai.nextStrategicAt[team] =
         state.campaign.elapsedHours + strategicHours;
@@ -601,6 +610,8 @@ export function createKernel(
             dispatchRatio: 0.65,
             orderTarget: target.id,
             orderPath: clone(plannedCamp.pathToTarget),
+            orderPurpose: "combat",
+            orderIssuedAt: state.campaign.elapsedHours,
           };
         state.resources[team] -= 80;
         state.sites.push(camp);
@@ -618,18 +629,32 @@ export function createKernel(
         );
         source.orderTarget = undefined;
         source.orderPath = undefined;
+        source.orderPurpose = undefined;
+        source.orderIssuedAt = undefined;
       }
       for (const order of plan.orders)
         {
-          issueOrder(team, order.sourceId, order.targetId, order.count);
+          const deployed = issueOrder(
+            team,
+            order.sourceId,
+            order.targetId,
+            order.count,
+            order.purpose ?? "combat",
+          );
+          const issuedSource = state.sites[order.sourceId];
+          if (deployed && issuedSource)
+            issuedSource.orderIssuedAt = state.campaign.elapsedHours;
           if (
             difficulty !== "hard" &&
+            order.purpose !== "logistics" &&
             state.sites[order.sourceId]?.type !== "camp"
           ) {
             const source = state.sites[order.sourceId];
             if (source) {
               source.orderTarget = undefined;
               source.orderPath = undefined;
+              source.orderPurpose = undefined;
+              source.orderIssuedAt = undefined;
             }
           }
         }
@@ -649,8 +674,14 @@ export function createKernel(
     if (state.campaign.elapsedHours >= 84) state.campaign.warUnlocked = true;
     runProductionCycles(
       state,
-      (team, source, target, count) =>
-        issueOrder(team, source.id, target.id, count),
+      (team, source, target, count, purpose) =>
+        issueOrder(
+          team,
+          source.id,
+          target.id,
+          count,
+          purpose ?? source.orderPurpose ?? "combat",
+        ),
     );
     progressResearchAndProduction(state, randomFor("pku"), options.navGrid);
     progressDecisions(state);
@@ -874,8 +905,8 @@ export function difficultyProfile(difficulty: AiDifficulty) {
       waveLimit: 1,
     } as const;
   return {
-    thinkMillisecondsAt1x: 30000,
-    strategicHours: 8.2,
+    thinkMillisecondsAt1x: 33000,
+    strategicHours: 9,
     routeLimit: 6,
     waveLimit: 1,
   } as const;

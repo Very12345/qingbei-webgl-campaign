@@ -169,6 +169,8 @@ const deployExternalTeam = (
     context.issueOrder(ally, border.id, target.id, people);
     border.orderTarget = undefined;
     border.orderPath = undefined;
+    border.orderPurpose = undefined;
+    border.orderIssuedAt = undefined;
   }
 };
 
@@ -545,6 +547,8 @@ const processScenarioEvents = (
         context.issueOrder(ally, border.id, target.id, 14);
         border.orderTarget = undefined;
         border.orderPath = undefined;
+        border.orderPurpose = undefined;
+        border.orderIssuedAt = undefined;
       }
     });
   if (game.campaign.elapsedHours >= 240)

@@ -7,6 +7,7 @@ export type KernelIssueOrder = (
   source: SiteState,
   target: SiteState,
   count: number,
+  purpose?: "combat" | "logistics",
 ) => number | void;
 
 const teamStatusFactor = (game: GameData, team: Team, key: "production") =>
@@ -169,8 +170,8 @@ export function runProductionCycles(
         )
           continue;
         const target = game.sites[source.orderTarget];
-        const preparationRoute =
-          !game.campaign.warUnlocked &&
+        const logisticsRoute =
+          source.orderPurpose === "logistics" &&
           target?.team === source.team &&
           (source.type === "dorm" || source.type === "dining") &&
           target.type !== "dorm" &&
@@ -178,10 +179,12 @@ export function runProductionCycles(
         if (
           !target ||
           target.destroyed ||
-          (target.team === source.team && !preparationRoute)
+          (target.team === source.team && !logisticsRoute)
         ) {
           source.orderTarget = undefined;
           source.orderPath = undefined;
+          source.orderPurpose = undefined;
+          source.orderIssuedAt = undefined;
           continue;
         }
         const idle = game.units.filter(
@@ -192,6 +195,7 @@ export function runProductionCycles(
           source,
           target,
           Math.ceil(idle * (source.dispatchRatio ?? 0.6)),
+          source.orderPurpose ?? "combat",
         );
       }
     }

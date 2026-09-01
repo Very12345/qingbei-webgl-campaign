@@ -89,6 +89,7 @@ export type PlannedAiOrder = {
   sourceId: number;
   targetId: number;
   count: number;
+  purpose?: "combat" | "logistics";
 };
 
 export type PlannedAiCamp = {
@@ -161,7 +162,12 @@ const planPreparationOrders = (
     )[0];
     if (!target) continue;
     const count = Math.max(5, (idleCounts.get(source.id) ?? 0) - 6);
-    orders.push({ sourceId: source.id, targetId: target.id, count });
+    orders.push({
+      sourceId: source.id,
+      targetId: target.id,
+      count,
+      purpose: "logistics",
+    });
     stagingLoad.set(target.id, (stagingLoad.get(target.id) ?? 0) + count);
   }
   return {
@@ -239,19 +245,55 @@ export function planStrategicOrders(
       (game.campaign.ai.difficultyByTeam?.[enemy] ??
         game.campaign.ai.difficulty) === "hard",
     baseProfile = difficultyProfileForPlanner(difficulty, peerHard),
+    hostileStrength = [...hostileGroups.values()].reduce(
+      (sum, strength) => sum + strength,
+      0,
+    ),
+    casualtyPressure =
+      game.deaths[team] /
+      Math.max(1, game.deaths[enemy]),
+    stalemateEscalation = Math.max(
+      0,
+      Math.min(
+        1,
+        (game.deaths.pku + game.deaths.thu - 18_000) / 18_000,
+      ),
+    ),
+    adaptiveResistance =
+      difficulty === "hard" &&
+      !peerHard &&
+      (opponentAiEnabled ||
+        hostileGroups.size >= 2 ||
+        hostileStrength >= 20 ||
+        (game.deaths[team] >= 120 && casualtyPressure >= 0.9)),
     siteDelta = friendlySites.length - enemySites.length,
     initialEnemySites =
       enemy === "pku"
         ? game.campaign.initialPkuSites
         : game.campaign.initialThuSites,
     profile = peerHard
-      ? {
-          ...baseProfile,
-          waveLimit: siteDelta > 2 ? 0 : 1,
-          dispatchRatio: siteDelta < -2 ? 0.68 : siteDelta > 2 ? 0.35 : 0.44,
-        }
-      : difficulty === "hard" && initialEnemySites >= 75
-        ? { ...baseProfile, waveLimit: 8 }
+      ? stalemateEscalation >= 0.72
+        ? {
+            ...baseProfile,
+            waveLimit: 3,
+            dispatchRatio: 0.72,
+          }
+        : {
+            ...baseProfile,
+            waveLimit: siteDelta > 2 ? 0 : 1,
+            dispatchRatio:
+              siteDelta < -2 ? 0.68 : siteDelta > 2 ? 0.35 : 0.44,
+          }
+      : difficulty === "hard"
+        ? adaptiveResistance
+          ? {
+              ...baseProfile,
+              waveLimit: casualtyPressure > 1.15 ? 2 : 3,
+              dispatchRatio: casualtyPressure > 1.15 ? 0.94 : 0.88,
+            }
+          : initialEnemySites >= 75
+            ? { ...baseProfile, waveLimit: 8 }
+            : baseProfile
         : difficulty === "standard" && enemySites.length <= 10
         ? {
             ...baseProfile,
@@ -259,12 +301,36 @@ export function planStrategicOrders(
             dispatchRatio: 0.7,
           }
         : baseProfile,
+    staleAfterHours =
+      difficulty === "hard"
+        ? adaptiveResistance
+          ? 6
+          : 12
+        : difficulty === "standard"
+          ? 24
+          : 48,
+    isStaleCombatOrder = (site: SiteState) => {
+      if (site.orderTarget == null || site.orderPurpose === "logistics")
+        return false;
+      const target = game.sites[site.orderTarget];
+      return (
+        !!target &&
+        target.team === enemy &&
+        game.campaign.elapsedHours - (site.orderIssuedAt ?? 0) >=
+          staleAfterHours
+      );
+    },
     sources = friendlySites
       .filter(
         (site) =>
+          !(
+            (site.type === "dorm" || site.type === "dining") &&
+            site.orderPurpose === "logistics"
+          ) &&
           (site.orderTarget == null ||
             game.sites[site.orderTarget]?.team === team ||
-            site.type === "camp") &&
+            site.type === "camp" ||
+            isStaleCombatOrder(site)) &&
           idleAt(site) >=
             (site.type === "dorm" || site.type === "dining"
               ? profile.minimumSource + 8
@@ -275,14 +341,115 @@ export function planStrategicOrders(
     committedByTarget = new Map<number, number>(),
     orders: PlannedAiOrder[] = [],
     reinforcementSources = new Set<number>();
-  if (peerHard && siteDelta > 2)
+  if (peerHard && stalemateEscalation < 0.72 && siteDelta > 2)
     for (const site of friendlySites) {
       const target = site.orderTarget == null ? undefined : game.sites[site.orderTarget];
       if (!target || target.team === team) continue;
       site.orderTarget = undefined;
       site.orderPath = undefined;
+      site.orderPurpose = undefined;
+      site.orderIssuedAt = undefined;
     }
-  let unsafeRouteNeeded = false;
+  for (const site of friendlySites) {
+    if (site.orderTarget == null) continue;
+    const target = game.sites[site.orderTarget];
+    if (target && !target.destroyed) continue;
+    site.orderTarget = undefined;
+    site.orderPath = undefined;
+    site.orderPurpose = undefined;
+    site.orderIssuedAt = undefined;
+  }
+  for (const site of friendlySites) {
+    if (!isStaleCombatOrder(site) || site.orderTarget == null) continue;
+    const hasCommittedUnits = game.units.some(
+      (unit) =>
+        unit.team === team &&
+        unit.siteId === site.id &&
+        unit.targetSiteId === site.orderTarget,
+    );
+    if (hasCommittedUnits || idleAt(site) >= profile.minimumSource) continue;
+    site.orderTarget = undefined;
+    site.orderPath = undefined;
+    site.orderPurpose = undefined;
+    site.orderIssuedAt = undefined;
+  }
+  const logisticsStaging = friendlySites.filter(
+      (site) =>
+        site.type !== "dorm" &&
+        site.type !== "dining" &&
+        site.type !== "camp" &&
+        !hostileGroups.has(site.id),
+    ),
+    logisticsLoad = new Map(
+      logisticsStaging.map((site) => [
+        site.id,
+        idleAt(site) +
+          game.units.filter(
+            (unit) => unit.team === team && unit.targetSiteId === site.id,
+          ).length,
+      ]),
+    ),
+    logisticsLimit =
+      difficulty === "hard" ? 8 : difficulty === "standard" ? 4 : 2,
+    logisticsReserve =
+      difficulty === "hard" ? 5 : difficulty === "standard" ? 9 : 14;
+  let logisticsCreated = 0;
+  for (const source of friendlySites
+    .filter(
+      (site) =>
+        (site.type === "dorm" || site.type === "dining") &&
+        (site.orderTarget == null ||
+          (site.orderPurpose === "logistics" &&
+            (game.sites[site.orderTarget]?.team !== team ||
+              hostileGroups.has(site.orderTarget)))) &&
+        (idleAt(site) > logisticsReserve || hostileGroups.has(site.id)),
+    )
+    .sort(
+      (a, b) =>
+        (hostileGroups.get(b.id) ?? 0) - (hostileGroups.get(a.id) ?? 0) ||
+        idleAt(b) - idleAt(a),
+    )) {
+    if (logisticsCreated >= logisticsLimit) break;
+    const target = [...logisticsStaging].sort(
+      (a, b) =>
+        Math.hypot(a.x - source.x, a.z - source.z) +
+        (logisticsLoad.get(a.id) ?? 0) * 0.34 -
+        Math.hypot(b.x - source.x, b.z - source.z) -
+        (logisticsLoad.get(b.id) ?? 0) * 0.34,
+    )[0];
+    if (!target) continue;
+    const count = Math.max(
+      1,
+      idleAt(source) - (hostileGroups.has(source.id) ? 2 : logisticsReserve),
+    );
+    orders.push({
+      sourceId: source.id,
+      targetId: target.id,
+      count,
+      purpose: "logistics",
+    });
+    reinforcementSources.add(source.id);
+    logisticsLoad.set(target.id, (logisticsLoad.get(target.id) ?? 0) + count);
+    logisticsCreated++;
+  }
+  const unsafeGoalKey = `${team}:unsafe_breakthrough`,
+    allowUnsafeBreakthrough =
+      (game.campaign.ai.failedGoals[unsafeGoalKey] ?? 0) >= 3;
+  let unsafeRouteNeeded = false,
+    unsafeRouteBlocked = false,
+    safeRouteFound = false;
+  for (const unit of game.units) {
+    if (
+      unit.team !== team ||
+      unit.targetSiteId == null ||
+      game.sites[unit.targetSiteId]?.team !== enemy
+    )
+      continue;
+    committedByTarget.set(
+      unit.targetSiteId,
+      (committedByTarget.get(unit.targetSiteId) ?? 0) + unit.strength,
+    );
+  }
   const threatened = [...hostileGroups]
     .map(([targetId, strength]) => ({
       target: game.sites[targetId],
@@ -373,14 +540,26 @@ export function planStrategicOrders(
   }
   for (const source of sources) {
     if (reinforcementSources.has(source.id)) continue;
-    if (orders.length >= profile.waveLimit) break;
+    if (
+      orders.filter((order) => order.purpose !== "logistics").length >=
+      profile.waveLimit
+    )
+      break;
     const available = idleAt(source),
       candidates = enemySites
         .map((target) => {
           const defenders = defendersAt(target),
             required = Math.max(3, Math.ceil(defenders * 1.55 + 4)),
             productionValue =
-              target.type === "dorm" ? 80 : target.type === "dining" ? 55 : 0,
+              target.type === "dorm"
+                ? adaptiveResistance
+                  ? 150
+                  : 80
+                : target.type === "dining"
+                  ? adaptiveResistance
+                    ? 110
+                    : 55
+                  : 0,
             recaptureValue =
               (team === "pku" && target.displayName?.startsWith("清华燕园校区·")) ||
               (team === "thu" && target.displayName?.startsWith("北大清华园校区·"))
@@ -388,20 +567,37 @@ export function planStrategicOrders(
                 : 0,
             riskPenalty =
               enemyProduction.length > 2 && isHighRiskEventTarget(target)
-                ? 180
+                ? adaptiveResistance
+                  ? 280
+                  : 180
                 : 0,
             distance = Math.hypot(target.x - source.x, target.z - source.z),
-            concentrationPenalty = assignedTargets.has(target.id) ? 20 : 0,
             committed = committedByTarget.get(target.id) ?? 0,
-            concentrationBonus = committed > 0 && committed < required ? 48 : 0,
+            concentrationPenalty =
+              committed >= required || assignedTargets.has(target.id)
+                ? adaptiveResistance
+                  ? 180
+                  : 20
+                : 0,
+            concentrationBonus =
+              committed > 0 && committed < required
+                ? adaptiveResistance
+                  ? 140
+                  : 48
+                : 0,
+            staleSameTargetPenalty =
+              source.orderTarget === target.id && isStaleCombatOrder(source)
+                ? 120
+                : 0,
             score =
               productionValue +
               recaptureValue -
               riskPenalty -
               distance -
-              defenders * 2.2 -
+              defenders * (adaptiveResistance ? 4.8 : 2.2) -
               concentrationPenalty +
-              concentrationBonus +
+              concentrationBonus -
+              staleSameTargetPenalty +
               (random() - 0.5) * profile.randomness;
           return { target, defenders, required, score };
         })
@@ -424,12 +620,19 @@ export function planStrategicOrders(
       for (const candidate of candidates) {
         if (!routeIsUnsafe(pathfinder, source, candidate.target, riskSites)) {
           target = candidate;
+          safeRouteFound = true;
           break;
         }
         unsafeFallback ??= candidate;
       }
-      target ??= unsafeFallback;
-      unsafeRouteNeeded ||= target === unsafeFallback && !!unsafeFallback;
+      if (!target && unsafeFallback) {
+        unsafeRouteNeeded = true;
+        if (adaptiveResistance && !allowUnsafeBreakthrough) {
+          unsafeRouteBlocked = true;
+          continue;
+        }
+        target = unsafeFallback;
+      }
     }
     if (!target) continue;
     const alreadyCommitted = committedByTarget.get(target.target.id) ?? 0,
@@ -449,6 +652,13 @@ export function planStrategicOrders(
     const committed = alreadyCommitted + count;
     committedByTarget.set(target.target.id, committed);
     if (committed >= target.required) assignedTargets.add(target.target.id);
+  }
+  if (adaptiveResistance) {
+    if (unsafeRouteBlocked && !safeRouteFound)
+      game.campaign.ai.failedGoals[unsafeGoalKey] =
+        (game.campaign.ai.failedGoals[unsafeGoalKey] ?? 0) + 1;
+    else if (safeRouteFound || allowUnsafeBreakthrough)
+      game.campaign.ai.failedGoals[unsafeGoalKey] = 0;
   }
   const camps: PlannedAiCamp[] = [];
   if (

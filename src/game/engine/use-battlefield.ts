@@ -2376,6 +2376,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       commandLineMaterials.splice(0);
       gameRef.current.sites.forEach((s) => {
         if (s.destroyed) return;
+        const renderedTargets = new Set<number>();
         const renderSegment = (
           targetId: number,
           path: [number, number][] | undefined,
@@ -2383,6 +2384,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         ) => {
           const t = gameRef.current.sites[targetId];
           if (!t || t.destroyed) return;
+          renderedTargets.add(targetId);
           const troops = intent
             ? 0
             : gameRef.current.units
@@ -2426,6 +2428,25 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               s.plannedOrderPaths?.[playerTeamRef.current],
               true,
             );
+        } else {
+          const movingTargets = new Map<
+            number,
+            [number, number][] | undefined
+          >();
+          for (const unit of gameRef.current.units) {
+            if (
+              unit.team !== s.team ||
+              unit.siteId !== s.id ||
+              unit.targetSiteId == null ||
+              unit.retreating ||
+              renderedTargets.has(unit.targetSiteId)
+            )
+              continue;
+            if (!movingTargets.has(unit.targetSiteId))
+              movingTargets.set(unit.targetSiteId, unit.path);
+          }
+          for (const [targetId, path] of movingTargets)
+            renderSegment(targetId, path, false);
         }
       });
     };

@@ -146,6 +146,38 @@ for (const team of ["pku", "thu"] as const) {
   );
 }
 
+preparationKernel.run(68, 250);
+for (const team of ["pku", "thu"] as const) {
+  const ownedProductionSites = preparationState.sites.filter(
+      (site) =>
+        site.team === team &&
+        !site.destroyed &&
+        (site.type === "dorm" || site.type === "dining"),
+    ),
+    routed = ownedProductionSites.filter(
+      (site) => site.orderTarget != null,
+    ).length,
+    boundIdle = ownedProductionSites.reduce(
+      (total, site) =>
+        total +
+        preparationState.units.filter(
+          (unit) =>
+            unit.team === team &&
+            unit.siteId === site.id &&
+            unit.targetSiteId == null,
+        ).length,
+      0,
+    );
+  assert.ok(
+    routed >= ownedProductionSites.length * 0.75,
+    `${team} AI dropped too many production evacuation routes after war began`,
+  );
+  assert.ok(
+    boundIdle / Math.max(1, ownedProductionSites.length) <= 9,
+    `${team} AI allowed wartime production sites to clog again`,
+  );
+}
+
 const asymmetricObserverState = makeFreshGame();
 asymmetricObserverState.campaign.ai.difficultyByTeam = {
   pku: "casual",

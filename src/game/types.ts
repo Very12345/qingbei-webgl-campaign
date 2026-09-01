@@ -28,6 +28,8 @@ export type SiteState = {
   supply: number;
   orderTarget?: number;
   orderPath?: [number, number][];
+  orderPurpose?: "combat" | "logistics";
+  orderIssuedAt?: number;
   plannedOrderTargets?: Partial<Record<Team, number>>;
   plannedOrderPaths?: Partial<Record<Team, [number, number][]>>;
   dispatchRatio?: number;
