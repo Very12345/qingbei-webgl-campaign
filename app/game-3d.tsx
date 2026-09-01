@@ -380,6 +380,9 @@ export default function Game3D() {
     useState<BattlefieldToolMode>(null);
   const [decisionZoom, setDecisionZoom] = useState(1);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>("standard");
+  const [observerAiDifficulty, setObserverAiDifficulty] = useState<
+    Record<Team, AiDifficulty>
+  >({ pku: "standard", thu: "standard" });
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
     (localStorage.getItem("qingbei-quality-mode") as QualityMode) || "auto",
   );
@@ -1400,6 +1403,7 @@ export default function Game3D() {
   const newGame = (
     team: Team = playerTeam,
     observeBothAi = false,
+    observerDifficulties = observerAiDifficulty,
   ) => {
     clearUnfinishedGame();
     activePlayerSaveRef.current = null;
@@ -1412,8 +1416,8 @@ export default function Game3D() {
     gameRef.current = makeFreshGame();
     gameRef.current.campaign.ai.difficulty = aiDifficulty;
     gameRef.current.campaign.ai.difficultyByTeam = {
-      pku: aiDifficulty,
-      thu: aiDifficulty,
+      pku: observeBothAi ? observerDifficulties.pku : aiDifficulty,
+      thu: observeBothAi ? observerDifficulties.thu : aiDifficulty,
     };
     sceneApi.current?.sync();
     sceneApi.current?.clearUnitSelection();
@@ -4112,6 +4116,8 @@ export default function Game3D() {
           setOpenToLan={setOpenToLan}
           aiDifficulty={aiDifficulty}
           setAiDifficulty={setAiDifficulty}
+          observerAiDifficulty={observerAiDifficulty}
+          setObserverAiDifficulty={setObserverAiDifficulty}
           newGame={newGame}
           autosave={autosave}
           saves={saves}

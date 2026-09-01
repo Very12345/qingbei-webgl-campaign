@@ -145,3 +145,31 @@ for (const team of ["pku", "thu"] as const) {
     `${team} hard AI left too many units blocking dormitory production: ${boundIdle}`,
   );
 }
+
+const asymmetricObserverState = makeFreshGame();
+asymmetricObserverState.campaign.ai.difficultyByTeam = {
+  pku: "casual",
+  thu: "hard",
+};
+const asymmetricObserverKernel = createKernel(asymmetricObserverState, {
+  aiTeams: ["pku", "thu"],
+  mutateInitialState: true,
+});
+asymmetricObserverKernel.dispatch({ type: "set_time_scale", value: 16 });
+asymmetricObserverKernel.run(82, 250);
+const preparationRouteCount = (team: "pku" | "thu") =>
+  asymmetricObserverState.sites.filter(
+    (site) =>
+      site.team === team &&
+      (site.type === "dorm" || site.type === "dining") &&
+      site.orderTarget != null,
+  ).length;
+assert.equal(
+  preparationRouteCount("pku"),
+  0,
+  "casual PKU AI unexpectedly used hard preparation behavior",
+);
+assert.ok(
+  preparationRouteCount("thu") >= 27,
+  "hard THU AI did not retain its independent observer difficulty",
+);

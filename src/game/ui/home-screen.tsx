@@ -73,7 +73,13 @@ type HomeScreenProps = {
   setOpenToLan: (open: boolean) => void;
   aiDifficulty: AiDifficulty;
   setAiDifficulty: (difficulty: AiDifficulty) => void;
-  newGame: (team: Team, observeBothAi?: boolean) => void;
+  observerAiDifficulty: Record<Team, AiDifficulty>;
+  setObserverAiDifficulty: (difficulty: Record<Team, AiDifficulty>) => void;
+  newGame: (
+    team: Team,
+    observeBothAi?: boolean,
+    observerDifficulties?: Record<Team, AiDifficulty>,
+  ) => void;
   autosave: Snapshot | null;
   saves: Snapshot[];
   loadGame: (save: Snapshot, team: Team) => void;
@@ -123,6 +129,8 @@ export function HomeScreen(props: HomeScreenProps) {
     setOpenToLan,
     aiDifficulty,
     setAiDifficulty,
+    observerAiDifficulty,
+    setObserverAiDifficulty,
     newGame,
     autosave,
     saves,
@@ -478,6 +486,10 @@ export function HomeScreen(props: HomeScreenProps) {
                   const value = event.target.value;
                   if (value === "ai-vs-ai") {
                     setAiObserverMode(true);
+                    setObserverAiDifficulty({
+                      pku: aiDifficulty,
+                      thu: aiDifficulty,
+                    });
                     setOpenToLan(false);
                   } else {
                     setAiObserverMode(false);
@@ -502,23 +514,50 @@ export function HomeScreen(props: HomeScreenProps) {
               </select>
               {aiObserverMode && <small>观察模式由本机同时运行双方AI</small>}
             </label>
-            <label>
-              <span>人机难度</span>
-              <select
-                value={aiDifficulty}
-                onChange={(event) =>
-                  setAiDifficulty(event.target.value as AiDifficulty)
-                }
-              >
-                <option value="casual">休闲</option>
-                <option value="standard">标准</option>
-                <option value="hard">困难</option>
-              </select>
-            </label>
+            {aiObserverMode ? (
+              <>
+                {(["pku", "thu"] as Team[]).map((team) => (
+                  <label key={team}>
+                    <span>{team === "pku" ? "北大AI难度" : "清华AI难度"}</span>
+                    <select
+                      value={observerAiDifficulty[team]}
+                      onChange={(event) =>
+                        setObserverAiDifficulty({
+                          ...observerAiDifficulty,
+                          [team]: event.target.value as AiDifficulty,
+                        })
+                      }
+                    >
+                      <option value="casual">休闲</option>
+                      <option value="standard">标准</option>
+                      <option value="hard">困难</option>
+                    </select>
+                  </label>
+                ))}
+              </>
+            ) : (
+              <label>
+                <span>人机难度</span>
+                <select
+                  value={aiDifficulty}
+                  onChange={(event) =>
+                    setAiDifficulty(event.target.value as AiDifficulty)
+                  }
+                >
+                  <option value="casual">休闲</option>
+                  <option value="standard">标准</option>
+                  <option value="hard">困难</option>
+                </select>
+              </label>
+            )}
             <button
               className="new-game-button"
               onClick={() => {
-                newGame(newGameTeam, aiObserverMode);
+                newGame(
+                  newGameTeam,
+                  aiObserverMode,
+                  observerAiDifficulty,
+                );
                 if (openToLan) void createLanHost();
               }}
             >
