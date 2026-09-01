@@ -10,6 +10,7 @@ import type { AiDifficulty, GameData, SiteState, Stance, Team } from "../types";
 import { navIndex, type KernelNavGrid } from "./navigation";
 
 export type ProgressionAction =
+  | { type: "decision_start"; team: Team; id: string }
   | { type: "research_start"; team: Team; id: ResearchId }
   | { type: "production_start"; team: Team; id: ResearchId }
   | { type: "production_stop"; team: Team; id: ResearchId }
@@ -23,6 +24,26 @@ export function applyProgressionAction(
   action: ProgressionAction,
 ) {
   const { team } = action;
+  if (action.type === "decision_start") {
+    const decision = DECISIONS.find(
+      (candidate) => candidate.id === action.id && candidate.team === team,
+    );
+    if (
+      !decision ||
+      game.campaign.decisions.active[team] ||
+      !decisionAvailable(decision, game.campaign) ||
+      game.resources[team] < decision.cost
+    )
+      return false;
+    game.resources[team] -= decision.cost;
+    game.campaign.decisions.active[team] = {
+      id: decision.id,
+      team,
+      startedAt: game.campaign.elapsedHours,
+      completesAt: game.campaign.elapsedHours + decision.days * 24,
+    };
+    return true;
+  }
   if (action.type === "mobilize") {
     for (const site of game.sites)
       if (site.team === team && !site.destroyed) site.stance = action.stance;

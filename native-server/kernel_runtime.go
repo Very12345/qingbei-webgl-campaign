@@ -148,3 +148,11 @@ func (instance *jsKernelInstance) run(iterations int, realMilliseconds float64) 
 func (instance *jsKernelInstance) snapshot() (map[string]any, error) {
 	return instance.call("snapshot")
 }
+
+func (instance *jsKernelInstance) networkFull() (map[string]any, error) {
+	return instance.call("networkFull")
+}
+
+func (instance *jsKernelInstance) networkDelta() (map[string]any, error) {
+	return instance.call("networkDelta")
+}

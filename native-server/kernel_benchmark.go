@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,7 +18,17 @@ type kernelBenchmarkSample struct {
 	Ratios       map[string]float64
 	ActiveRoutes int
 	Camps        int
+	Routes       []kernelRouteSample
 	Outcome      any
+}
+
+type kernelRouteSample struct {
+	Team       string
+	Source     string
+	Target     string
+	Committed  int
+	Waypoints  int
+	PathSample [][2]float64
 }
 
 type kernelBenchmarkResult struct {
@@ -133,8 +144,10 @@ func benchmarkConfiguration(scenario string) ([]string, map[string]string, error
 func summarizeKernelSnapshot(date string, snapshot map[string]any) kernelBenchmarkSample {
 	state := snapshot["state"].(map[string]any)
 	sites := map[string]int{"pku": 0, "thu": 0}
+	siteByID := make(map[int]map[string]any)
 	for _, raw := range state["sites"].([]any) {
 		site := raw.(map[string]any)
+		siteByID[int(site["id"].(float64))] = site
 		if destroyed, _ := site["destroyed"].(bool); destroyed {
 			continue
 		}
@@ -143,14 +156,71 @@ func summarizeKernelSnapshot(date string, snapshot map[string]any) kernelBenchma
 	}
 	population := map[string]int{"pku": 0, "thu": 0}
 	activeRoutes := 0
+	type routeGroup struct {
+		sourceID int
+		targetID int
+		people   int
+		path     []any
+	}
+	routeGroups := make(map[string]*routeGroup)
 	for _, raw := range state["units"].([]any) {
 		unit := raw.(map[string]any)
 		team, _ := unit["team"].(string)
 		strength, _ := unit["strength"].(float64)
 		population[team] += int(strength)
-		if _, moving := unit["targetSiteId"]; moving {
+		if targetRaw, moving := unit["targetSiteId"]; moving {
 			activeRoutes++
+			sourceID := int(unit["siteId"].(float64))
+			targetID := int(targetRaw.(float64))
+			key := fmt.Sprintf("%d>%d", sourceID, targetID)
+			group := routeGroups[key]
+			if group == nil {
+				group = &routeGroup{sourceID: sourceID, targetID: targetID}
+				routeGroups[key] = group
+			}
+			group.people += int(strength)
+			if group.path == nil {
+				if path, ok := unit["path"].([]any); ok {
+					group.path = path
+				}
+			}
 		}
+	}
+	routes := make([]kernelRouteSample, 0, len(routeGroups))
+	for _, group := range routeGroups {
+		source := siteByID[group.sourceID]
+		target := siteByID[group.targetID]
+		nameOf := func(site map[string]any) string {
+			if site == nil {
+				return ""
+			}
+			if display, _ := site["displayName"].(string); display != "" {
+				return display
+			}
+			name, _ := site["name"].(string)
+			return name
+		}
+		team, _ := source["team"].(string)
+		route := kernelRouteSample{Team: team, Source: nameOf(source), Target: nameOf(target), Committed: group.people, Waypoints: len(group.path)}
+		step := max(1, len(group.path)/6)
+		for index, rawPoint := range group.path {
+			if index != 0 && index != len(group.path)-1 && index%step != 0 {
+				continue
+			}
+			point, ok := rawPoint.([]any)
+			if !ok || len(point) < 2 {
+				continue
+			}
+			route.PathSample = append(route.PathSample, [2]float64{point[0].(float64), point[1].(float64)})
+			if len(route.PathSample) >= 8 {
+				break
+			}
+		}
+		routes = append(routes, route)
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Committed > routes[j].Committed })
+	if len(routes) > 12 {
+		routes = routes[:12]
 	}
 	camps := 0
 	for _, raw := range state["sites"].([]any) {
@@ -178,6 +248,7 @@ func summarizeKernelSnapshot(date string, snapshot map[string]any) kernelBenchma
 		Ratios:       ratios,
 		ActiveRoutes: activeRoutes,
 		Camps:        camps,
+		Routes:       routes,
 		Outcome:      campaign["outcome"],
 	}
 }

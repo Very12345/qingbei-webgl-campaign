@@ -18,6 +18,7 @@ import { PerformanceController } from "../../performance-controller";
 import { EVENT_CARDS } from "../events/event-cards";
 import {
   classifyIntent as kernelClassifyIntent,
+  createKernel,
   difficultyProfile as kernelDifficultyProfile,
   isHighRiskEventTarget as kernelIsHighRiskEventTarget,
   KernelPathfinder,
@@ -442,6 +443,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       };
     const navGrid = buildNavGrid(regions.main),
       kernelPathfinder = new KernelPathfinder(navGrid),
+      sharedKernel = createKernel(gameRef.current, {
+        navGrid,
+        fixedStepMilliseconds: 50,
+        aiTeams: [],
+        mutateInitialState: true,
+      }),
+      kernelOwnsSimulation = true,
       navIndex = (grid: NavGrid, x: number, z: number) => {
         const gx = Math.floor((x - grid.minX) / grid.cell),
           gz = Math.floor((z - grid.minZ) / grid.cell);
@@ -5295,6 +5303,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       lastCombatParticleAt = 0,
       lastBattleAlertAt = 0;
     const combatTimer = resilientSetInterval(() => {
+      if (kernelOwnsSimulation) return;
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -6264,6 +6273,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       };
     publishAiBenchmark();
     const campaignTimer = resilientSetInterval(() => {
+      if (kernelOwnsSimulation) return;
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -8606,6 +8616,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
     };
     const aiTimer = resilientSetInterval(() => {
+      if (kernelOwnsSimulation) return;
       if (screenRef.current === "home" || pauseOpenRef.current) return;
       if (lanChannelsRef.current.size && !lanHostRef.current) return;
       if (
@@ -8644,7 +8655,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       nextLodRefreshAt = 0,
       nextUnitSimulationAt = 0,
       lastUnitSimulationAt = last,
-      unitSimulationTick = 0;
+      unitSimulationTick = 0,
+      nextKernelAiSyncAt = 0,
+      nextKernelVisualSyncAt = 0,
+      kernelTimeScale = -1,
+      kernelUnitSignature = "",
+      kernelSiteSignature = "",
+      kernelOrderSignature = "",
+      kernelEventCursor = gameRef.current.campaign.eventHistory?.length ?? 0,
+      kernelLastBattleAlertId = gameRef.current.campaign.battleAlerts?.at(-1)?.id ?? -1,
+      kernelOutcomeAt = -1;
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
@@ -8856,9 +8876,87 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         }
       }
-      g.campaign.elapsedHours += dt * 0.18 * timeScaleRef.current;
-      if (autoDayRef.current) {
-        g.timeOfDay = (8 + g.campaign.elapsedHours) % 24;
+      const authoritativeGuest =
+        lanChannelsRef.current.size > 0 && !lanHostRef.current;
+      if (kernelOwnsSimulation && !authoritativeGuest) {
+        if (kernelTimeScale !== timeScaleRef.current) {
+          kernelTimeScale = timeScaleRef.current;
+          sharedKernel.dispatch({ type: "set_time_scale", value: kernelTimeScale });
+        }
+        if (now >= nextKernelAiSyncAt) {
+          nextKernelAiSyncAt = now + 500;
+          const humanTeams = new Set<Team>([
+            ...(dedicatedServerHostRef.current ? [] : [playerTeamRef.current]),
+            ...[...lanChannelIdentityRef.current.values()].map(
+              (identity) => identity.team,
+            ),
+          ]);
+          for (const team of ["pku", "thu"] as Team[])
+            sharedKernel.dispatch({
+              type: "set_ai_enabled",
+              team,
+              enabled: !humanTeams.has(team),
+            });
+        }
+        sharedKernel.advanceOnly(Math.min(250, Math.max(1, rawDelta * 1000)));
+        if (now >= nextKernelVisualSyncAt) {
+          nextKernelVisualSyncAt = now + 200;
+          const nextUnitSignature = `${g.units.length}/${g.units.reduce(
+              (sum, unit) =>
+                sum + unit.id * 3 + (unit.transport ? 7 : 0) + (unit.skin ? 11 : 0),
+              0,
+            )}`,
+            nextSiteSignature = g.sites
+              .map((site) => `${site.id}:${site.team}:${site.destroyed ? 1 : 0}`)
+              .join("|"),
+            nextOrderSignature = g.sites
+              .map((site) => `${site.id}>${site.orderTarget ?? ""}`)
+              .join("|");
+          if (nextUnitSignature !== kernelUnitSignature) {
+            kernelUnitSignature = nextUnitSignature;
+            rebuildUnits();
+          }
+          if (nextSiteSignature !== kernelSiteSignature) {
+            kernelSiteSignature = nextSiteSignature;
+            rebuildBuildings();
+          }
+          if (nextOrderSignature !== kernelOrderSignature) {
+            kernelOrderSignature = nextOrderSignature;
+            rebuildCommandLines();
+          }
+          const history = g.campaign.eventHistory ?? [];
+          while (kernelEventCursor < history.length) {
+            const { atHour: _atHour, ...event } = history[kernelEventCursor++];
+            pushEvent(event);
+          }
+          const alerts = g.campaign.battleAlerts ?? [];
+          for (const alert of alerts) {
+            if (alert.id <= kernelLastBattleAlertId) continue;
+            spawnCombatEffect(alert.x, alert.z);
+            for (const unit of unitsNearPoint(alert.x, alert.z, 2.8))
+              unitFightingUntil.set(unit.id, now + 420);
+          }
+          kernelLastBattleAlertId = alerts.at(-1)?.id ?? kernelLastBattleAlertId;
+          if (
+            g.campaign.outcome &&
+            g.campaign.outcome.atHour !== kernelOutcomeAt
+          ) {
+            kernelOutcomeAt = g.campaign.outcome.atHour;
+            const winner = g.campaign.outcome.winner;
+            setVictoryBroadcast({
+              winner,
+              title:
+                winner === "pku"
+                  ? "胜利广播：北大全面胜利"
+                  : `胜利广播：${g.campaign.thuFactionName}全面胜利`,
+              body: `${g.campaign.outcome.reason}；地图仍可继续游玩。`,
+            });
+          }
+        }
+      } else if (!kernelOwnsSimulation && !authoritativeGuest) {
+        g.campaign.elapsedHours += dt * 0.18 * timeScaleRef.current;
+        if (autoDayRef.current)
+          g.timeOfDay = (8 + g.campaign.elapsedHours) % 24;
       }
       const angle = ((g.timeOfDay - 6) / 24) * Math.PI * 2,
         day = THREE.MathUtils.smoothstep(Math.sin(angle), -0.12, 0.35),
@@ -9013,6 +9111,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           const glow = mesh.userData.glow as THREE.Mesh;
           glow.visible = fighting || selectedUnitIds.has(u.id) || night > 0.34;
           glow.scale.setScalar(fighting ? 1 + Math.sin(phase * 2) * 0.16 : 1);
+        }
+        if (kernelOwnsSimulation) {
+          if (mesh) {
+            mesh.position.set(
+              u.x,
+              terrainHeight(regionForX(u.x), u.x, u.z) +
+                (insideWater(u.x, u.z) ? 0.1 : 0),
+              u.z,
+            );
+            if (dist > 0.02) mesh.rotation.y = Math.atan2(dx, dz);
+          }
+          return;
         }
         if (fighting || !simulateUnits) return;
         const distanceToView = Math.hypot(

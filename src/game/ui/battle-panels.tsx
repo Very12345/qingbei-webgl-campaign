@@ -127,7 +127,7 @@ export function SettingsDrawer({
             )
           }
         />
-        {timeScaleLocked && <small>联机时间倍率由主机控制</small>}
+        {timeScaleLocked && <small>联机时间倍率由服务器统一控制</small>}
       </label>
       <label>
         <span>画质模式</span>

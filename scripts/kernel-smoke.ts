@@ -1,5 +1,6 @@
 import { makeFreshGame } from "../src/game/create-game";
 import { createKernel } from "../src/game/kernel";
+import { strict as assert } from "node:assert";
 
 const state = makeFreshGame();
 state.campaign.warUnlocked = true;
@@ -27,3 +28,46 @@ console.log(
     2,
   ),
 );
+
+const commandState = makeFreshGame();
+commandState.campaign.warUnlocked = true;
+const commandKernel = createKernel(commandState),
+  source = commandState.sites.find((site) =>
+    commandState.units.some(
+      (unit) => unit.team === "pku" && unit.siteId === site.id,
+    ),
+  )!,
+  target = commandState.sites.find((site) => site.team === "thu")!;
+commandKernel.networkFull();
+commandKernel.dispatch({
+  type: "order_site",
+  team: "pku",
+  sourceId: source.id,
+  targetId: target.id,
+  count: 5,
+});
+commandKernel.advanceOnly(100);
+let commandSnapshot = commandKernel.snapshot();
+assert.equal(
+  commandSnapshot.state.units.filter(
+    (unit) => unit.team === "pku" && unit.targetSiteId === target.id,
+  ).length,
+  5,
+  "authoritative order action did not select exactly five units",
+);
+commandKernel.dispatch({
+  type: "configure_site",
+  team: "pku",
+  siteId: source.id,
+  orderTarget: null,
+});
+commandKernel.advanceOnly(100);
+commandSnapshot = commandKernel.snapshot();
+assert.equal(
+  commandSnapshot.state.sites[source.id].orderTarget,
+  undefined,
+  "authoritative site action did not clear the route",
+);
+const delta = commandKernel.networkDelta();
+assert.equal(delta.type, "state_delta");
+assert.ok(delta.revision > 0);

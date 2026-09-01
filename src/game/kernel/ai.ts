@@ -177,8 +177,8 @@ export function planStrategicOrders(
     profile = peerHard
       ? {
           ...baseProfile,
-          waveLimit: siteDelta > 5 ? 0 : 1,
-          dispatchRatio: siteDelta < -5 ? 0.68 : siteDelta > 5 ? 0.35 : 0.44,
+          waveLimit: siteDelta > 2 ? 0 : 1,
+          dispatchRatio: siteDelta < -2 ? 0.68 : siteDelta > 2 ? 0.35 : 0.44,
         }
       : difficulty === "hard" && initialEnemySites >= 75
         ? { ...baseProfile, waveLimit: 8 }
@@ -205,7 +205,7 @@ export function planStrategicOrders(
     committedByTarget = new Map<number, number>(),
     orders: PlannedAiOrder[] = [],
     reinforcementSources = new Set<number>();
-  if (peerHard && siteDelta > 5)
+  if (peerHard && siteDelta > 2)
     for (const site of friendlySites) {
       const target = site.orderTarget == null ? undefined : game.sites[site.orderTarget];
       if (!target || target.team === team) continue;

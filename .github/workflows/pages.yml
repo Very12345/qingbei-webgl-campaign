@@ -27,6 +27,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run build:kernel
+      - run: npm run verify:ai
       - run: npm run build
       - run: cp VERSION dist/VERSION
       - uses: actions/setup-go@v5
@@ -35,6 +37,8 @@ jobs:
           cache: false
       - name: Build CDN server mirrors
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq upx-ucl
           version=$(tr -d '\r\n' < VERSION)
           target_dir="dist/downloads/$version"
           mkdir -p "$target_dir"
@@ -43,6 +47,8 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-linux-amd64" .
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-amd64" .
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "../$target_dir/qingbei-server-darwin-arm64" .
+          upx --best "../$target_dir/qingbei-server-windows-amd64.exe"
+          upx --best "../$target_dir/qingbei-server-linux-amd64"
           cd ..
           for file in "$target_dir"/qingbei-server-*; do
             sha256sum "$file" > "$file.sha256"

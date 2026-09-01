@@ -467,7 +467,7 @@ export default function Game3D() {
         team === playerTeamRef.current &&
         clientActionSenderRef.current({ kind: "research", id })
       ) {
-        if (!silent) setNotice("研发请求已发送给主机");
+        if (!silent) setNotice("研发请求已发送给服务器");
         return true;
       }
       const game = gameRef.current,
@@ -505,7 +505,7 @@ export default function Game3D() {
         team === playerTeamRef.current &&
         clientActionSenderRef.current({ kind: "production_start", id })
       ) {
-        if (!silent) setNotice("生产启用请求已发送给主机");
+        if (!silent) setNotice("生产启用请求已发送给服务器");
         return true;
       }
       const game = gameRef.current,
@@ -540,7 +540,7 @@ export default function Game3D() {
       team === playerTeamRef.current &&
       clientActionSenderRef.current({ kind: "production_stop", id })
     ) {
-      setNotice("停产请求已发送给主机");
+      setNotice("停产请求已发送给服务器");
       return;
     }
     const production = gameRef.current.campaign.research.production[team][id];
@@ -1771,7 +1771,7 @@ export default function Game3D() {
       );
       if (hostChannel)
         sendToChannel(hostChannel, { type: "chat_send", channel: chatChannel, text });
-      else setNotice("尚未连接主机");
+      else setNotice("尚未连接服务器");
     }
     setChatInput("");
   };
@@ -1824,11 +1824,11 @@ export default function Game3D() {
         automaticPreferredTeamRef.current = null;
         lanConnectionStageRef.current = "connecting";
         setLanConnectionStage("connecting");
-        setLanStatus("直连已建立，正在接收主机地图…");
+        setLanStatus("连接已建立，正在接收服务器地图…");
         lanConnectionTimeoutRef.current = window.setTimeout(() => {
           setLanConnectionStage("failed");
           lanConnectionStageRef.current = "failed";
-          setLanStatus("主机地图传输超时，请重新连接");
+          setLanStatus("服务器地图传输超时，请重新连接");
         }, 30_000);
       }
       if (!host) {
@@ -2534,7 +2534,7 @@ export default function Game3D() {
           }
           lanConnectionStageRef.current = null;
           setLanConnectionStage(null);
-          setLanStatus("主机地图同步完成，已进入战局");
+          setLanStatus("服务器地图同步完成，已进入战局");
           if (!host) {
             setPlayerTeam(lanTeamRef.current);
             playerTeamRef.current = lanTeamRef.current;
@@ -2895,7 +2895,7 @@ export default function Game3D() {
               : error instanceof Error
                 ? error.message
                 : "无法读取本地服务器战局";
-          setLanStatus(`后台战局未就绪：${detail}；请让管理员在终端输入 host`);
+          setLanStatus(`共享内核战局未就绪：${detail}；请让管理员在终端输入 status`);
           return;
         }
         await new Promise((resolve) => window.setTimeout(resolve, 250));
@@ -3005,7 +3005,7 @@ export default function Game3D() {
           sentAt: Date.now(),
         });
         setLanOutput("");
-        setLanStatus("阵营已确认，正在自动连接主机…");
+        setLanStatus("阵营已确认，正在自动连接服务器…");
         if (lanConnectionTimeoutRef.current != null)
           window.clearTimeout(lanConnectionTimeoutRef.current);
         lanConnectionTimeoutRef.current = window.setTimeout(() => {
@@ -3056,7 +3056,7 @@ export default function Game3D() {
       automaticPreferredTeamRef.current = team;
       lanConnectionStageRef.current = "connecting";
       setLanConnectionStage("connecting");
-      setLanStatus("正在确认阵营并连接主机…");
+      setLanStatus("正在确认阵营并连接服务器…");
       void connectToLanHost(selection.invite, team);
     }
   };
@@ -3081,7 +3081,7 @@ export default function Game3D() {
     if (!roomCode) return;
     lanConnectionStageRef.current = "connecting";
     setLanConnectionStage("connecting");
-    setLanStatus("正在重新联系主机…");
+    setLanStatus("正在重新联系服务器…");
     void requestAutomaticJoin(roomCode);
   };
   const buildServerSummary = (serverId: string): ServerBattleSummary => {
@@ -4307,7 +4307,7 @@ export default function Game3D() {
                     z: campContext.worldZ,
                   })
                 ) {
-                  setNotice("建立营地请求已发送给主机");
+                  setNotice("建立营地请求已发送给服务器");
                   setCampContext(null);
                   return;
                 }
@@ -4394,7 +4394,7 @@ export default function Game3D() {
             if (
               clientActionSenderRef.current({ kind: "mobilize", stance })
             )
-              setNotice("总动员命令已发送给主机");
+              setNotice("总动员命令已发送给服务器");
             else sceneApi.current?.mobilizeAll(playerTeam, stance);
             setToolsOpen(false);
           }}

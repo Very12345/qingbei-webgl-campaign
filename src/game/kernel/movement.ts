@@ -64,18 +64,21 @@ export function simulateKernelMovement(
   grid?: KernelNavGrid,
 ) {
   for (const unit of game.units) {
-    if (unit.targetSiteId == null || unit.hp <= 0) continue;
+    if (unit.hp <= 0) continue;
     if (game.campaign.freezeUntil[unit.team] > game.campaign.elapsedHours)
       continue;
-    const target = game.sites[unit.targetSiteId];
-    if (!target || target.destroyed) {
+    const target =
+      unit.targetSiteId == null ? undefined : game.sites[unit.targetSiteId];
+    if (unit.targetSiteId != null && (!target || target.destroyed)) {
       unit.targetSiteId = undefined;
       unit.path = undefined;
       unit.pathIndex = undefined;
       continue;
     }
-    const targetX = target.navX ?? target.x,
-      targetZ = target.navZ ?? target.z;
+    const targetX = target ? target.navX ?? target.x : unit.tx,
+      targetZ = target ? target.navZ ?? target.z : unit.tz;
+    if (!target && Math.hypot(unit.x - targetX, unit.z - targetZ) <= 0.18)
+      continue;
     if (!unit.path || (unit.pathIndex ?? 0) >= unit.path.length) {
       const nextPath = pathfinder
         ? pathfinder.find(unit.x, unit.z, targetX, targetZ)
@@ -164,11 +167,12 @@ export function simulateKernelMovement(
         disembarkBusGroup(game, unit.transportGroupId);
     }
     if (
+      target &&
       target.team === unit.team &&
       Math.hypot(unit.x - targetX, unit.z - targetZ) < 1.85
     )
       finishFriendlyArrival(game, unit, target);
-    else {
+    else if (target) {
       unit.tx = targetX + ((unit.id % 5) - 2) * 0.24;
       unit.tz = targetZ + ((unit.id % 4) - 1.5) * 0.24;
     }

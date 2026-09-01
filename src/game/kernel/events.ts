@@ -573,4 +573,74 @@ export function processKernelEvents(game: GameData, context: KernelEventContext 
   processCalendarEvents(game);
   processScenarioEvents(game, context);
   processTacticalEvents(game, context.fightingUnitIds ?? new Set<number>());
+  const academicYearEnd = Date.parse(ACADEMIC_YEAR_END_ISO),
+    campaignNow =
+      Date.parse(game.campaign.startDateISO) +
+      game.campaign.elapsedHours * 3_600_000;
+  if (campaignNow >= academicYearEnd && !game.campaign.academicYearOutcome) {
+    const ratioPoints = (a: number, b: number, weight: number) =>
+        a + b > 0 ? (a / (a + b)) * weight : weight / 2,
+      pkuSites = game.sites.filter((site) => site.team === "pku" && !site.destroyed),
+      thuSites = game.sites.filter((site) => site.team === "thu" && !site.destroyed),
+      siteInfluence = (sites: SiteState[]) =>
+        sites.reduce(
+          (sum, site) =>
+            sum +
+            (site.type === "capital" || site.type === "target"
+              ? 2.2
+              : site.type === "gate"
+                ? 1.35
+                : site.type === "camp"
+                  ? 0.55
+                  : 1),
+          0,
+        ),
+      pkuUnits = game.units.filter((unit) => unit.team === "pku"),
+      thuUnits = game.units.filter((unit) => unit.team === "thu"),
+      readiness = (units: GameData["units"]) =>
+        units.length
+          ? units.reduce(
+              (sum, unit) =>
+                sum +
+                (unit.hp / 100 + unit.supply / 100 + (unit.morale ?? 100) / 100) /
+                  3,
+              0,
+            ) / units.length
+          : 0,
+      pkuScore =
+        ratioPoints(pkuSites.length, thuSites.length, 30) +
+        ratioPoints(siteInfluence(pkuSites), siteInfluence(thuSites), 20) +
+        ratioPoints(pkuUnits.length, thuUnits.length, 15) +
+        ratioPoints(game.deaths.thu, game.deaths.pku, 15) +
+        ratioPoints(readiness(pkuUnits), readiness(thuUnits), 10) +
+        ratioPoints(game.resources.pku, game.resources.thu, 10),
+      thuScore = 100 - pkuScore,
+      result =
+        Math.abs(pkuScore - thuScore) < 5
+          ? "draw"
+          : pkuScore > thuScore
+            ? "pku"
+            : "thu";
+    game.campaign.academicYearOutcome = {
+      atHour: game.campaign.elapsedHours,
+      pkuScore,
+      thuScore,
+      result,
+      summary:
+        result === "draw"
+          ? "一个学年过去，双方仍处于长期僵持。"
+          : `${result === "pku" ? "北大" : game.campaign.thuFactionName}取得学年阶段优势。`,
+    };
+    game.campaign.eventHistory.push({
+      id: "academic_year_epilogue",
+      title: "学年结语：战线仍在延伸",
+      body: game.campaign.academicYearOutcome.summary,
+      effect: `北大 ${pkuScore.toFixed(1)} 分；${game.campaign.thuFactionName} ${thuScore.toFixed(1)} 分。正式胜负规则保持不变，战局可以继续。`,
+      quadrant: "classroom",
+      date: "2027年8月15日",
+      image: "events/calendar/shared_midsummer.webp",
+      sourceType: "calendar",
+      atHour: game.campaign.elapsedHours,
+    });
+  }
 }

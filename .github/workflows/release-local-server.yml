@@ -56,6 +56,11 @@ jobs:
         run: |
           output="../qingbei-server-${GOOS}-${GOARCH}${{ matrix.suffix }}"
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "$output" .
+          if [ "${GOOS}" != "darwin" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq upx-ucl
+            upx --best "$output"
+          fi
           cd ..
           sha256sum "$(basename "$output")" > "$(basename "$output").sha256"
       - uses: actions/upload-artifact@v4

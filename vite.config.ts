@@ -15,6 +15,15 @@ export default defineConfig({
   },
   resolve: { preserveSymlinks: true },
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:17890',
+      '/ws': {
+        target: 'ws://127.0.0.1:17890',
+        ws: true,
+      },
+    },
+  },
   build: {
     target: 'es2022',
     sourcemap: false,

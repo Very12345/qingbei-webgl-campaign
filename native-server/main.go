@@ -44,21 +44,29 @@ type wireMessage struct {
 }
 
 type wsClient struct {
-	conn        net.Conn
-	reader      *bufio.Reader
-	mu          sync.Mutex
-	queueMu     sync.Mutex
-	outbound    chan wireMessage
-	stateSignal chan struct{}
-	latestState *wireMessage
-	done        chan struct{}
-	doneOnce    sync.Once
-	room        string
-	role        string
-	team        string
-	nickname    string
-	peerID      string
-	hub         *relayHub
+	conn         net.Conn
+	reader       *bufio.Reader
+	mu           sync.Mutex
+	queueMu      sync.Mutex
+	rateMu       sync.Mutex
+	outbound     chan wireMessage
+	stateSignal  chan struct{}
+	latestState  *wireMessage
+	done         chan struct{}
+	doneOnce     sync.Once
+	room         string
+	role         string
+	team         string
+	nickname     string
+	playerID     string
+	lastRevision int
+	actionWindow time.Time
+	actionCount  int
+	chatWindow   time.Time
+	chatCount    int
+	peerID       string
+	kernelReady  bool
+	hub          *relayHub
 }
 
 func (c *wsClient) sendJSON(message wireMessage) error {
@@ -282,6 +290,7 @@ func readFrame(reader *bufio.Reader) (opcode byte, final bool, payload []byte, e
 
 type relayRoom struct {
 	host   *wsClient
+	kernel *kernelBattle
 	guests map[string]*wsClient
 }
 
@@ -315,15 +324,36 @@ func (hub *relayHub) register(client *wsClient) error {
 		hub.rooms[client.room] = room
 	}
 	if client.role == "host" {
-		if room.host != nil {
+		if room.host != nil || room.kernel != nil {
 			return errors.New("room already has a host")
 		}
 		room.host = client
 		log.Printf("房间 %s 已启动\n", client.room)
 		return nil
 	}
-	if room.host == nil {
+	if room.host == nil && room.kernel == nil {
 		return errors.New("room host is offline")
+	}
+	maximum, allowSameTeam := 4, true
+	if room.kernel != nil {
+		maximum, allowSameTeam = room.kernel.joinConfiguration()
+	}
+	if len(room.guests) >= maximum {
+		return errors.New("server is full")
+	}
+	if len(room.guests) == 1 {
+		for _, existing := range room.guests {
+			if existing.team == client.team {
+				return errors.New("the second player must join the other faction")
+			}
+		}
+	}
+	if len(room.guests) >= 2 && !allowSameTeam {
+		for _, existing := range room.guests {
+			if existing.team == client.team {
+				return errors.New("this faction already has an operator")
+			}
+		}
 	}
 	room.guests[client.peerID] = client
 	log.Printf("玩家 %s 正在连接房间 %s（%s）\n", client.peerID[:8], client.room, teamName(client.team))
@@ -338,8 +368,10 @@ func (hub *relayHub) announce(client *wsClient) {
 		host = room.host
 	}
 	hub.mu.RUnlock()
-	if client.role == "guest" && host != nil {
-		_ = host.sendJSON(wireMessage{Type: "peer_join", PeerID: client.peerID, Team: client.team})
+	if client.role == "guest" && (host != nil || room.kernel != nil) {
+		if host != nil {
+			_ = host.sendJSON(wireMessage{Type: "peer_join", PeerID: client.peerID, Team: client.team})
+		}
 		_ = client.sendJSON(wireMessage{Type: "ready", PeerID: "host"})
 	}
 }
@@ -368,7 +400,7 @@ func (hub *relayHub) unregister(client *wsClient) {
 	}
 	delete(room.guests, client.peerID)
 	host := room.host
-	if host == nil && len(room.guests) == 0 {
+	if host == nil && room.kernel == nil && len(room.guests) == 0 {
 		delete(hub.rooms, client.room)
 	}
 	hub.mu.Unlock()
@@ -412,6 +444,12 @@ func (hub *relayHub) relay(sender *wsClient, message wireMessage) {
 	}
 	if message.Type != "relay" {
 		hub.mu.RUnlock()
+		return
+	}
+	if sender.role != "host" && room.kernel != nil {
+		kernel := room.kernel
+		hub.mu.RUnlock()
+		kernel.handleClientMessage(sender, message.Data)
 		return
 	}
 	if sender.role == "host" {
@@ -499,17 +537,24 @@ func (hub *relayHub) sendHostCommand(command string) int {
 		return 0
 	}
 	var hosts []*wsClient
+	var kernels []*kernelBattle
 	hub.mu.RLock()
 	for _, room := range hub.rooms {
 		if room.host != nil {
 			hosts = append(hosts, room.host)
+		}
+		if room.kernel != nil {
+			kernels = append(kernels, room.kernel)
 		}
 	}
 	hub.mu.RUnlock()
 	for _, host := range hosts {
 		_ = host.sendJSON(wireMessage{Type: "server_command", Message: command})
 	}
-	return len(hosts)
+	for _, kernel := range kernels {
+		terminalCommandResult(kernel.executeCommand(command))
+	}
+	return len(hosts) + len(kernels)
 }
 
 func (hub *relayHub) observeRelay(sender *wsClient, data string) {
@@ -518,6 +563,7 @@ func (hub *relayHub) observeRelay(sender *wsClient, data string) {
 		Channel  string `json:"channel"`
 		Text     string `json:"text"`
 		Identity struct {
+			ID       string `json:"id"`
 			Nickname string `json:"nickname"`
 			Team     string `json:"team"`
 		} `json:"identity"`
@@ -531,9 +577,33 @@ func (hub *relayHub) observeRelay(sender *wsClient, data string) {
 		if len([]rune(name)) > 16 {
 			name = string([]rune(name)[:16])
 		}
+		playerID := strings.TrimSpace(envelope.Identity.ID)
+		var previous *wsClient
 		hub.mu.Lock()
+		room := hub.rooms[sender.room]
+		if room != nil {
+			usedNames := make(map[string]bool)
+			for _, candidate := range room.guests {
+				if candidate != sender {
+					usedNames[candidate.nickname] = true
+					if playerID != "" && candidate.playerID == playerID {
+						previous = candidate
+					}
+				}
+			}
+			if usedNames[name] {
+				base := name
+				for suffix := 2; usedNames[name]; suffix++ {
+					name = fmt.Sprintf("%s#%d", base, suffix)
+				}
+			}
+		}
 		sender.nickname = name
+		sender.playerID = playerID
 		hub.mu.Unlock()
+		if previous != nil {
+			previous.shutdown()
+		}
 		if name != "" {
 			log.Printf("玩家 %s 已进入房间 %s（%s）\n", name, sender.room, teamName(sender.team))
 		}
@@ -565,7 +635,7 @@ func (hub *relayHub) roomStatus(code string) (bool, map[string]int) {
 	defer hub.mu.RUnlock()
 	counts := map[string]int{"pku": 0, "thu": 0}
 	room := hub.rooms[code]
-	if room == nil || room.host == nil {
+	if room == nil || (room.host == nil && room.kernel == nil) {
 		return false, counts
 	}
 	for _, guest := range room.guests {
@@ -579,7 +649,7 @@ func (hub *relayHub) activeRoomStatus() (string, bool, map[string]int) {
 	defer hub.mu.RUnlock()
 	counts := map[string]int{"pku": 0, "thu": 0}
 	for code, room := range hub.rooms {
-		if room.host == nil {
+		if room.host == nil && room.kernel == nil {
 			continue
 		}
 		for _, guest := range room.guests {
@@ -620,7 +690,7 @@ func (hub *relayHub) consoleSnapshot() []consoleRoom {
 	defer hub.mu.RUnlock()
 	rooms := make([]consoleRoom, 0, len(hub.rooms))
 	for code, room := range hub.rooms {
-		summary := consoleRoom{code: code, host: room.host != nil}
+		summary := consoleRoom{code: code, host: room.host != nil || room.kernel != nil}
 		for _, guest := range room.guests {
 			summary.players = append(summary.players, consolePlayer{
 				id:       guest.peerID,
@@ -804,7 +874,7 @@ func randomID() string {
 
 func main() {
 	port := flag.Int("port", 17890, "HTTP/WebSocket listen port")
-	noOpen := flag.Bool("no-open", false, "do not start the background battle host")
+	noOpen := flag.Bool("no-open", false, "do not open the local player page")
 	noUpdate := flag.Bool("no-update", false, "disable automatic updates")
 	benchmark := flag.String("benchmark", "", "run a headless JS-kernel benchmark scenario and exit")
 	flag.Parse()
@@ -830,11 +900,12 @@ func main() {
 		fmt.Println(string(encoded))
 		return
 	}
-	hostURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1&manage=1&autostart=1", *port)
-	var hostController *simulationHostController
-	if !*noOpen {
-		hostController = newSimulationHostController(hostURL, hub)
+	battle, err := newKernelBattle(kernelRuntime, hub)
+	if err != nil {
+		log.Fatalf("启动共享内核战局失败: %v", err)
 	}
+	battle.start()
+	defer battle.shutdown()
 	webRoot, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -843,9 +914,9 @@ func main() {
 	mux.HandleFunc("/api/info", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		info := map[string]any{"name": "qingbei-local-server", "version": version, "kernel": kernelHealth}
-		if hostController != nil {
-			info["battleHost"] = hostController.snapshot()
-		}
+		info["battleHost"] = battle.snapshot()
+		info["roomCode"] = battle.roomCode
+		info["configuration"] = battle.infoConfiguration()
 		_ = json.NewEncoder(writer).Encode(info)
 	})
 	mux.HandleFunc("/api/room", func(writer http.ResponseWriter, request *http.Request) {
@@ -876,17 +947,17 @@ func main() {
 	address := fmt.Sprintf(":%d", *port)
 	playerURL := fmt.Sprintf("http://127.0.0.1:%d/qingbei-webgl-campaign/?local=1", *port)
 	printTerminalBanner(version)
+	fmt.Printf("%s %s\n", paint(ansiYellow+ansiBold, "当前战局码:"), battle.roomCode)
 	fmt.Printf("%s %s\n", paint(ansiGreen+ansiBold, "本机玩家地址:"), playerURL)
 	for _, host := range localIPv4Addresses() {
 		fmt.Printf("%s http://%s:%d/qingbei-webgl-campaign/?local=1\n", paint(ansiMagenta+ansiBold, "局域网玩家地址:"), host, *port)
 	}
 	terminalWarning("关闭此窗口会停止本地服务器。")
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	if hostController != nil {
-		hostController.start()
-		defer hostController.shutdown()
+	if !*noOpen {
+		// 保持终端为唯一管理界面；玩家页面由用户按需打开。
 	}
-	go runConsole(hub, server, hostController, kernelRuntime)
+	go runConsole(hub, server, battle, kernelRuntime)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
@@ -916,7 +987,7 @@ func embeddedWebServer(webRoot fs.FS) http.Handler {
 	})
 }
 
-func runConsole(hub *relayHub, server *http.Server, hostController *simulationHostController, kernelRuntime *jsKernelRuntime) {
+func runConsole(hub *relayHub, server *http.Server, battle *kernelBattle, kernelRuntime *jsKernelRuntime) {
 	fmt.Println()
 	terminalSuccess("服务器终端已就绪。输入 help 查看可用命令；支持上下文 API 指令。")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -934,7 +1005,7 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 		case "help", "?":
 			fmt.Println(paint(ansiYellow+ansiBold, "服务器与玩家"))
 			fmt.Println("  status / battle       查看进程或详细战局状态")
-			fmt.Println("  host / host restart   查看或重启后台战局主机")
+			fmt.Println("  host                  查看内嵌共享内核状态")
 			fmt.Println("  kernel                查看共享JS内核状态")
 			fmt.Println("  benchmark <场景>      无前端运行AI采样矩阵（迁移期）")
 			fmt.Println("  ai <pku|thu>          查看AI生产点和当前战略路线")
@@ -969,18 +1040,9 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			}
 			fmt.Printf("%s %s  %s %d  %s %d\n", paint(ansiCyan, "版本"), paint(ansiWhite+ansiBold, version), paint(ansiCyan, "运行中战局"), len(rooms), paint(ansiCyan, "在线玩家"), players)
 		case "host":
-			if hostController == nil {
-				terminalWarning("后台战局主机已通过 --no-open 禁用。")
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(argument), "restart") {
-				hostController.requestRestart()
-				terminalInfo("已请求重启后台战局主机。")
-				continue
-			}
-			snapshot := hostController.snapshot()
-			fmt.Printf("%s %s\n", paint(ansiCyan, "后台状态:"), paint(ansiWhite+ansiBold, snapshot.Status))
-			fmt.Printf("%s %d\n", paint(ansiCyan, "自动重启:"), snapshot.Restarts)
+			snapshot := battle.snapshot()
+			fmt.Printf("%s %s\n", paint(ansiCyan, "共享内核:"), paint(ansiWhite+ansiBold, snapshot.Status))
+			fmt.Printf("%s %s\n", paint(ansiCyan, "战局码:"), paint(ansiYellow+ansiBold, battle.roomCode))
 			if snapshot.Error != "" {
 				terminalError("最近错误: " + snapshot.Error)
 			}
@@ -1003,11 +1065,11 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 		case "rooms":
 			rooms := hub.consoleSnapshot()
 			if len(rooms) == 0 {
-				terminalWarning("后台战局主机仍在初始化，请稍后重试。")
+				terminalWarning("当前没有运行中的内核战局。")
 				continue
 			}
 			for _, room := range rooms {
-				state := "等待网页主机"
+				state := "等待共享内核"
 				if room.host {
 					state = "运行中"
 				}
@@ -1038,13 +1100,13 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			log.Printf("[公告] %s（发送 %d 个连接）\n", strings.TrimSpace(argument), deliveries)
 		case "save", "new", "resume":
 			if hub.sendHostCommand(line) == 0 {
-				terminalWarning("后台战局主机尚未就绪，请稍后重试。")
+				terminalWarning("共享内核战局尚未就绪，请稍后重试。")
 			} else {
 				terminalSuccess("命令已发送。")
 			}
 		case "battle":
 			if hub.sendHostCommand("status") == 0 {
-				terminalWarning("后台战局主机尚未就绪，请稍后重试。")
+				terminalWarning("共享内核战局尚未就绪，请稍后重试。")
 			} else {
 				terminalInfo("正在读取战局状态...")
 			}
@@ -1071,7 +1133,7 @@ func runConsole(hub *relayHub, server *http.Server, hostController *simulationHo
 			return
 		default:
 			if hub.sendHostCommand(line) == 0 {
-				terminalWarning("后台战局主机尚未就绪；命令暂未发送。")
+				terminalWarning("共享内核战局尚未就绪；命令暂未发送。")
 			} else {
 				terminalInfo("API 命令已发送。")
 			}

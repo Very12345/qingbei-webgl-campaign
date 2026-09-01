@@ -14,8 +14,11 @@ func TestEmbeddedKernelHealthCheck(t *testing.T) {
 	if health["language"] != "typescript" {
 		t.Fatalf("unexpected kernel language: %#v", health)
 	}
-	if health["apiVersion"] != float64(1) {
+	if health["apiVersion"] != float64(2) {
 		t.Fatalf("unexpected kernel API version: %#v", health)
+	}
+	if health["authoritative"] != true {
+		t.Fatalf("kernel is not authoritative: %#v", health)
 	}
 }
 
@@ -85,5 +88,47 @@ func TestEmbeddedKernelSeedCanRunWithoutBrowser(t *testing.T) {
 	}
 	if snapshot["revision"] != float64(10) {
 		t.Fatalf("unexpected seed revision: %#v", snapshot)
+	}
+}
+
+func TestEmbeddedKernelProducesAuthoritativeNetworkEnvelopes(t *testing.T) {
+	runtime, err := newJSKernelRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, navGrid, err := loadKernelSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := runtime.create(seed, map[string]any{
+		"aiTeams":               []string{"thu"},
+		"navGrid":               navGrid,
+		"fixedStepMilliseconds": 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := instance.networkFull()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full["type"] != "state" || full["role"] != "host" {
+		t.Fatalf("unexpected full network envelope: %#v", full)
+	}
+	if err := instance.dispatch(map[string]any{"type": "set_time_scale", "value": 4}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.step(250); err != nil {
+		t.Fatal(err)
+	}
+	delta, err := instance.networkDelta()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta["type"] != "state_delta" || delta["role"] != "host" {
+		t.Fatalf("unexpected delta network envelope: %#v", delta)
+	}
+	if delta["revision"].(float64) < 1 {
+		t.Fatalf("network revision did not advance: %#v", delta)
 	}
 }
