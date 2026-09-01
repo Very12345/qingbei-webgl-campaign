@@ -109,11 +109,22 @@ const clonePath = (path: readonly [number, number][]) =>
 
 export class KernelPathfinder {
   private cache = new Map<string, [number, number][]>();
+  private readonly cost: Float32Array;
+  private readonly came: Int32Array;
+  private readonly seen: Uint32Array;
+  private readonly closed: Uint32Array;
+  private searchId = 0;
 
   constructor(
     readonly grid: KernelNavGrid,
     readonly cacheLimit = 384,
-  ) {}
+  ) {
+    const total = grid.cols * grid.rows;
+    this.cost = new Float32Array(total);
+    this.came = new Int32Array(total);
+    this.seen = new Uint32Array(total);
+    this.closed = new Uint32Array(total);
+  }
 
   find(
     fromX: number,
@@ -135,14 +146,21 @@ export class KernelPathfinder {
     }
     if (start === goal) return this.remember(key, [navPoint(grid, goal)]);
 
-    const total = grid.cols * grid.rows,
-      cost = new Float32Array(total),
-      came = new Int32Array(total),
-      closed = new Uint8Array(total),
+    this.searchId = (this.searchId + 1) >>> 0;
+    if (this.searchId === 0) {
+      this.seen.fill(0);
+      this.closed.fill(0);
+      this.searchId = 1;
+    }
+    const searchId = this.searchId,
+      cost = this.cost,
+      came = this.came,
+      seen = this.seen,
+      closed = this.closed,
       heap: { index: number; score: number }[] = [];
-    cost.fill(Number.POSITIVE_INFINITY);
-    came.fill(-1);
     cost[start] = 0;
+    came[start] = -1;
+    seen[start] = searchId;
     const goalX = goal % grid.cols,
       goalZ = Math.floor(goal / grid.cols),
       push = (entry: { index: number; score: number }) => {
@@ -192,9 +210,9 @@ export class KernelPathfinder {
     push({ index: start, score: 0 });
     while (heap.length) {
       const current = pop();
-      if (!current || closed[current.index]) continue;
+      if (!current || closed[current.index] === searchId) continue;
       if (current.index === goal) break;
-      closed[current.index] = 1;
+      closed[current.index] = searchId;
       const currentX = current.index % grid.cols,
         currentZ = Math.floor(current.index / grid.cols);
       for (const [dx, dz] of directions) {
@@ -208,7 +226,7 @@ export class KernelPathfinder {
         )
           continue;
         const next = nextZ * grid.cols + nextX;
-        if (pathBlocked(next) || closed[next]) continue;
+        if (pathBlocked(next) || closed[next] === searchId) continue;
         if (
           dx &&
           dz &&
@@ -234,16 +252,20 @@ export class KernelPathfinder {
                   : 1.18) *
             slopeCost,
           nextCost = cost[current.index] + stepCost;
-        if (nextCost >= cost[next]) continue;
+        if (seen[next] === searchId && nextCost >= cost[next]) continue;
         cost[next] = nextCost;
         came[next] = current.index;
+        seen[next] = searchId;
         push({
           index: next,
-          score: nextCost + Math.hypot(goalX - nextX, goalZ - nextZ) * 0.68,
+          // 使用加权 A* 限制嵌入式 JS 环境中的扩展节点数。路径仍严格
+          // 避让建筑/水域并计算道路和坡度，只是不为几厘米的理论最短路
+          // 让服务器在一次调兵时扫描整张地图。
+          score: nextCost + Math.hypot(goalX - nextX, goalZ - nextZ) * 3.2,
         });
       }
     }
-    if (came[goal] < 0) {
+    if (seen[goal] !== searchId || came[goal] < 0) {
       const fallback = allowBuildingFallback
         ? []
         : this.find(fromX, fromZ, toX, toZ, true);

@@ -52,7 +52,7 @@ const terrainHeight = (region: any, x: number, z: number) => {
 };
 
 export function buildKernelNavGrid(region: any): KernelNavGrid {
-  const cell = 0.42,
+  const cell = 0.7,
     minX = region.offsetX - region.width / 2,
     minZ = -region.depth / 2,
     cols = Math.ceil(region.width / cell),

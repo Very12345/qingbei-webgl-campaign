@@ -317,7 +317,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       mainComponent: number;
     };
     const buildNavGrid = (r: any): NavGrid => {
-      const cell = 0.42,
+      const cell = 0.7,
         minX = r.offsetX - r.width / 2,
         minZ = -r.depth / 2,
         cols = Math.ceil(r.width / cell),

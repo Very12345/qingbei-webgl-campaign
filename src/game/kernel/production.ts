@@ -91,6 +91,7 @@ export function spawnKernelUnits(
   squads: number,
   attackModifier = 1,
   supply = 130,
+  skin?: import("../types").UnitState["skin"],
 ) {
   let id = nextUnitId(game);
   const count = squads * 5,
@@ -110,6 +111,7 @@ export function spawnKernelUnits(
       supply,
       strength: 1,
       morale: 100,
+      skin,
       siteId: site.id,
       attackModifier,
     });
@@ -167,7 +169,11 @@ export function runProductionCycles(
         )
           continue;
         const target = game.sites[source.orderTarget];
-        if (!target || target.destroyed) continue;
+        if (!target || target.destroyed || target.team === source.team) {
+          source.orderTarget = undefined;
+          source.orderPath = undefined;
+          continue;
+        }
         const idle = game.units.filter(
           (unit) => unit.siteId === source.id && unit.targetSiteId == null,
         ).length;

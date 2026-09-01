@@ -1,8 +1,24 @@
 import type { AiDifficulty, GameData, SiteState, Team, UnitState } from "../types";
-import { KernelPathfinder, type KernelNavGrid } from "./navigation";
-import { resolveAggregateCombat } from "./combat";
+import { defaultResearchState } from "../research";
+import {
+  KernelPathfinder,
+  navPoint,
+  nearestOpenIndex,
+  type KernelNavGrid,
+} from "./navigation";
+import { resolveAggregateCombat, routeCollapsedUnits } from "./combat";
 import { runProductionCycles } from "./production";
 import { planStrategicOrders } from "./ai";
+import { simulateKernelMovement } from "./movement";
+import { captureSite } from "./capture";
+import {
+  applyProgressionAction,
+  progressDecisions,
+  progressResearchAndProduction,
+  runAiProgression,
+  type ProgressionAction,
+} from "./progression";
+import { processKernelEvents } from "./events";
 export {
   KernelPathfinder,
   navIndex,
@@ -11,7 +27,11 @@ export {
   nearestRoadIndex,
   type KernelNavGrid,
 } from "./navigation";
-export { resolveAggregateCombat, type AggregateCombatResult } from "./combat";
+export {
+  resolveAggregateCombat,
+  routeCollapsedUnits,
+  type AggregateCombatResult,
+} from "./combat";
 export {
   classifyIntent,
   offensiveMomentum,
@@ -27,6 +47,26 @@ export {
   spawnKernelUnits,
   type KernelIssueOrder,
 } from "./production";
+export { simulateKernelMovement, parkBikeAtSite } from "./movement";
+export { captureSite, type CaptureResult } from "./capture";
+export {
+  addTimedStatus,
+  statusModifiersFor,
+  unitModifiers,
+} from "./modifiers";
+export {
+  allocateTransport,
+  applyProgressionAction,
+  progressDecisions,
+  progressResearchAndProduction,
+  runAiProgression,
+  type ProgressionAction,
+} from "./progression";
+export {
+  processKernelEvents,
+  recordKernelEvent,
+  type KernelEventContext,
+} from "./events";
 
 export const KERNEL_API_VERSION = 1;
 
@@ -39,7 +79,8 @@ export type KernelAction =
       sourceId: number;
       targetId: number;
       count?: number;
-    };
+    }
+  | ProgressionAction;
 
 export type KernelOptions = {
   navGrid?: KernelNavGrid;
@@ -62,22 +103,87 @@ export type KernelInstance = {
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+const normalizeKernelState = (state: GameData) => {
+  state.timeOfDay ??= 8;
+  state.resources ??= { pku: 0, thu: 0 };
+  state.deaths ??= { pku: 0, thu: 0 };
+  state.sites ??= [];
+  state.units ??= [];
+  const campaign = state.campaign;
+  campaign.rulesVersion ??= 3;
+  campaign.startDateISO ??= "2026-08-16T08:00:00+08:00";
+  campaign.elapsedHours ??= 0;
+  campaign.firedEvents ??= [];
+  campaign.warUnlocked ??= false;
+  campaign.attackBonus ??= { pku: 1, thu: 1 };
+  campaign.freezeUntil ??= { pku: 0, thu: 0 };
+  campaign.nextSiteId ??= state.sites.length;
+  campaign.lastProductionCycle ??= 0;
+  campaign.lastDiningCycle ??= 0;
+  campaign.lastMorningEventDay ??= -1;
+  campaign.thuFactionName ??= "清华";
+  campaign.statuses ??= [];
+  campaign.eventHistory ??= [];
+  campaign.battleAlerts ??= [];
+  campaign.initialPkuSites ??= state.sites.filter((site) => site.team === "pku").length;
+  campaign.initialThuSites ??= state.sites.filter((site) => site.team === "thu").length;
+  campaign.initialProductionSites ??= { pku: 1, thu: 1 };
+  campaign.decisions ??= {
+    active: { pku: null, thu: null },
+    completed: [],
+    locked: [],
+  };
+  campaign.research ??= defaultResearchState();
+  campaign.ai ??= {
+    difficulty: "standard",
+    seed: 1,
+    personality: { pku: "学术联动", thu: "工程统筹" },
+    nextStrategicAt: { pku: 0, thu: 0 },
+    failedGoals: {},
+  };
+  campaign.ai.seed ??= 1;
+  campaign.ai.personality ??= { pku: "学术联动", thu: "工程统筹" };
+  campaign.ai.nextStrategicAt ??= { pku: 0, thu: 0 };
+  campaign.ai.failedGoals ??= {};
+};
+
 export function createKernel(
   initialState: GameData,
   options: KernelOptions = {},
 ): KernelInstance {
   const state = clone(initialState);
+  normalizeKernelState(state);
   let revision = 0,
     timeScale = 1,
     accumulator = 0,
     combatAccumulator = 0;
   let combatPulse = 0;
+  let lastEventHour = Number.NEGATIVE_INFINITY;
+  let fightingUnitIds = new Set<number>();
   const pending: KernelAction[] = [];
-  const aiAccumulator: Record<Team, number> = { pku: 0, thu: 0 };
   const pathfinder = options.navGrid
-      ? new KernelPathfinder(options.navGrid)
+      ? new KernelPathfinder(options.navGrid, 12_000)
       : null,
     fixedStep = Math.max(10, options.fixedStepMilliseconds ?? 50);
+  if (options.navGrid)
+    for (const site of state.sites) {
+      const open = nearestOpenIndex(options.navGrid, site.navX ?? site.x, site.navZ ?? site.z);
+      if (open < 0) continue;
+      [site.navX, site.navZ] = navPoint(options.navGrid, open);
+    }
+
+  const randomFor = (team: Team) => () => {
+    state.campaign.ai.seedByTeam ??= {
+      pku: state.campaign.ai.seed ^ 0x504b5501,
+      thu: state.campaign.ai.seed ^ 0x54485501,
+    };
+    const next =
+      (Math.imul(state.campaign.ai.seedByTeam[team], 1664525) + 1013904223) >>>
+      0;
+    state.campaign.ai.seedByTeam[team] = next;
+    state.campaign.ai.seed = next;
+    return next / 4_294_967_296;
+  };
 
   const issueOrder = (
     team: Team,
@@ -132,6 +238,15 @@ export function createKernel(
       );
       return;
     }
+    if (
+      action.type === "research_start" ||
+      action.type === "production_start" ||
+      action.type === "production_stop" ||
+      action.type === "mobilize"
+    ) {
+      applyProgressionAction(state, action);
+      return;
+    }
     state.campaign.ai.difficultyByTeam ??= {
       pku: state.campaign.ai.difficulty,
       thu: state.campaign.ai.difficulty,
@@ -139,56 +254,12 @@ export function createKernel(
     state.campaign.ai.difficultyByTeam[action.team] = action.value;
   };
 
-  const simulateMovement = (seconds: number) => {
-    for (const unit of state.units) {
-      if (unit.targetSiteId == null || unit.hp <= 0) continue;
-      const target = state.sites[unit.targetSiteId];
-      if (!target || target.destroyed) {
-        unit.targetSiteId = undefined;
-        unit.path = undefined;
-        unit.pathIndex = undefined;
-        continue;
-      }
-      let budget = 0.5 * seconds * timeScale,
-        index = unit.pathIndex ?? 0;
-      while (budget > 0.0001) {
-        const point = unit.path?.[index] ?? [unit.tx, unit.tz],
-          dx = point[0] - unit.x,
-          dz = point[1] - unit.z,
-          distance = Math.hypot(dx, dz);
-        if (distance <= budget) {
-          unit.x = point[0];
-          unit.z = point[1];
-          budget -= distance;
-          if (unit.path && index < unit.path.length) {
-            index++;
-            unit.pathIndex = index;
-            continue;
-          }
-          break;
-        }
-        unit.x += (dx / Math.max(distance, 0.0001)) * budget;
-        unit.z += (dz / Math.max(distance, 0.0001)) * budget;
-        budget = 0;
-      }
-      const targetX = target.navX ?? target.x,
-        targetZ = target.navZ ?? target.z;
-      if (target.team === unit.team && Math.hypot(unit.x - targetX, unit.z - targetZ) < 1.85) {
-        unit.siteId = target.id;
-        unit.targetSiteId = undefined;
-        unit.path = undefined;
-        unit.pathIndex = undefined;
-        unit.tx = targetX;
-        unit.tz = targetZ;
-      }
-    }
-  };
-
   const simulateCombatAndCapture = () => {
     const dead = new Set<number>(),
       attackersByTarget = new Map<number, UnitState[]>(),
       defendersByHome = new Map<number, UnitState[]>();
     combatPulse++;
+    fightingUnitIds = new Set<number>();
     for (const unit of state.units) {
       if (unit.hp <= 0) continue;
       if (unit.targetSiteId != null) {
@@ -239,29 +310,33 @@ export function createKernel(
             combatPulse,
           );
         for (const id of result.deadIds) dead.add(id);
+        for (const id of result.affectedIds) fightingUnitIds.add(id);
         continue;
       }
       const occupiers = attackers.filter(
         (unit) => Math.hypot(unit.x - x, unit.z - z) < 1.55,
       );
       if (!occupiers.length) continue;
-      site.team = occupiers[0].team;
-      for (const unit of occupiers) {
-        unit.siteId = site.id;
-        unit.targetSiteId = undefined;
-        unit.path = undefined;
-        unit.pathIndex = undefined;
-      }
+      captureSite(state, site, occupiers, pathfinder, (team, sourceId, targetId) => {
+        issueOrder(team, sourceId, targetId);
+      });
     }
     if (dead.size) {
       for (const unit of state.units)
         if (dead.has(unit.id)) state.deaths[unit.team] += unit.strength;
       state.units = state.units.filter((unit) => !dead.has(unit.id));
     }
+    routeCollapsedUnits(state, fightingUnitIds, pathfinder);
   };
 
   const fixedTick = () => {
-    simulateMovement(fixedStep / 1000);
+    simulateKernelMovement(
+      state,
+      fixedStep / 1000,
+      timeScale,
+      pathfinder,
+      options.navGrid,
+    );
     combatAccumulator += fixedStep;
     while (combatAccumulator >= 120) {
       simulateCombatAndCapture();
@@ -270,31 +345,31 @@ export function createKernel(
   };
 
   const runAi = (elapsedMilliseconds: number) => {
+    void elapsedMilliseconds;
     for (const team of options.aiTeams ?? []) {
       const difficulty =
           state.campaign.ai.difficultyByTeam?.[team] ??
           state.campaign.ai.difficulty,
-        profile = difficultyProfile(difficulty),
-        interval = Math.max(
-          120,
-          profile.thinkMillisecondsAt1x / timeScale,
-        );
-      aiAccumulator[team] += elapsedMilliseconds;
-      if (aiAccumulator[team] < interval) continue;
-      aiAccumulator[team] %= interval;
-      state.campaign.ai.seedByTeam ??= {
-        pku: state.campaign.ai.seed ^ 0x504b5501,
-        thu: state.campaign.ai.seed ^ 0x54485501,
-      };
-      const random = () => {
-          const next =
-            (Math.imul(state.campaign.ai.seedByTeam![team], 1664525) +
-              1013904223) >>>
-            0;
-          state.campaign.ai.seedByTeam![team] = next;
-          state.campaign.ai.seed = next;
-          return next / 4_294_967_296;
-        },
+        profile = difficultyProfile(difficulty);
+      if (
+        state.campaign.ai.nextStrategicAt[team] > state.campaign.elapsedHours
+      )
+        continue;
+      const enemy: Team = team === "pku" ? "thu" : "pku",
+        initialEnemySites =
+          enemy === "pku"
+            ? state.campaign.initialPkuSites
+            : state.campaign.initialThuSites,
+        strategicHours =
+          difficulty === "standard"
+            ? profile.strategicHours *
+              (initialEnemySites < 75
+                ? 96 / Math.max(40, initialEnemySites)
+                : 1)
+            : profile.strategicHours;
+      state.campaign.ai.nextStrategicAt[team] =
+        state.campaign.elapsedHours + strategicHours;
+      const random = randomFor(team),
         plan = planStrategicOrders(
           state,
           team,
@@ -306,6 +381,7 @@ export function createKernel(
       state.campaign.ai.intent[team] = plan.intent;
       state.campaign.ai.intentUpdatedAt ??= { pku: 0, thu: 0 };
       state.campaign.ai.intentUpdatedAt[team] = state.campaign.elapsedHours;
+      runAiProgression(state, team, difficulty, random);
       for (const plannedCamp of plan.camps) {
         if (state.resources[team] < 80) break;
         const source = state.sites[plannedCamp.sourceId],
@@ -377,11 +453,17 @@ export function createKernel(
       (team, source, target, count) =>
         issueOrder(team, source.id, target.id, count),
     );
+    progressResearchAndProduction(state, randomFor("pku"), options.navGrid);
+    progressDecisions(state);
     runAi(elapsed);
     accumulator += elapsed;
     while (accumulator >= fixedStep) {
       fixedTick();
       accumulator -= fixedStep;
+    }
+    if (state.campaign.elapsedHours - lastEventHour >= 0.5) {
+      processKernelEvents(state, { fightingUnitIds, issueOrder });
+      lastEventHour = state.campaign.elapsedHours;
     }
     if (!state.campaign.outcome) {
       const pkuAlive = state.sites.some(
@@ -461,8 +543,8 @@ export function difficultyProfile(difficulty: AiDifficulty) {
       waveLimit: 1,
     } as const;
   return {
-    thinkMillisecondsAt1x: 24000,
-    strategicHours: 6,
+    thinkMillisecondsAt1x: 30000,
+    strategicHours: 8.2,
     routeLimit: 6,
     waveLimit: 1,
   } as const;

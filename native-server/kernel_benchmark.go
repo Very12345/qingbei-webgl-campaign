@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 )
@@ -42,7 +43,7 @@ func runKernelBenchmark(runtime *jsKernelRuntime, scenario string) (kernelBenchm
 	instance, err := runtime.create(seed, map[string]any{
 		"aiTeams":               teams,
 		"navGrid":               navGrid,
-		"fixedStepMilliseconds": 120,
+		"fixedStepMilliseconds": 500,
 	})
 	if err != nil {
 		return kernelBenchmarkResult{}, err
@@ -59,6 +60,7 @@ func runKernelBenchmark(runtime *jsKernelRuntime, scenario string) (kernelBenchm
 		"2026-09-02T00:00:00+08:00",
 		"2026-09-06T00:00:00+08:00",
 		"2026-09-16T00:00:00+08:00",
+		"2026-09-18T00:00:00+08:00",
 		"2026-09-26T00:00:00+08:00",
 	}
 	switch {
@@ -67,11 +69,12 @@ func runKernelBenchmark(runtime *jsKernelRuntime, scenario string) (kernelBenchm
 	case scenario == "pku-standard-idle" ||
 		scenario == "thu-standard-idle" ||
 		strings.Contains(scenario, "-vs-"):
-		dates = dates[:7]
+		dates = dates[:8]
 	}
 	result := kernelBenchmarkResult{Scenario: scenario}
 	elapsed := 0.0
 	for _, dateText := range dates {
+		segmentStarted := time.Now()
 		date, _ := time.Parse(time.RFC3339, dateText)
 		targetHours := date.Sub(start).Hours()
 		iterations := int(math.Ceil((targetHours - elapsed) / 0.72))
@@ -85,6 +88,7 @@ func runKernelBenchmark(runtime *jsKernelRuntime, scenario string) (kernelBenchm
 		elapsed, _ = snapshot["elapsedHours"].(float64)
 		sample := summarizeKernelSnapshot(dateText, snapshot)
 		result.Samples = append(result.Samples, sample)
+		fmt.Fprintf(os.Stderr, "基准采样 %s：%s（据点 %d/%d，伤亡 %d/%d）\n", dateText[:10], time.Since(segmentStarted).Round(time.Millisecond), sample.Sites["pku"], sample.Sites["thu"], sample.Deaths["pku"], sample.Deaths["thu"])
 		if sample.Outcome != nil {
 			break
 		}
@@ -104,6 +108,12 @@ func benchmarkConfiguration(scenario string) ([]string, map[string]string, error
 	case "pku-standard-idle":
 		return []string{"pku"}, difficulties, nil
 	case "thu-standard-idle":
+		return []string{"thu"}, difficulties, nil
+	case "pku-casual-idle":
+		difficulties["pku"] = "casual"
+		return []string{"pku"}, difficulties, nil
+	case "thu-casual-idle":
+		difficulties["thu"] = "casual"
 		return []string{"thu"}, difficulties, nil
 	case "pku-hard-vs-thu-standard":
 		difficulties["pku"] = "hard"

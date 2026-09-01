@@ -8,6 +8,7 @@
   "scripts": {
     "build:kernel": "node scripts/build-kernel.mjs && tsx scripts/build-kernel-seed.ts",
     "test:kernel-smoke": "tsx scripts/kernel-smoke.ts",
+    "benchmark:ai": "tsx scripts/ai-benchmark.ts",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
