@@ -199,6 +199,7 @@ import type {
   GameScreen,
 } from "../src/game/engine/contracts";
 import { useBattlefieldEngine } from "../src/game/engine/use-battlefield";
+import { collectPlayerCommands, type PlayerCommandSelection } from "../src/game/player-commands";
 import SaveWorker from "../src/save-worker.ts?worker&inline";
 import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline";
 
@@ -298,16 +299,13 @@ export default function Game3D() {
     () => false,
   );
   const networkRevisionRef = useRef(0);
+  const playerCommandSenderRef = useRef<(selection: PlayerCommandSelection) => void>(() => {});
   const networkLastFullAtRef = useRef(0);
   const networkLastDeltaAtRef = useRef(0);
   const networkUnitCursorRef = useRef(0);
   const networkUnitSignaturesRef = useRef(new Map<number, string>());
   const networkSiteSignaturesRef = useRef(new Map<number, string>());
   const networkCampaignSignatureRef = useRef("");
-  const clientUnitCommandSignaturesRef = useRef(new Map<number, string>());
-  const clientSiteCommandSignaturesRef = useRef(new Map<number, string>());
-  const clientUnitCommandPendingSinceRef = useRef(new Map<number, number>());
-  const clientSiteCommandPendingSinceRef = useRef(new Map<number, number>());
   const guestHasAuthoritativeStateRef = useRef(false);
   const clientActionRateRef = useRef(
     new WeakMap<NetworkChannel, number[]>(),
@@ -775,6 +773,7 @@ export default function Game3D() {
   }, []);
 
   useBattlefieldEngine({
+    playerCommandSenderRef,
     screen,
     hostRef,
     sceneApi,
@@ -1543,6 +1542,7 @@ export default function Game3D() {
     if (!selectedSite || selectedSite.team !== playerTeam) return;
     selectedSite.stance = s;
     selectedSite.dispatchRatio = s === "defend" ? 0.4 : s === "guard" ? 0.7 : 1;
+    playerCommandSenderRef.current({ siteIds: [selectedSite.id] });
     sceneApi.current?.refreshSiteStance(selectedSite.id);
     setNotice(
       `${selectedSite.displayName ?? selectedSite.name}已切换为${stanceText[s].title}，输送${Math.round(selectedSite.dispatchRatio * 100)}%`,
@@ -1553,6 +1553,7 @@ export default function Game3D() {
     const nextName = renameDraft.trim().slice(0, 24);
     if (!nextName) return;
     selectedSite.displayName = nextName;
+    playerCommandSenderRef.current({ siteIds: [selectedSite.id] });
     sceneApi.current?.sync();
     setNotice(`据点已改名为“${nextName}”`);
     setRenamingSite(false);
@@ -1683,12 +1684,14 @@ export default function Game3D() {
     };
     pump();
   };
-  const networkCommandGraceMs = () =>
-    Math.max(
-      300,
-      3_000 /
-        Math.max(0.5, Math.min(MAX_TIME_SCALE, timeScaleRef.current)),
-    );
+  playerCommandSenderRef.current = (selection) => {
+    if (lanHostRef.current || !guestHasAuthoritativeStateRef.current) return;
+    const channel = [...lanChannelsRef.current].find(c => c.readyState === "open");
+    if (!channel) { setNotice("连接已断开，操作未发送"); return; }
+    const command = collectPlayerCommands(gameRef.current, playerTeamRef.current, selection);
+    if (!command.sites.length && !command.units.length) return;
+    sendToChannel(channel, { type: "client_commands", intent: "player", revision: ++networkRevisionRef.current, ...command });
+  };
   clientActionSenderRef.current = (action) => {
     if (lanHostRef.current || !guestHasAuthoritativeStateRef.current)
       return false;
@@ -1697,6 +1700,14 @@ export default function Game3D() {
     );
     if (!hostChannel) return false;
     sendToChannel(hostChannel, { type: "client_action", action });
+    if (action.kind === "mobilize") {
+      const sites = gameRef.current.sites.filter(s => s.team === playerTeamRef.current && !s.destroyed);
+      for (const site of sites) {
+        site.stance = action.stance;
+        site.dispatchRatio = action.stance === "defend" ? .4 : action.stance === "guard" ? .7 : 1;
+      }
+      playerCommandSenderRef.current({ siteIds: sites.map(s => s.id) });
+    }
     return true;
   };
   const flushHostOperations = () => {
@@ -2318,53 +2329,7 @@ export default function Game3D() {
             identity = lanChannelIdentityRef.current.get(channel),
             allowedTeam = host ? identity?.team : undefined,
             unitsById = new Map(game.units.map((unit) => [unit.id, unit]));
-          const applyExistingUnit = (
-            existing: UnitState,
-            apply: () => void,
-          ) => {
-            const desiredCommand: ClientUnitCommand = {
-                id: existing.id,
-                team: existing.team,
-                tx: existing.tx,
-                tz: existing.tz,
-                targetSiteId: existing.targetSiteId ?? null,
-              },
-              desiredSignature = `${desiredCommand.tx.toFixed(3)}/${desiredCommand.tz.toFixed(3)}/${desiredCommand.targetSiteId ?? ""}`,
-              lastAuthoritative =
-                clientUnitCommandSignaturesRef.current.get(existing.id),
-              hasPendingLocalCommand =
-                lastAuthoritative != null &&
-                desiredSignature !== lastAuthoritative,
-              pendingSince =
-                clientUnitCommandPendingSinceRef.current.get(existing.id) ??
-                (hasPendingLocalCommand ? Date.now() : 0),
-              keepPending =
-                hasPendingLocalCommand &&
-                Date.now() - pendingSince < networkCommandGraceMs(),
-              previousX = existing.x,
-              previousZ = existing.z;
-            apply();
-            const correctionDistance = Math.hypot(
-              existing.x - previousX,
-              existing.z - previousZ,
-            );
-            if (correctionDistance < 1.8) {
-              existing.x = THREE.MathUtils.lerp(previousX, existing.x, 0.42);
-              existing.z = THREE.MathUtils.lerp(previousZ, existing.z, 0.42);
-            }
-            const incomingSignature = `${existing.tx.toFixed(3)}/${existing.tz.toFixed(3)}/${existing.targetSiteId ?? ""}`;
-            clientUnitCommandSignaturesRef.current.set(
-              existing.id,
-              incomingSignature,
-            );
-            if (keepPending && incomingSignature !== desiredSignature) {
-              existing.tx = desiredCommand.tx;
-              existing.tz = desiredCommand.tz;
-              existing.targetSiteId = desiredCommand.targetSiteId ?? undefined;
-              existing.path = undefined;
-              existing.pathIndex = undefined;
-            } else clientUnitCommandPendingSinceRef.current.delete(existing.id);
-          };
+          const applyExistingUnit = (_existing: UnitState, apply: () => void) => apply();
           const legacyUnits = payload.units.filter(
             (unit): unit is UnitNetworkState => !Array.isArray(unit),
           );
@@ -2377,10 +2342,6 @@ export default function Game3D() {
               const created: UnitState = { ...incoming };
               game.units.push(created);
               unitsById.set(created.id, created);
-              clientUnitCommandSignaturesRef.current.set(
-                created.id,
-                `${created.tx.toFixed(3)}/${created.tz.toFixed(3)}/${created.targetSiteId ?? ""}`,
-              );
             }
           }
           for (const compact of payload.units) {
@@ -2402,79 +2363,27 @@ export default function Game3D() {
               game.units = game.units.filter((unit) => !removed.has(unit.id));
           }
           let sitesChanged = false;
+          let siteStructureChanged = false;
           for (const incoming of payload.sites ?? []) {
             let existing = game.sites.find((site) => site.id === incoming.id);
             if (!existing) {
               if (!host || (allowedTeam && incoming.team === allowedTeam)) {
                 game.sites.push(structuredClone(incoming));
                 sitesChanged = true;
+                siteStructureChanged = true;
               }
               continue;
             }
             if (!host) {
-              const desiredCommand: ClientSiteCommand = {
-                  id: existing.id,
-                  stance: existing.stance,
-                  dispatchRatio: existing.dispatchRatio ?? 0.6,
-                  orderTarget:
-                    existing.team === lanTeamRef.current
-                      ? existing.orderTarget ?? null
-                      : null,
-                  plannedOrderTarget:
-                    existing.plannedOrderTargets?.[lanTeamRef.current] ?? null,
-                  displayName:
-                    existing.team === lanTeamRef.current
-                      ? existing.displayName
-                      : undefined,
-                },
-                desiredSignature = JSON.stringify(desiredCommand),
-                lastAuthoritative =
-                  clientSiteCommandSignaturesRef.current.get(existing.id),
-                hasPendingLocalCommand =
-                  lastAuthoritative != null &&
-                  desiredSignature !== lastAuthoritative,
-                pendingSince =
-                  clientSiteCommandPendingSinceRef.current.get(existing.id) ??
-                  (hasPendingLocalCommand ? Date.now() : 0),
-                keepPending =
-                  hasPendingLocalCommand &&
-                  Date.now() - pendingSince < networkCommandGraceMs();
               if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
+                siteStructureChanged ||= existing.team !== incoming.team || existing.destroyed !== incoming.destroyed || existing.displayName !== incoming.displayName;
+                existing.orderTarget = incoming.orderTarget;
+                existing.orderPath = incoming.orderPath;
+                existing.plannedOrderTargets = undefined;
+                existing.plannedOrderPaths = undefined;
                 Object.assign(existing, structuredClone(incoming));
                 sitesChanged = true;
               }
-              const incomingCommand: ClientSiteCommand = {
-                  id: existing.id,
-                  stance: existing.stance,
-                  dispatchRatio: existing.dispatchRatio ?? 0.6,
-                  orderTarget:
-                    existing.team === lanTeamRef.current
-                      ? existing.orderTarget ?? null
-                      : null,
-                  plannedOrderTarget:
-                    existing.plannedOrderTargets?.[lanTeamRef.current] ?? null,
-                  displayName:
-                    existing.team === lanTeamRef.current
-                      ? existing.displayName
-                      : undefined,
-                },
-                incomingSignature = JSON.stringify(incomingCommand);
-              clientSiteCommandSignaturesRef.current.set(
-                existing.id,
-                incomingSignature,
-              );
-              if (keepPending && incomingSignature !== desiredSignature) {
-                existing.stance = desiredCommand.stance;
-                existing.dispatchRatio = desiredCommand.dispatchRatio;
-                if (existing.team === lanTeamRef.current) {
-                  existing.orderTarget =
-                    desiredCommand.orderTarget ?? undefined;
-                  existing.displayName = desiredCommand.displayName;
-                }
-                existing.plannedOrderTargets ??= {};
-                existing.plannedOrderTargets[lanTeamRef.current] =
-                  desiredCommand.plannedOrderTarget ?? undefined;
-              } else clientSiteCommandPendingSinceRef.current.delete(existing.id);
               continue;
             }
             if (!allowedTeam) continue;
@@ -2516,7 +2425,7 @@ export default function Game3D() {
             if (payload.campaign)
               game.campaign = structuredClone(payload.campaign);
           }
-          if (sitesChanged) sceneApi.current?.sync();
+          if (sitesChanged) sceneApi.current?.sync(!siteStructureChanged);
           return;
         }
         if (
@@ -2524,108 +2433,8 @@ export default function Game3D() {
           !host &&
           payload.role === "host"
         ) {
-          const now = Date.now(),
-            pendingUnitCommands = gameRef.current.units.flatMap((unit) => {
-              if (unit.team !== lanTeamRef.current) return [];
-              const signature = `${unit.tx.toFixed(3)}/${unit.tz.toFixed(3)}/${unit.targetSiteId ?? ""}`,
-                authoritative =
-                  clientUnitCommandSignaturesRef.current.get(unit.id),
-                pendingSince =
-                  clientUnitCommandPendingSinceRef.current.get(unit.id) ?? now;
-              return authoritative != null &&
-                signature !== authoritative &&
-                now - pendingSince < networkCommandGraceMs()
-                ? [
-                    {
-                      id: unit.id,
-                      team: unit.team,
-                      tx: unit.tx,
-                      tz: unit.tz,
-                      targetSiteId: unit.targetSiteId ?? null,
-                    } satisfies ClientUnitCommand,
-                  ]
-                : [];
-            }),
-            pendingSiteCommands = gameRef.current.sites.flatMap((site) => {
-              const command: ClientSiteCommand = {
-                  id: site.id,
-                  stance: site.stance,
-                  dispatchRatio: site.dispatchRatio ?? 0.6,
-                  orderTarget:
-                    site.team === lanTeamRef.current
-                      ? site.orderTarget ?? null
-                      : null,
-                  plannedOrderTarget:
-                    site.plannedOrderTargets?.[lanTeamRef.current] ?? null,
-                  displayName:
-                    site.team === lanTeamRef.current
-                      ? site.displayName
-                      : undefined,
-                },
-                signature = JSON.stringify(command),
-                authoritative =
-                  clientSiteCommandSignaturesRef.current.get(site.id),
-                pendingSince =
-                  clientSiteCommandPendingSinceRef.current.get(site.id) ?? now;
-              return authoritative != null &&
-                signature !== authoritative &&
-                now - pendingSince < networkCommandGraceMs()
-                ? [command]
-                : [];
-            });
           gameRef.current = payload.game;
           guestHasAuthoritativeStateRef.current = true;
-          clientUnitCommandSignaturesRef.current = new Map(
-            payload.game.units
-              .filter((unit) => unit.team === lanTeamRef.current)
-              .map((unit) => [
-                unit.id,
-                `${unit.tx.toFixed(3)}/${unit.tz.toFixed(3)}/${unit.targetSiteId ?? ""}`,
-              ]),
-          );
-          clientSiteCommandSignaturesRef.current = new Map(
-            payload.game.sites.map((site) => [
-              site.id,
-              JSON.stringify({
-                stance: site.stance,
-                dispatchRatio: site.dispatchRatio,
-                orderTarget:
-                  site.team === lanTeamRef.current ? site.orderTarget : null,
-                plannedOrderTarget:
-                  site.plannedOrderTargets?.[lanTeamRef.current] ?? null,
-                displayName:
-                  site.team === lanTeamRef.current ? site.displayName : undefined,
-              }),
-            ]),
-          );
-          for (const command of pendingUnitCommands) {
-            const unit = payload.game.units.find(
-              (candidate) =>
-                candidate.id === command.id &&
-                candidate.team === lanTeamRef.current,
-            );
-            if (!unit) continue;
-            unit.tx = command.tx;
-            unit.tz = command.tz;
-            unit.targetSiteId = command.targetSiteId ?? undefined;
-            unit.path = undefined;
-            unit.pathIndex = undefined;
-          }
-          for (const command of pendingSiteCommands) {
-            const site = payload.game.sites.find(
-              (candidate) => candidate.id === command.id,
-            );
-            if (!site) continue;
-            if (site.team === lanTeamRef.current) {
-              site.stance = command.stance;
-              site.dispatchRatio = command.dispatchRatio;
-              site.orderTarget = command.orderTarget ?? undefined;
-              site.displayName = command.displayName;
-            }
-            site.plannedOrderTargets ??= {};
-            site.plannedOrderTargets[lanTeamRef.current] =
-              command.plannedOrderTarget ?? undefined;
-          }
           if (lanConnectionTimeoutRef.current != null) {
             window.clearTimeout(lanConnectionTimeoutRef.current);
             lanConnectionTimeoutRef.current = null;
@@ -3651,59 +3460,8 @@ export default function Game3D() {
         });
       }
       if (role === "guest") {
-        if (!guestHasAuthoritativeStateRef.current) return;
-        const game = gameRef.current,
-          units: ClientUnitCommand[] = [],
-          sites: ClientSiteCommand[] = [];
-        for (const unit of game.units) {
-          if (unit.team !== playerTeamRef.current) continue;
-          const signature = `${unit.tx.toFixed(3)}/${unit.tz.toFixed(3)}/${unit.targetSiteId ?? ""}`;
-          if (
-            clientUnitCommandSignaturesRef.current.get(unit.id) === signature
-          )
-            continue;
-          if (!clientUnitCommandPendingSinceRef.current.has(unit.id))
-            clientUnitCommandPendingSinceRef.current.set(unit.id, Date.now());
-          units.push({
-            id: unit.id,
-            team: unit.team,
-            tx: unit.tx,
-            tz: unit.tz,
-            targetSiteId: unit.targetSiteId ?? null,
-          });
-        }
-        for (const site of game.sites) {
-          const command: ClientSiteCommand = {
-              id: site.id,
-              stance: site.stance,
-              dispatchRatio: site.dispatchRatio ?? 0.6,
-              orderTarget:
-                site.team === playerTeamRef.current
-                  ? site.orderTarget ?? null
-                  : null,
-              plannedOrderTarget:
-                site.plannedOrderTargets?.[playerTeamRef.current] ?? null,
-              displayName:
-                site.team === playerTeamRef.current
-                  ? site.displayName
-                  : undefined,
-            },
-            signature = JSON.stringify(command);
-          if (
-            clientSiteCommandSignaturesRef.current.get(site.id) === signature
-          )
-            continue;
-          if (!clientSiteCommandPendingSinceRef.current.has(site.id))
-            clientSiteCommandPendingSinceRef.current.set(site.id, Date.now());
-          sites.push(command);
-        }
-        if (units.length || sites.length)
-          sendToChannel(openChannels[0], {
-            type: "client_commands",
-            revision: ++networkRevisionRef.current,
-            units,
-            sites,
-          });
+        // Guest timers only ping. Player controls send commands immediately.
+        // A render/state correction is never a command, even if values differ.
         return;
       }
       if (

@@ -26,7 +26,7 @@ socket.onmessage=e=>{
       // Friendly redeployment is legal even before the war unlocks.
       target=game.sites.filter(s=>s.team==='pku'&&s.id!==source.id&&!s.destroyed).sort((a,b)=>Math.hypot(a.x-source.x,a.z-source.z)-Math.hypot(b.x-source.x,b.z-source.z))[0];
       baseline=new Map(game.units.filter(u=>u.team==='pku'&&u.siteId===source.id).map(u=>[u.id,[u.x,u.z]]));
-      order={type:'client_commands',revision:1,units:[],sites:[{id:source.id,stance:source.stance,dispatchRatio:1,orderTarget:target.id,plannedOrderTarget:null}],testPadding:'x'.repeat(30000)};
+      order={type:'client_commands',intent:'player',revision:1,units:[],sites:[{id:source.id,stance:source.stance,dispatchRatio:1,orderTarget:target.id,plannedOrderTarget:null}],testPadding:'x'.repeat(30000)};
       const data=JSON.stringify(order),total=Math.ceil(data.length/12000);
       parts=Array.from({length:total},(_,index)=>relay({type:'network_chunk',transferId:'regression',index,total,data:data.slice(index*12000,(index+1)*12000)}));
       phase='unadapted'; parts.forEach(r=>socket.send(r));

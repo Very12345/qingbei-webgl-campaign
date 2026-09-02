@@ -27,6 +27,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npx tsx scripts/player-commands-smoke.ts
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build

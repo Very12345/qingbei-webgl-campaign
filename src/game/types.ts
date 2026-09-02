@@ -337,6 +337,7 @@ export type MultiplayerEnvelope =
     }
   | {
       type: "client_commands";
+      intent?: "player";
       revision: number;
       units: ClientUnitCommand[];
       sites: ClientSiteCommand[];

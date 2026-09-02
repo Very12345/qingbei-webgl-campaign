@@ -4,7 +4,7 @@ export type GameScreen = "home" | "game";
 export type BattlefieldToolMode = "simplify-lines" | "multi-route" | null;
 
 export type BattlefieldSceneApi = {
-  sync: () => void;
+  sync: (lightweight?: boolean) => void;
   focus: (region: RegionId) => void;
   applyMaterials: (
     unitUrl: string | null,

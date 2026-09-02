@@ -2,13 +2,21 @@
 // Browser peers accept application chunks, but the v0.3.1 native kernel only
 // accepts complete commands. WebSocket itself already supports large messages.
 globalThis.QingbeiProtocol = {
-  createBridge({ send, notify = () => {}, now = Date.now }) {
-    const transfers = new Map(), pendingCommands = new Map();
+  createBridge({ send, notify = () => {}, now = Date.now, team = 'pku' }) {
+    const transfers = new Map(), pendingCommands = new Map(), knownSites = new Map(), knownUnits = new Map();
+    const sameSite = (expected, actual) => !!actual &&
+      (actual.team === team ? (actual.orderTarget ?? null) === (expected.orderTarget ?? null) &&
+        actual.stance === expected.stance && Math.abs((actual.dispatchRatio ?? .6) - expected.dispatchRatio) < .001 &&
+        (expected.displayName == null || actual.displayName === expected.displayName) : true) &&
+      (actual.plannedOrderTargets?.[team] ?? null) === (expected.plannedOrderTarget ?? null);
+    const sameUnit = (expected, actual) => !!actual &&
+      (expected.targetSiteId != null ? actual.targetSiteId === expected.targetSiteId :
+        (actual.targetSiteId == null || actual.targetSiteId < 0) && Math.hypot(actual.tx - expected.tx, actual.tz - expected.tz) < .03);
     function observe(payload) {
       if (payload.type !== 'client_commands') return;
       for (const site of payload.sites || []) {
-        if (site.orderTarget == null && site.plannedOrderTarget == null) {
-          pendingCommands.delete('s' + site.id);
+        if (sameSite(site, knownSites.get(site.id))) {
+          pendingCommands.delete('s'+site.id);
           continue;
         }
         const key = 's' + site.id, signature = JSON.stringify(site);
@@ -16,6 +24,7 @@ globalThis.QingbeiProtocol = {
           pendingCommands.set(key, { site, signature, at: now() });
       }
       for (const unit of payload.units || []) {
+        if (sameUnit(unit, knownUnits.get(unit.id))) { pendingCommands.delete('u'+unit.id); continue; }
         const key = 'u' + unit.id, signature = JSON.stringify(unit);
         if (pendingCommands.get(key)?.signature !== signature)
           pendingCommands.set(key, { unit, signature, at: now() });
@@ -46,6 +55,9 @@ globalThis.QingbeiProtocol = {
         try { payload = JSON.parse(wire.data); } catch { notify('命令组装失败，请重新下达命令', true); return; }
         raw = JSON.stringify(wire);
       }
+      // Fail closed for obsolete diff-based clients. Only the explicit player
+      // command boundary may send orders; rendering never grants intent.
+      if (payload.type === 'client_commands' && payload.intent !== 'player') return;
       observe(payload);
       send(raw);
     }
@@ -54,23 +66,21 @@ globalThis.QingbeiProtocol = {
       try { const wire = JSON.parse(raw); if (wire.type !== 'relay') return; payload = JSON.parse(wire.data); } catch { return; }
       if (payload.type !== 'state_delta' && payload.type !== 'state') return;
       const full = payload.type === 'state' ? payload.game : null;
-      const sites = new Map((full?.sites || payload.sites || []).map(s => [s.id, s]));
-      const units = new Map([...(full?.units || payload.units || []), ...(payload.newUnits || [])].map(u => [Array.isArray(u) ? u[0] : u.id, u]));
+      if (full) { knownSites.clear(); knownUnits.clear(); }
+      for (const site of full?.sites || payload.sites || []) knownSites.set(site.id, site);
+      for (const unit of [...(full?.units || payload.units || []), ...(payload.newUnits || [])]) {
+        const u = Array.isArray(unit) ? { id:unit[0], targetSiteId:unit[10], tx:unit[4]/100, tz:unit[5]/100 } : unit;
+        knownUnits.set(u.id,u);
+      }
       const removed = new Set(payload.removedUnitIds || []);
+      for (const id of removed) knownUnits.delete(id);
       let confirmed = 0, timedOut = 0;
       for (const [key, p] of pendingCommands) {
         let ack = false;
         if (p.site) {
-          const s = sites.get(p.site.id);
-          ack = !!s && (p.site.orderTarget != null
-            ? s.orderTarget === p.site.orderTarget
-            : Object.values(s.plannedOrderTargets || {}).includes(p.site.plannedOrderTarget));
+          ack = sameSite(p.site, knownSites.get(p.site.id));
         } else {
-          const u = units.get(p.unit.id), compact = Array.isArray(u);
-          const target = compact ? u[10] : u?.targetSiteId;
-          const tx = compact ? u[4] / 100 : u?.tx, tz = compact ? u[5] / 100 : u?.tz;
-          ack = !!u && (p.unit.targetSiteId != null ? target === p.unit.targetSiteId
-            : (target == null || target < 0) && Math.hypot(tx - p.unit.tx, tz - p.unit.tz) < .03);
+          ack = sameUnit(p.unit, knownUnits.get(p.unit.id));
           if (removed.has(p.unit.id)) { pendingCommands.delete(key); continue; }
         }
         if (ack) { pendingCommands.delete(key); confirmed++; }

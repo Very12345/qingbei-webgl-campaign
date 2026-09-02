@@ -34,7 +34,7 @@
 
     const NativeWebSocket=window.WebSocket;
     class PluginWebSocket extends NativeWebSocket{
-      constructor(url,protocols){super(url,protocols);this.bridge=QingbeiProtocol.createBridge({send:raw=>NativeWebSocket.prototype.send.call(this,raw),notify:toast});this.addEventListener('message',event=>{if(typeof event.data==='string')this.bridge.incoming(event.data)});this.addEventListener('close',()=>{if(!completed){markDisconnected();toast('游戏连接已断开，请在60秒内刷新返回',true)}})}
+      constructor(url,protocols){super(url,protocols);this.bridge=QingbeiProtocol.createBridge({team,send:raw=>NativeWebSocket.prototype.send.call(this,raw),notify:toast});this.addEventListener('message',event=>{if(typeof event.data==='string')this.bridge.incoming(event.data)});this.addEventListener('close',()=>{if(!completed){markDisconnected();toast('游戏连接已断开，请在60秒内刷新返回',true)}})}
       send(data){if(completed)return;return this.bridge.outgoing(data)}
     }
     window.WebSocket=PluginWebSocket;

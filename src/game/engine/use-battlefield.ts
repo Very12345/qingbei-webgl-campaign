@@ -64,6 +64,7 @@ import type {
 } from "./contracts";
 import type { NetworkChannel } from "../local-relay";
 import ServerClockWorker from "../server-clock-worker.ts?worker&inline";
+import type { PlayerCommandSelection } from "../player-commands";
 
 type VictoryBroadcast = {
   winner: Team;
@@ -72,6 +73,7 @@ type VictoryBroadcast = {
 };
 
 type BattlefieldEngineContext = {
+  playerCommandSenderRef: RefObject<(selection: PlayerCommandSelection) => void>;
   screen: GameScreen;
   hostRef: RefObject<HTMLDivElement | null>;
   sceneApi: RefObject<BattlefieldSceneApi | null>;
@@ -124,6 +126,7 @@ type BattlefieldEngineContext = {
 
 export function useBattlefieldEngine(context: BattlefieldEngineContext) {
   const {
+    playerCommandSenderRef,
     screen,
     hostRef,
     sceneApi,
@@ -448,14 +451,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       };
     const navGrid = buildNavGrid(regions.main),
+      remoteSession = { active: lanChannelsRef.current.size > 0 && !lanHostRef.current },
       kernelPathfinder = new KernelPathfinder(navGrid),
       sharedKernel = createKernel(gameRef.current, {
         navGrid,
         fixedStepMilliseconds: 50,
         aiTeams: [],
-        mutateInitialState: true,
+        mutateInitialState: !remoteSession.active,
       }),
       kernelOwnsSimulation = true,
+      isRemoteGuest = () => (remoteSession.active ||= lanChannelsRef.current.size > 0 && !lanHostRef.current),
       navIndex = (grid: NavGrid, x: number, z: number) => {
         const gx = Math.floor((x - grid.minX) / grid.cell),
           gz = Math.floor((z - grid.minZ) / grid.cell);
@@ -879,6 +884,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return nearestOpenIndex(navGrid, x, z);
       },
       ejectTrappedUnits = () => {
+        if (isRemoteGuest()) return;
         gameRef.current.units.forEach((unit) => {
           const current = navIndex(navGrid, unit.x, unit.z),
             trapped = current < 0;
@@ -911,6 +917,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         });
       };
     const refreshNavAnchors = () => {
+      if (isRemoteGuest()) return; // Visual refresh must not relocate server units.
       gameRef.current.sites.forEach((site) => {
         if (site.destroyed) return;
         let anchor = nearestClearIndex(site.x, site.z);
@@ -1966,6 +1973,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       activeToolMode: BattlefieldToolMode = null,
       directLeaderId: number | null = null,
       nextDirectFollowerPathAt = 0,
+      nextDirectCommandAt = 0,
       cameraBeforeDirect: {
         position: THREE.Vector3;
         target: THREE.Vector3;
@@ -2012,6 +2020,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           unit.tz = unit.z;
         });
         directLeaderId = selectedUnits[0].id;
+        playerCommandSenderRef.current({ unitIds: selectedUnits.map(u => u.id) });
         nextDirectFollowerPathAt = 0;
         directControlActive = true;
         controls.enabled = false;
@@ -2579,6 +2588,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       let deployed = 0,
         configured = 0;
       for (let index = 0; index < chain.length - 1; index++) {
+        if (isRemoteGuest()) {
+          const from = chain[index], to = chain[index + 1];
+          if (from.team === team) {
+            from.orderTarget = to.id;
+            if (from.plannedOrderTargets) delete from.plannedOrderTargets[team];
+          } else { from.plannedOrderTargets ??= {}; from.plannedOrderTargets[team] = to.id; }
+          configured++;
+          continue;
+        }
         const from = chain[index],
           to = chain[index + 1],
           path = findPath(
@@ -2600,6 +2618,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         configured++;
       }
+      // Server-side site dispatch owns paths and transport grouping.
+      playerCommandSenderRef.current({ siteIds: chain.slice(0, -1).map(s => s.id) });
       rebuildCommandLines();
       refreshRouteHighlights();
       return { deployed, configured };
@@ -3764,6 +3784,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (unit) createDetailedUnitObject(unit);
       });
     };
+    const renderPositions = new Map<number, { x: number; z: number }>();
+    const renderPosition = (unit: UnitState) => isRemoteGuest() ? renderPositions.get(unit.id) ?? unit : unit;
     const updateFarUnitInstances = () => {
       const counts = {
         pku: 0,
@@ -3780,12 +3802,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const key = (unit.skin ?? unit.team) as keyof typeof farUnitMeshes,
           index = counts[key]++;
         if (index >= unitInstanceCapacity) continue;
+        const position = renderPosition(unit);
         farUnitDummy.position.set(
-          unit.x,
-          terrainHeight(regionForX(unit.x), unit.x, unit.z) +
+          position.x,
+          terrainHeight(regionForX(position.x), position.x, position.z) +
             0.98 * UNIT_RENDER_SCALE +
-            (insideWater(unit.x, unit.z) ? 0.1 : 0),
-          unit.z,
+            (insideWater(position.x, position.z) ? 0.1 : 0),
+          position.z,
         );
         farUnitDummy.rotation.set(0, Math.atan2(unit.tx - unit.x, unit.tz - unit.z), 0);
         farUnitDummy.scale.setScalar(UNIT_RENDER_SCALE);
@@ -3831,10 +3854,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                     ? "pkuBike"
                     : "thuBike",
           index = bikeCounts[key]++;
+        const position = renderPosition(unit);
         transportDummy.position.set(
-          unit.x,
-          terrainHeight(regionForX(unit.x), unit.x, unit.z) + 0.08,
-          unit.z,
+          position.x,
+          terrainHeight(regionForX(position.x), position.x, position.z) + 0.08,
+          position.z,
         );
         transportDummy.rotation.set(
           0,
@@ -3863,10 +3887,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 ? "busPku"
                 : "busThu",
           index = transportCounts[key]++;
+        const position = renderPosition(leader);
         transportDummy.position.set(
-          leader.x,
-          terrainHeight(regionForX(leader.x), leader.x, leader.z) + 0.34,
-          leader.z,
+          position.x,
+          terrainHeight(regionForX(position.x), position.x, position.z) + 0.34,
+          position.z,
         );
         transportDummy.rotation.set(
           0,
@@ -4330,6 +4355,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (source.plannedOrderTargets)
           delete source.plannedOrderTargets[team];
         if (source.plannedOrderPaths) delete source.plannedOrderPaths[team];
+        playerCommandSenderRef.current({ siteIds: [sourceId], unitIds: active ? gameRef.current.units.filter(u => u.siteId === sourceId && u.team === team).map(u => u.id) : [] });
         rebuildCommandLines();
         rebuildBuildings();
         return true;
@@ -4405,6 +4431,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         setNotice(
           `兵线已简化：${source.displayName ?? source.name} → ${terminal.displayName ?? terminal.name}`,
         );
+        playerCommandSenderRef.current({ siteIds: chain.slice(0, -1).map(s => s.id) });
         return true;
       };
     const buildCampAt = (
@@ -4692,7 +4719,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (point && center) {
           const destinationX = target?.navX ?? point.x,
             destinationZ = target?.navZ ?? point.z,
-            path = findPath(center.x, center.z, destinationX, destinationZ);
+            path = isRemoteGuest() ? [[destinationX, destinationZ] as [number, number]] : findPath(center.x, center.z, destinationX, destinationZ);
           if (path.length) {
             const selectedUnits = gameRef.current.units.filter(
               (unit) =>
@@ -4710,6 +4737,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               unit.pathIndex = 0;
               unit.tx = personalX;
               unit.tz = personalZ;
+              if (isRemoteGuest()) return;
               void findPathInWorker(unit.x, unit.z, personalX, personalZ)
                 .then((personalPath) => {
                   if (
@@ -4733,6 +4761,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               (sum, unit) => sum + unit.strength,
               0,
             );
+            playerCommandSenderRef.current({ unitIds: selectedUnits.map(u => u.id) });
             setNotice(
               target
                 ? `已命令 ${people} 名学生${target.team === playerTeamRef.current ? "支援" : "进攻"}${target.displayName ?? target.name}`
@@ -4778,7 +4807,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             targets,
           );
           setNotice(
-            configured > 1
+            isRemoteGuest() ? "兵线命令已发送给服务器" : configured > 1
               ? `已建立包含${configured}段的多目标兵线；${troops}名学生开始执行`
               : troops
                 ? `${source.displayName ?? source.name} → ${target.displayName ?? target.name}：${troops}名学生出发`
@@ -8858,6 +8887,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               unit.tz = destination[1];
             });
           }
+          if (now >= nextDirectCommandAt) {
+            nextDirectCommandAt = now + 100;
+            playerCommandSenderRef.current({ unitIds: controlled.map(u => u.id) });
+          }
           controlled.forEach((unit) => {
             const object = unitObjects.get(unit.id),
               ring = object?.userData.selectionRing as
@@ -8920,7 +8953,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       }
       const authoritativeGuest =
-        lanChannelsRef.current.size > 0 && !lanHostRef.current;
+        isRemoteGuest();
+      if (authoritativeGuest) {
+        const ids = new Set<number>(), alpha = 1 - Math.exp(-16 * Math.max(0, Math.min(.25, rawDelta)));
+        for (const unit of g.units) {
+          ids.add(unit.id);
+          const previous = renderPositions.get(unit.id);
+          if (!previous || Math.hypot(previous.x - unit.x, previous.z - unit.z) > 8)
+            renderPositions.set(unit.id, { x: unit.x, z: unit.z });
+          else { previous.x += (unit.x - previous.x) * alpha; previous.z += (unit.z - previous.z) * alpha; }
+        }
+        for (const id of renderPositions.keys()) if (!ids.has(id)) renderPositions.delete(id);
+      }
       if (kernelOwnsSimulation && !authoritativeGuest) {
         if (kernelTimeScale !== timeScaleRef.current) {
           kernelTimeScale = timeScaleRef.current;
@@ -9159,11 +9203,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         if (kernelOwnsSimulation) {
           if (mesh) {
+            const position = renderPosition(u);
             mesh.position.set(
-              u.x,
-              terrainHeight(regionForX(u.x), u.x, u.z) +
-                (insideWater(u.x, u.z) ? 0.1 : 0),
-              u.z,
+              position.x,
+              terrainHeight(regionForX(position.x), position.x, position.z) +
+                (insideWater(position.x, position.z) ? 0.1 : 0),
+              position.z,
             );
             if (dist > 0.02) mesh.rotation.y = Math.atan2(dx, dz);
           }
@@ -9597,7 +9642,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     };
     addEventListener("resize", resize);
     sceneApi.current = {
-      sync: () => {
+      sync: (lightweight = false) => {
+        if (isRemoteGuest()) {
+          // No pathfinding, relocation or destination writes on received state.
+          if (!lightweight) { rebuildBuildings(); rebuildUnits(); }
+          else rebuildSiteNodeBatches();
+          rebuildCommandLines();
+          return;
+        }
         refreshNavAnchors();
         gameRef.current.sites.forEach((source) => {
           if (source.destroyed || source.orderTarget == null) return;
