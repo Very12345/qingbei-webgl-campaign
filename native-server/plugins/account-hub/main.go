@@ -157,6 +157,12 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 	})
+	mux.HandleFunc("/duel-ui.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/duel-ui.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
 	mux.HandleFunc("/hooks/player/join", server.playerJoinHook)
 	mux.HandleFunc("/hooks/battle/result", server.battleResultHook)
 	mux.HandleFunc("/play/", server.servePlay)
@@ -877,6 +883,7 @@ func (server *hubServer) applyRewards(user *userRecord, team string) {
 
 func (server *hubServer) publicProfileLocked(user *userRecord) map[string]any {
 	profile := map[string]any{"id": user.ID, "experience": user.Experience, "levels": map[string]int{"pku": levelFor(user.Experience["pku"]), "thu": levelFor(user.Experience["thu"])}, "speedCards": user.SpeedCards, "cosmetics": user.Cosmetics, "selectedCosmetics": user.SelectedCosmetics}
+	profile["career"] = server.careerForUserLocked(user)
 	if active := server.activeMatchForUserLocked(user.ID); active != nil {
 		profile["activeMatch"] = server.matchViewLocked(user.ID, active)
 	}

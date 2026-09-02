@@ -348,6 +348,382 @@
           transition: none;
         }
       }
+
+      /* Scope all presentation changes to this plugin-owned page. */
+      body.plugin-duel-active .battle-nav {
+        top: 93px;
+        left: 14px;
+      }
+      body.plugin-duel-active .battle-nav button {
+        border-radius: 0;
+        background: #26322df0;
+        border-color: #9ba78a85;
+      }
+      body.plugin-duel-active .battle-clock {
+        top: 24px;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        border-radius: 0;
+        background: #26322df0;
+        border-color: #a7b28d80;
+      }
+      body.plugin-duel-active .performance-hud {
+        top: 94px;
+      }
+      body.plugin-duel-active .battle-drawer {
+        top: 141px;
+      }
+      body.plugin-duel-active .chat-panel,
+      body.plugin-duel-active .chat-entry {
+        display: none !important;
+      }
+      #plugin-duel-ui {
+        font-family: var(--command-type);
+        color: #d9dfc6;
+      }
+      #plugin-duel-ui[hidden] {
+        display: none;
+      }
+      .duel-player {
+        position: fixed;
+        top: 13px;
+        width: 270px;
+        min-height: 66px;
+        display: flex;
+        gap: 12px;
+        padding: 9px 13px;
+        background: var(--command-metal);
+        background-size: auto, 420px;
+        border: 1px solid #a5b08b8c;
+        box-shadow:
+          inset 0 1px #c5c9a647,
+          0 4px 14px #08130c99;
+        z-index: 97;
+        pointer-events: none;
+      }
+      .duel-player.self {
+        left: 14px;
+      }
+      .duel-player.opponent {
+        right: 14px;
+        flex-direction: row-reverse;
+        text-align: right;
+      }
+      .duel-avatar {
+        width: 49px;
+        height: 54px;
+        flex-shrink: 0;
+        border: 2px solid #b4a473;
+        background: linear-gradient(145deg, #863e35, #542f29);
+        display: grid;
+        place-items: center;
+        color: #e7d6a4;
+        font-size: 27px;
+        font-weight: 900;
+        box-shadow: inset 0 0 0 2px #ddcda755;
+        overflow: hidden;
+      }
+      .duel-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .duel-avatar img[hidden],
+      .duel-avatar span[hidden] {
+        display: none;
+      }
+      .duel-player[data-team="thu"] .duel-avatar {
+        background: linear-gradient(145deg, #626880, #334253);
+      }
+      .duel-player-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 0;
+        gap: 2px;
+      }
+      .duel-player-copy small {
+        color: #9bac90;
+        font-size: 10px;
+        line-height: 1.2;
+      }
+      .duel-player-copy strong {
+        font-size: 17px;
+        font-weight: 900;
+        line-height: 1.4;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        max-width: 188px;
+        color: #e0e5cc;
+      }
+      .duel-player-copy > span {
+        color: #8da882;
+        font-size: 9px;
+      }
+      .duel-player[data-status="disconnected"] .duel-player-copy > span {
+        color: #deac62;
+      }
+      .duel-player[data-status="joining"] .duel-player-copy > span {
+        color: #c1bd88;
+      }
+      .duel-chat {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 102;
+        width: 320px;
+        max-width: calc(100vw - 32px);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+      }
+      .duel-chat-toggle {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 37px;
+        padding: 8px 13px;
+        border: 1px solid #9dae8280;
+        border-radius: 0;
+        background: #25362cf0;
+        color: #cfd9be;
+        font: 700 11px var(--command-type);
+        box-shadow: 0 3px 11px #06160c99;
+        cursor: pointer;
+      }
+      .duel-chat-toggle svg {
+        width: 18px;
+        height: 18px;
+      }
+      .duel-chat-toggle i {
+        width: 6px;
+        height: 6px;
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background: #d5a447;
+        border-radius: 50%;
+      }
+      .duel-chat-panel {
+        width: 100%;
+        background:
+          linear-gradient(#26352ff5, #15291ff5),
+          url("../assets/field-table.png");
+        border: 1px solid #9dad837d;
+        box-shadow: 0 10px 30px #001e11a6;
+        overflow: hidden;
+      }
+      .duel-chat-panel[hidden] {
+        display: none;
+      }
+      .duel-chat-panel header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #8d9b7244;
+      }
+      .duel-chat-panel header strong {
+        font-size: 12px;
+        color: #d6ddc2;
+      }
+      .duel-chat-panel header > span {
+        font-size: 9px;
+        color: #8fa581;
+      }
+      .duel-chat-panel header button {
+        margin-left: auto;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        color: #b0c39f;
+        font-size: 19px;
+        padding: 0 2px;
+        cursor: pointer;
+      }
+      .duel-chat-log {
+        height: 180px;
+        overflow-y: auto;
+        padding: 10px 12px;
+        scrollbar-width: thin;
+        scrollbar-color: #8a9f73 #122a1c;
+      }
+      .duel-chat-empty {
+        font-size: 11px;
+        color: #7e9970;
+        margin: 8px 0;
+      }
+      .duel-chat-log .duel-message {
+        margin: 0 0 10px;
+        font-size: 11px;
+        line-height: 1.7;
+        overflow-wrap: anywhere;
+      }
+      .duel-message b {
+        font-weight: 700;
+        color: #d3927c;
+        margin-right: 4px;
+      }
+      .duel-message.thu b {
+        color: #a7b6db;
+      }
+      .duel-message > span {
+        color: #ced8be;
+        white-space: pre-wrap;
+      }
+      .duel-chat-panel form {
+        display: flex;
+        gap: 8px;
+        padding: 9px;
+        border-top: 1px solid #8d9b7244;
+      }
+      .duel-chat-panel input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid #8aa77366;
+        border-radius: 0;
+        background: #13291ed9;
+        padding: 9px;
+        color: #d9e1c8;
+        font: 11px var(--command-type);
+      }
+      .duel-chat-panel input::placeholder {
+        color: #78946a;
+      }
+      .duel-chat-panel form button {
+        border: 1px solid #a8b48c;
+        border-radius: 0;
+        background: #b0bc93;
+        color: #1c3323;
+        padding: 8px 12px;
+        font: 900 11px var(--command-type);
+        box-shadow: 0 2px #081b1299;
+        cursor: pointer;
+      }
+      .duel-chat-panel form button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .duel-chat button:hover:not(:disabled) {
+        filter: brightness(1.15);
+      }
+      .duel-chat button:focus-visible,
+      .duel-chat input:focus-visible {
+        outline: 2px solid #dfab50;
+        outline-offset: 3px;
+      }
+      @media (max-width: 760px) {
+        .duel-player {
+          width: 220px;
+          padding: 9px;
+          gap: 9px;
+        }
+        .duel-player-copy strong {
+          max-width: 155px;
+          font-size: 15px;
+        }
+        .duel-avatar {
+          width: 43px;
+          height: 47px;
+          font-size: 23px;
+        }
+        body.plugin-duel-active .battle-clock {
+          top: 88px;
+          right: 14px;
+          left: auto;
+          transform: none;
+          padding: 7px 9px;
+          font-size: 11px;
+        }
+        body.plugin-duel-active .performance-hud {
+          top: 130px;
+        }
+        body.plugin-duel-active .battle-nav {
+          top: 89px;
+        }
+        body.plugin-duel-active .battle-nav button {
+          width: 33px;
+          height: 33px;
+          font-size: 19px;
+        }
+        .duel-chat-log {
+          height: 160px;
+        }
+      }
+      @media (max-width: 500px) {
+        .duel-player {
+          width: calc(50vw - 18px);
+          top: 10px;
+          min-height: 63px;
+          padding: 8px 7px;
+          gap: 7px;
+        }
+        .duel-player.self {
+          left: 10px;
+        }
+        .duel-player.opponent {
+          right: 10px;
+        }
+        .duel-avatar {
+          width: 33px;
+          height: 40px;
+          font-size: 20px;
+        }
+        .duel-player-copy {
+          gap: 3px;
+          flex: 1;
+        }
+        .duel-player-copy strong {
+          font-size: 12px;
+          max-width: 100%;
+        }
+        .duel-player-copy small {
+          font-size: 8px;
+          white-space: nowrap;
+        }
+        .duel-player-copy > span {
+          font-size: 8px;
+          line-height: 1.2;
+        }
+        body.plugin-duel-active .battle-nav {
+          top: 84px;
+          left: 10px;
+          gap: 4px;
+        }
+        body.plugin-duel-active .battle-nav button {
+          width: 29px;
+          height: 29px;
+          font-size: 17px;
+        }
+        body.plugin-duel-active .battle-clock {
+          top: 83px;
+          right: 10px;
+          font-size: 10px;
+          padding: 7px 6px;
+        }
+        body.plugin-duel-active .battle-drawer {
+          top: 120px;
+        }
+        .duel-chat {
+          right: 10px;
+          bottom: 12px;
+          max-width: calc(100vw - 20px);
+          width: 300px;
+        }
+        .duel-chat-log {
+          height: 145px;
+        }
+        .duel-chat-toggle {
+          min-height: 34px;
+          font-size: 10px;
+          padding: 7px 10px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -361,6 +737,88 @@
       <span class="loader-caption">北京 · 海淀 / 两园之间，战局由你。</span>
     </div>
     <div id="root"></div>
+    <div id="plugin-duel-ui" hidden>
+      <section class="duel-player self" id="duel-self" aria-label="自己">
+        <div class="duel-avatar" id="duel-self-avatar">
+          <img alt="" hidden /><span aria-hidden="true">北</span>
+        </div>
+        <div class="duel-player-copy">
+          <small id="duel-self-team">自己</small
+          ><strong id="duel-self-name">正在连接</strong
+          ><span id="duel-self-status">正在入场</span>
+        </div>
+      </section>
+      <section
+        class="duel-player opponent"
+        id="duel-opponent"
+        aria-label="对手"
+      >
+        <div class="duel-avatar" id="duel-opponent-avatar">
+          <img alt="" hidden /><span aria-hidden="true">清</span>
+        </div>
+        <div class="duel-player-copy">
+          <small id="duel-opponent-team">对手</small
+          ><strong id="duel-opponent-name">正在连接</strong
+          ><span id="duel-opponent-status">正在入场</span>
+        </div>
+      </section>
+      <div class="duel-chat">
+        <section
+          id="duel-chat-panel"
+          class="duel-chat-panel"
+          aria-label="全局聊天"
+          hidden
+        >
+          <header>
+            <strong>全局聊天</strong><span>仅本场对局可见</span
+            ><button
+              id="duel-chat-close"
+              aria-label="收起全局聊天"
+              type="button"
+            >
+              ×
+            </button>
+          </header>
+          <div
+            class="duel-chat-log"
+            id="duel-chat-log"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+          >
+            <p class="duel-chat-empty">向对手打个招呼。</p>
+          </div>
+          <form id="duel-chat-form">
+            <input
+              id="duel-chat-input"
+              aria-label="全局聊天消息"
+              maxlength="200"
+              autocomplete="off"
+              placeholder="发送给对手…"
+            /><button id="duel-chat-send" type="submit" disabled>发送</button>
+          </form>
+        </section>
+        <button
+          id="duel-chat-toggle"
+          class="duel-chat-toggle"
+          type="button"
+          aria-label="全局聊天"
+          aria-expanded="false"
+          aria-controls="duel-chat-panel"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path d="M3 4h18v13H9l-5 4v-4H3Z" />
+            <path d="M7 8h10M7 12h7" /></svg
+          ><span>全局聊天</span><i id="duel-chat-unread" hidden></i>
+        </button>
+      </div>
+    </div>
     <aside class="plugin-toast" id="plugin-toast" role="status"></aside>
     <aside
       class="plugin-lifecycle"
@@ -405,6 +863,7 @@
     </div>
     <script src="../protocol.js"></script>
     <script src="../lifecycle-client.js"></script>
+    <script src="../duel-ui.js"></script>
     <script>
       (() => {
         const params = new URLSearchParams(location.search),
@@ -455,6 +914,7 @@
           input.dispatchEvent(new Event("input", { bubbles: true }));
           input.dispatchEvent(new Event("change", { bubbles: true }));
         };
+        let duelUI = null;
         let gameConnected = false,
           lifecycleState = null,
           lifecycleReceivedAt = 0,
@@ -493,6 +953,7 @@
           lastLifecycleAt = Date.now();
           lifecycleFault = "";
           lifecycleState = state;
+          duelUI?.state(state);
           lifecycleReceivedAt = Date.now();
           for (const peer of state.participants || []) {
             if (
@@ -525,6 +986,7 @@
         const showResult = (state) => {
           if (completed) return;
           completed = true;
+          duelUI?.finish();
           clearInterval(lifecycleTimer);
           $("lifecycle-notice").hidden = true;
           presence?.close();
@@ -553,6 +1015,7 @@
         };
         const reportGameDisconnect = async () => {
           gameConnected = false;
+          duelUI?.connected(false);
           if (completed) return;
           try {
             updateLifecycle(
@@ -612,11 +1075,14 @@
             });
             this.addEventListener("open", () => {
               gameConnected = true;
+              duelUI?.connected(true);
               void heartbeat();
             });
             this.addEventListener("message", (event) => {
-              if (typeof event.data === "string")
+              if (typeof event.data === "string") {
                 this.bridge.incoming(event.data);
+                duelUI?.incoming(event.data);
+              }
             });
             this.addEventListener("close", () => {
               if (!completed) void reportGameDisconnect();
@@ -624,7 +1090,9 @@
           }
           send(data) {
             if (completed) return;
-            return this.bridge.outgoing(data);
+            return this.bridge.outgoing(
+              duelUI ? duelUI.outgoing(data, this) : data,
+            );
           }
         }
         window.WebSocket = PluginWebSocket;
@@ -635,6 +1103,7 @@
           );
           if (stage) {
             entered = true;
+            duelUI?.show();
             $("plugin-loader").classList.add("hidden");
           }
           const lobby = document.querySelector(".team-lobby-card");
@@ -735,6 +1204,14 @@
               location.replace(activeMatch.joinUrl);
               return;
             }
+            duelUI = QingbeiDuel.mount({
+              root: $("plugin-duel-ui"),
+              team,
+              profile,
+              pluginBase,
+              notify: toast,
+            });
+            duelUI.state(activeMatch);
             sessionStorage.setItem("qingbei-player-name", profile.id);
             presence = new EventSource(
               pluginBase +
@@ -756,6 +1233,7 @@
             };
             presence.addEventListener("replaced", () => {
               completed = true;
+              duelUI?.finish();
               presence.close();
               $("plugin-loader").classList.add("hidden");
               $("result-mark").textContent = "↗";

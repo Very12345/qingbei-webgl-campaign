@@ -33,7 +33,13 @@ func (s *hubServer) participantViewsLocked(viewer string, m *matchRecord) ([]map
 				phase = "waiting_players"
 			}
 		}
-		result = append(result, map[string]any{"id": id, "team": m.Participants[id], "self": id == viewer, "status": state, "deadline": deadline})
+		team := m.Participants[id]
+		participant := map[string]any{"id": id, "nickname": id, "team": team, "self": id == viewer, "status": state, "deadline": deadline}
+		if user := s.data.Users[id]; user != nil {
+			participant["level"] = levelFor(user.Experience[team])
+			participant["cosmetic"] = user.SelectedCosmetics[team]
+		}
+		result = append(result, participant)
 	}
 	if m.Completed {
 		phase = "finished"
