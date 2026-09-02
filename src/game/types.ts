@@ -30,8 +30,10 @@ export type SiteState = {
   orderPath?: [number, number][];
   orderPurpose?: "combat" | "logistics" | "probe";
   orderIssuedAt?: number;
+  orderOwner?: "player" | "ai";
   plannedOrderTargets?: Partial<Record<Team, number>>;
   plannedOrderPaths?: Partial<Record<Team, [number, number][]>>;
+  plannedOrderOwners?: Partial<Record<Team, "player" | "ai">>;
   dispatchRatio?: number;
   osmKey?: string;
   temporary?: boolean;

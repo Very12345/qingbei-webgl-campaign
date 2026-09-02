@@ -260,6 +260,7 @@ export function createKernel(
     targetId: number,
     count = Number.POSITIVE_INFINITY,
     purpose: "combat" | "logistics" | "probe" = "combat",
+    owner: "player" | "ai" = "ai",
   ) => {
     const source = state.sites[sourceId],
       target = state.sites[targetId];
@@ -306,6 +307,8 @@ export function createKernel(
       blocker.plannedOrderTargets ??= {};
       blocker.plannedOrderPaths ??= {};
       blocker.plannedOrderTargets[team] = target.id;
+      blocker.plannedOrderOwners ??= {};
+      blocker.plannedOrderOwners[team] = owner;
       blocker.plannedOrderPaths[team] = clone(path);
     }
     const idle = state.units.filter(
@@ -328,6 +331,7 @@ export function createKernel(
     if (orderChanged)
       source.orderIssuedAt = state.campaign.elapsedHours;
     source.orderPurpose = purpose;
+    source.orderOwner = owner;
     source.orderIssuedAt ??= state.campaign.elapsedHours;
     return moving.length;
   };
@@ -348,6 +352,8 @@ export function createKernel(
         action.sourceId,
         action.targetId,
         action.count,
+        "combat",
+        "player",
       );
       return;
     }
@@ -407,6 +413,8 @@ export function createKernel(
           blocker.plannedOrderTargets ??= {};
           blocker.plannedOrderPaths ??= {};
           blocker.plannedOrderTargets[action.team] = target.id;
+          blocker.plannedOrderOwners ??= {};
+          blocker.plannedOrderOwners[action.team] = "player";
           blocker.plannedOrderPaths[action.team] = clone(path);
         }
         unit.targetSiteId = blocker?.id ?? target?.id;
@@ -430,14 +438,17 @@ export function createKernel(
           site.orderPath = undefined;
           site.orderPurpose = undefined;
           site.orderIssuedAt = undefined;
+          site.orderOwner = undefined;
         } else if (action.orderTarget != null) {
-          issueOrder(action.team, site.id, action.orderTarget);
+          issueOrder(action.team, site.id, action.orderTarget, undefined, "combat", "player");
         }
       }
       site.plannedOrderTargets ??= {};
       site.plannedOrderPaths ??= {};
       site.plannedOrderTargets[action.team] =
         action.plannedOrderTarget ?? undefined;
+      site.plannedOrderOwners ??= {};
+      site.plannedOrderOwners[action.team] = action.plannedOrderTarget == null ? undefined : "player";
       site.plannedOrderPaths[action.team] = undefined;
       return;
     }
@@ -575,7 +586,7 @@ export function createKernel(
       );
       if (!occupiers.length) continue;
       captureSite(state, site, occupiers, pathfinder, (team, sourceId, targetId) => {
-        issueOrder(team, sourceId, targetId);
+        issueOrder(team, sourceId, targetId, undefined, "combat", state.sites[sourceId]?.orderOwner ?? "ai");
       });
     }
     if (dead.size) {
@@ -742,6 +753,7 @@ export function createKernel(
           target.id,
           count,
           purpose ?? source.orderPurpose ?? "combat",
+          source.orderOwner ?? "ai",
         ),
     );
     progressResearchAndProduction(state, randomFor("pku"), options.navGrid);
@@ -915,6 +927,7 @@ const networkSiteSignature = (site: SiteState) =>
     team: site.team,
     stance: site.stance,
     orderTarget: site.orderTarget,
+    orderOwner: site.orderOwner,
     plannedOrderTargets: site.plannedOrderTargets,
     dispatchRatio: site.dispatchRatio,
     displayName: site.displayName,

@@ -118,6 +118,7 @@ export function captureSite(
     return { kind: "camp_destroyed", siteId: site.id };
   }
   const plannedTargetId = site.plannedOrderTargets?.[newTeam],
+    plannedOwner = site.plannedOrderOwners?.[newTeam],
     plannedPath = site.plannedOrderPaths?.[newTeam];
   site.team = newTeam;
   site.supply = 45;
@@ -139,11 +140,13 @@ export function captureSite(
     unit.tz = unit.z;
   });
   site.orderTarget = plannedTargetId;
+  site.orderOwner = plannedTargetId == null ? undefined : plannedOwner;
   site.orderPath = plannedPath;
   site.orderPurpose = plannedTargetId == null ? undefined : "combat";
   site.orderIssuedAt =
     plannedTargetId == null ? undefined : game.campaign.elapsedHours;
   if (site.plannedOrderTargets) delete site.plannedOrderTargets[newTeam];
+  if (site.plannedOrderOwners) delete site.plannedOrderOwners[newTeam];
   if (site.plannedOrderPaths) delete site.plannedOrderPaths[newTeam];
   if (site.type === "target" && newTeam === "pku") {
     if (recordKernelEvent(game, "qz_strategic_buff", EVENT_CARDS.qz_strategic_buff)) {

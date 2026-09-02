@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 vm.runInThisContext(readFileSync(new URL('./static/protocol.js', import.meta.url), 'utf8'));
+vm.runInThisContext(readFileSync(new URL('./static/lifecycle-client.js', import.meta.url), 'utf8'));
 const relay = payload => JSON.stringify({type:'relay',peerId:'host',data:JSON.stringify(payload)});
 
 test('large chunked orders become exactly one unchanged complete command', () => {
@@ -51,4 +52,17 @@ test('unchanged full-state orders do not need a new delta to confirm', () => {
   bridge.outgoing(relay({type:'client_commands',intent:'player',revision:1,sites:[{...site,plannedOrderTarget:null}],units:[]}));
   clock=9000;bridge.incoming(relay({type:'state_delta',sites:[],units:[]}));
   assert.equal(bridge.pendingCommands.size,0);assert.deepEqual(notices,[]);
+});
+
+test('opponent exit countdown, join and self-disconnect have distinct lifecycle UI',()=>{
+  const state={participants:[{id:'peer',self:false,status:'disconnected',deadline:61000}]};
+  assert.match(QingbeiLifecycle.message(state,11000).body,/50秒/);
+  assert.equal(QingbeiLifecycle.message(state,11000).title,'对手已离线');
+  state.participants[0].status='joining';
+  assert.equal(QingbeiLifecycle.message(state,11000).title,'等待对手进入战场');
+  state.participants[0].status='online';
+  assert.equal(QingbeiLifecycle.message(state,11000),null);
+  state.participants[0].self=true;state.participants[0].status='disconnected';
+  assert.equal(QingbeiLifecycle.message(state,11000).title,'游戏连接已断开');
+  assert.equal(QingbeiLifecycle.message({...state,completed:true},11000),null);
 });

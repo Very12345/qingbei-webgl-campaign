@@ -4,8 +4,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 )
+
+func (s *hubServer) participantViewsLocked(viewer string, m *matchRecord) ([]map[string]any, string) {
+	ensureMatchMaps(m)
+	ids := make([]string, 0, len(m.Participants))
+	for id := range m.Participants {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	result := make([]map[string]any, 0, len(ids))
+	phase := "active"
+	for _, id := range ids {
+		state := "online"
+		deadline := int64(0)
+		if !m.DisconnectedAt[id].IsZero() {
+			state = "disconnected"
+			deadline = m.DisconnectedAt[id].Add(time.Minute).UnixMilli()
+			phase = "reconnecting"
+		} else if !m.JoinedPlayers[id] {
+			state = "joining"
+			if !m.JoinDeadline.IsZero() {
+				deadline = m.JoinDeadline.UnixMilli()
+			}
+			if phase != "reconnecting" {
+				phase = "waiting_players"
+			}
+		}
+		result = append(result, map[string]any{"id": id, "team": m.Participants[id], "self": id == viewer, "status": state, "deadline": deadline})
+	}
+	if m.Completed {
+		phase = "finished"
+	}
+	return result, phase
+}
 
 func (s *hubServer) rejectActiveLocked(w http.ResponseWriter, id string) bool {
 	if m := s.activeMatchForUserLocked(id); m != nil {
@@ -48,6 +82,23 @@ func (s *hubServer) expireMatchLocked(m *matchRecord, now time.Time) bool {
 		return false
 	}
 	ensureMatchMaps(m)
+	if !m.JoinDeadline.IsZero() && !now.Before(m.JoinDeadline) {
+		missing := []string{}
+		for id := range m.Participants {
+			if !m.JoinedPlayers[id] {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			if len(missing) == len(m.Participants) {
+				s.interruptMatchLocked(m, "玩家未在入场期限内进入，本局取消，不计经验")
+			} else {
+				s.completeMatchLocked(m, oppositeTeam(m.Participants[missing[0]]), missing[0]+" 未在入场期限内进入")
+			}
+			s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+			return true
+		}
+	}
 	for id, last := range m.LastHeartbeat {
 		// SSE delivery must be acknowledged by the page. This catches a severed
 		// network even while the OS still buffers writes to an apparently open TCP socket.
@@ -157,8 +208,10 @@ func (s *hubServer) matchPresence(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	lastSignature := ""
+	lastSent := time.Time{}
 	for {
 		s.mu.Lock()
 		superseded := !m.Completed && s.presence[key] != generation
@@ -170,13 +223,19 @@ func (s *hubServer) matchPresence(w http.ResponseWriter, r *http.Request) {
 			_ = controller.Flush()
 			return
 		}
-		encoded, _ := json.Marshal(view)
-		_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
-			return
-		}
-		if err := controller.Flush(); err != nil || done {
-			return
+		delete(view, "serverTime")
+		signature, _ := json.Marshal(view)
+		if string(signature) != lastSignature || time.Since(lastSent) >= 8*time.Second {
+			view["serverTime"] = time.Now().UnixMilli()
+			encoded, _ := json.Marshal(view)
+			_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
+				return
+			}
+			if err := controller.Flush(); err != nil || done {
+				return
+			}
+			lastSignature, lastSent = string(signature), time.Now()
 		}
 		select {
 		case <-r.Context().Done():

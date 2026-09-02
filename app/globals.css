@@ -1,3 +1,16 @@
+.network-sync-warning {
+  position: fixed; z-index: 1000010; top: 76px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  width: min(780px, calc(100vw - 28px)); padding: 14px 18px;
+  border: 2px solid #e75066; border-radius: 12px;
+  background: #241217f5; color: #ffe4e8; box-shadow: 0 12px 40px #0009;
+  font: 600 14px/1.5 system-ui, "Microsoft YaHei", sans-serif;
+}
+.network-sync-warning span { flex: 1 1 340px; }
+.network-sync-warning button {
+  border: 1px solid #edc66a; border-radius: 7px; background: #362f23;
+  color: #fff0b5; font: inherit; padding: 7px 12px; cursor: pointer;
+}
 :root {
   --red: #ba233a;
   --purple: #743b98;

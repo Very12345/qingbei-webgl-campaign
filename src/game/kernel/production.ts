@@ -179,12 +179,13 @@ export function runProductionCycles(
         if (
           !target ||
           target.destroyed ||
-          (target.team === source.team && !logisticsRoute)
+          (target.team === source.team && !logisticsRoute && source.orderOwner !== "player")
         ) {
           source.orderTarget = undefined;
           source.orderPath = undefined;
           source.orderPurpose = undefined;
           source.orderIssuedAt = undefined;
+          source.orderOwner = undefined;
           continue;
         }
         const idle = game.units.filter(

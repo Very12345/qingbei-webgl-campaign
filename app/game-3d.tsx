@@ -200,6 +200,7 @@ import type {
 } from "../src/game/engine/contracts";
 import { useBattlefieldEngine } from "../src/game/engine/use-battlefield";
 import { collectPlayerCommands, type PlayerCommandSelection } from "../src/game/player-commands";
+import { NetworkHealth } from "../src/game/network-health";
 import SaveWorker from "../src/save-worker.ts?worker&inline";
 import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline";
 
@@ -300,6 +301,9 @@ export default function Game3D() {
   );
   const networkRevisionRef = useRef(0);
   const playerCommandSenderRef = useRef<(selection: PlayerCommandSelection) => void>(() => {});
+  const networkHealthRef = useRef(new NetworkHealth());
+  const canIssuePlayerCommandRef = useRef<() => boolean>(() => true);
+  const [networkWarning, setNetworkWarning] = useState<string | null>(null);
   const networkLastFullAtRef = useRef(0);
   const networkLastDeltaAtRef = useRef(0);
   const networkUnitCursorRef = useRef(0);
@@ -772,8 +776,17 @@ export default function Game3D() {
       window.removeEventListener("qingbei-plugin-profile", receivePluginProfile);
   }, []);
 
+  useEffect(() => {
+    if (screen !== "game") { setNetworkWarning(null); networkHealthRef.current.reset(); return; }
+    const check = () => setNetworkWarning(lanHostRef.current ? null :
+      networkHealthRef.current.warning(Date.now(), !!gameRef.current.campaign.outcome));
+    check();
+    const timer = window.setInterval(check, 1000);
+    return () => window.clearInterval(timer);
+  }, [screen]);
   useBattlefieldEngine({
     playerCommandSenderRef,
+    canIssuePlayerCommandRef,
     screen,
     hostRef,
     sceneApi,
@@ -1539,6 +1552,7 @@ export default function Game3D() {
     : 0;
   const timeScaleLocked = connectedPlayers > 0 && !lanHostRef.current;
   const setStance = (s: Stance) => {
+    if (!canIssuePlayerCommandRef.current()) return;
     if (!selectedSite || selectedSite.team !== playerTeam) return;
     selectedSite.stance = s;
     selectedSite.dispatchRatio = s === "defend" ? 0.4 : s === "guard" ? 0.7 : 1;
@@ -1549,6 +1563,7 @@ export default function Game3D() {
     );
   };
   const renameSelectedSite = () => {
+    if (!canIssuePlayerCommandRef.current()) return;
     if (!selectedSite || selectedSite.team !== playerTeam) return;
     const nextName = renameDraft.trim().slice(0, 24);
     if (!nextName) return;
@@ -1684,7 +1699,14 @@ export default function Game3D() {
     };
     pump();
   };
+  canIssuePlayerCommandRef.current = () => {
+    if (lanHostRef.current) return true;
+    const warning = networkHealthRef.current.warning(Date.now(), !!gameRef.current.campaign.outcome);
+    if (warning) { setNotice(warning); return false; }
+    return true;
+  };
   playerCommandSenderRef.current = (selection) => {
+    if (!canIssuePlayerCommandRef.current()) return;
     if (lanHostRef.current || !guestHasAuthoritativeStateRef.current) return;
     const channel = [...lanChannelsRef.current].find(c => c.readyState === "open");
     if (!channel) { setNotice("连接已断开，操作未发送"); return; }
@@ -1693,6 +1715,7 @@ export default function Game3D() {
     sendToChannel(channel, { type: "client_commands", intent: "player", revision: ++networkRevisionRef.current, ...command });
   };
   clientActionSenderRef.current = (action) => {
+    if (!canIssuePlayerCommandRef.current()) return true; // Handled: do not fall back to local mutations.
     if (lanHostRef.current || !guestHasAuthoritativeStateRef.current)
       return false;
     const hostChannel = [...lanChannelsRef.current].find(
@@ -1810,6 +1833,7 @@ export default function Game3D() {
     setTimeout(() => finalizeDecisionVote(vote.id), 20_000);
   };
   const requestDecisionStart = (decisionId: string, team: Team) => {
+    if (!canIssuePlayerCommandRef.current()) return false;
     if (!lanChannelsRef.current.size) return beginDecision(decisionId, team);
     if (lanHostRef.current) {
       startDecisionVote(decisionId, team, playerIdRef.current);
@@ -1921,6 +1945,7 @@ export default function Game3D() {
         ).length,
       );
     channel.onopen = () => {
+      if (!host) networkHealthRef.current.start(Date.now());
       lastConnectionFailureRef.current = null;
       if (lanConnectionTimeoutRef.current != null) {
         window.clearTimeout(lanConnectionTimeoutRef.current);
@@ -1966,6 +1991,7 @@ export default function Game3D() {
       if (host) setLanStatus("玩家已加入，正在发送主机地图");
     };
     channel.onclose = () => {
+      if (!host) networkHealthRef.current.connected = false;
       lanChannelsRef.current.delete(channel);
       lanChannelIdentityRef.current.delete(channel);
       refreshConnectionCount();
@@ -2329,6 +2355,7 @@ export default function Game3D() {
             identity = lanChannelIdentityRef.current.get(channel),
             allowedTeam = host ? identity?.team : undefined,
             unitsById = new Map(game.units.map((unit) => [unit.id, unit]));
+          networkHealthRef.current.state(Date.now(), payload.elapsedHours);
           const applyExistingUnit = (_existing: UnitState, apply: () => void) => apply();
           const legacyUnits = payload.units.filter(
             (unit): unit is UnitNetworkState => !Array.isArray(unit),
@@ -2434,6 +2461,7 @@ export default function Game3D() {
           payload.role === "host"
         ) {
           gameRef.current = payload.game;
+          networkHealthRef.current.state(Date.now(), payload.game.campaign.elapsedHours);
           guestHasAuthoritativeStateRef.current = true;
           if (lanConnectionTimeoutRef.current != null) {
             window.clearTimeout(lanConnectionTimeoutRef.current);
@@ -3688,6 +3716,12 @@ export default function Game3D() {
   };
   return (
     <main className="game-shell">
+      {screen === "game" && networkWarning && (
+        <aside className="network-sync-warning" role="alert">
+          <strong>战局同步异常</strong><span>{networkWarning}</span>
+          <button onClick={() => window.location.reload()}>重新加载</button>
+        </aside>
+      )}
       {screen === "game" && <div ref={hostRef} className="webgl-stage" />}
       {screen === "game" && (
         <>
@@ -4280,6 +4314,7 @@ export default function Game3D() {
             if (mode) setToolsOpen(false);
           }}
           onMobilize={(stance) => {
+            if (!canIssuePlayerCommandRef.current()) return;
             if (
               clientActionSenderRef.current({ kind: "mobilize", stance })
             )

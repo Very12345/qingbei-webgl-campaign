@@ -65,6 +65,7 @@ import type {
 import type { NetworkChannel } from "../local-relay";
 import ServerClockWorker from "../server-clock-worker.ts?worker&inline";
 import type { PlayerCommandSelection } from "../player-commands";
+import { createSportMarkings, type GroundMarking } from "./sport-markings";
 
 type VictoryBroadcast = {
   winner: Team;
@@ -74,6 +75,7 @@ type VictoryBroadcast = {
 
 type BattlefieldEngineContext = {
   playerCommandSenderRef: RefObject<(selection: PlayerCommandSelection) => void>;
+  canIssuePlayerCommandRef: RefObject<() => boolean>;
   screen: GameScreen;
   hostRef: RefObject<HTMLDivElement | null>;
   sceneApi: RefObject<BattlefieldSceneApi | null>;
@@ -127,6 +129,7 @@ type BattlefieldEngineContext = {
 export function useBattlefieldEngine(context: BattlefieldEngineContext) {
   const {
     playerCommandSenderRef,
+    canIssuePlayerCommandRef,
     screen,
     hostRef,
     sceneApi,
@@ -1287,55 +1290,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               surfaceGeometry(r, inner, 0.055, flatSportHeight),
               pitchMaterial,
             ),
-            boundary = new THREE.LineLoop(
-              new THREE.BufferGeometry().setFromPoints(
-                inner.map(
-                  ([x, z]) =>
-                    new THREE.Vector3(
-                      x,
-                      surfaceHeight + 0.07,
-                      z,
-                    ),
-                ),
-              ),
-              new THREE.LineBasicMaterial({
-                color: 0xf1ead2,
-                transparent: true,
-                opacity: 0.92,
-              }),
-            );
+            markings: GroundMarking[] = [{ points: inner, closed: true }];
           sportMaterials.push(pitchMaterial);
           pitch.receiveShadow = true;
           pitch.renderOrder = 3;
-          boundary.renderOrder = 4;
-          mapGroup.add(pitch, boundary);
-          const lineMaterial = new THREE.LineBasicMaterial({
-              color: 0xf3ead3,
-              transparent: true,
-              opacity: 0.9,
-            }),
-            linePoints = (values: [number, number][]) =>
-              values.map(
-                ([x, z]) =>
-                  new THREE.Vector3(
-                    x,
-                    surfaceHeight + 0.075,
-                    z,
-                  ),
-              ),
-            addFieldLine = (
-              values: [number, number][],
-              loop = false,
-            ) => {
-              const geometry = new THREE.BufferGeometry().setFromPoints(
-                  linePoints(values),
-                ),
-                line = loop
-                  ? new THREE.LineLoop(geometry, lineMaterial)
-                  : new THREE.Line(geometry, lineMaterial);
-              line.renderOrder = 5;
-              mapGroup.add(line);
-            };
+          mapGroup.add(pitch);
+          const addFieldLine = (values: [number, number][], loop = false) => {
+            markings.push({ points: values, closed: loop });
+          };
           addFieldLine(
             [at(0, -pitchHalfWidth), at(0, pitchHalfWidth)],
           );
@@ -1374,17 +1336,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 Math.max(0.1, halfLength - inset),
                 Math.max(0.08, halfWidth - inset),
               );
-              const lane = new THREE.LineLoop(
-                new THREE.BufferGeometry().setFromPoints(linePoints(lanePoints)),
-                new THREE.LineBasicMaterial({
-                  color: 0xf3dcc7,
-                  transparent: true,
-                  opacity: 0.72,
-                }),
-              );
-              lane.renderOrder = 4;
-              mapGroup.add(lane);
+              markings.push({ points: lanePoints, closed: true });
             }
+          mapGroup.add(createSportMarkings(markings, surfaceHeight + .075));
         }
       type RoadBucket = {
         positions: number[];
@@ -2003,6 +1957,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         setNotice("已退出近距离控制");
       },
       enterDirectControl = () => {
+        if (!canIssuePlayerCommandRef.current()) return false;
         const selectedUnits = gameRef.current.units.filter(
           (unit) =>
             unit.team === playerTeamRef.current && selectedUnitIds.has(unit.id),
@@ -2535,6 +2490,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         );
       if (!sharedPath.length) return 0;
       source.orderTarget = target.id;
+      source.orderOwner = "player";
       source.orderPath = sharedPath;
       let deployed = 0;
       moving.forEach((unit) => {
@@ -2614,6 +2570,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           from.plannedOrderTargets ??= {};
           from.plannedOrderPaths ??= {};
           from.plannedOrderTargets[team] = to.id;
+          from.plannedOrderOwners ??= {};
+          from.plannedOrderOwners[team] = "player";
           from.plannedOrderPaths[team] = path;
         }
         configured++;
@@ -4333,6 +4291,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return hit?.object.userData.commandSourceId as number | undefined;
       },
       removeCommandLine = (sourceId?: number) => {
+        if (!canIssuePlayerCommandRef.current()) return false;
         if (sourceId == null) return false;
         const source = gameRef.current.sites[sourceId],
           team = playerTeamRef.current,
@@ -4361,6 +4320,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return true;
       },
       simplifyCommandChain = (sourceId?: number) => {
+        if (!canIssuePlayerCommandRef.current()) return false;
         if (sourceId == null) return false;
         const game = gameRef.current,
           source = game.sites[sourceId];
@@ -4439,6 +4399,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       requestedTeam = playerTeamRef.current,
       silent = false,
     ) => {
+      if (!silent && !canIssuePlayerCommandRef.current()) return false;
       const g = gameRef.current,
         index = navIndex(navGrid, point.x, point.z),
         activeCamps = g.sites.filter(
@@ -4701,6 +4662,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         down = null;
         return;
       }
+      if (!canIssuePlayerCommandRef.current()) { down = null; return; }
       if (moved && down.selection) {
         const target = end != null ? gameRef.current.sites[end] : null,
           point = groundAt(e),
@@ -8889,7 +8851,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
           if (now >= nextDirectCommandAt) {
             nextDirectCommandAt = now + 100;
-            playerCommandSenderRef.current({ unitIds: controlled.map(u => u.id) });
+            if (canIssuePlayerCommandRef.current()) playerCommandSenderRef.current({ unitIds: controlled.map(u => u.id) });
           }
           controlled.forEach((unit) => {
             const object = unitObjects.get(unit.id),

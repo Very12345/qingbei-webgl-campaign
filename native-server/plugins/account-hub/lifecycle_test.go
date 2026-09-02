@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -131,6 +132,84 @@ func TestActiveMatchBlocksHomepageMutations(t *testing.T) {
 		res := requestJSON(t, mux, "POST", path, map[string]string{"difficulty": "hard", "team": "pku", "item": "pku-gold"}, token)
 		if res.Code != 409 {
 			t.Fatalf("%s: %d %s", path, res.Code, res.Body.String())
+		}
+	}
+}
+
+func TestOpponentLifecycleAndPrivacy(t *testing.T) {
+	s, _, m, _ := lifecycleFixture(t)
+	m.Mode = "pvp"
+	m.Participants["opponent"] = "thu"
+	m.JoinedPlayers["player"] = true
+	m.JoinDeadline = time.Now().Add(time.Minute)
+	view := s.matchViewLocked("player", m)
+	if view["phase"] != "waiting_players" {
+		t.Fatal(view)
+	}
+	m.JoinedPlayers["opponent"] = true
+	if s.matchViewLocked("player", m)["phase"] != "active" {
+		t.Fatal("join not visible")
+	}
+	m.DisconnectedAt["opponent"] = time.Now()
+	view = s.matchViewLocked("player", m)
+	if view["phase"] != "reconnecting" {
+		t.Fatal("disconnect not visible")
+	}
+	encoded, _ := json.Marshal(view)
+	if strings.Contains(string(encoded), "password") || strings.Contains(string(encoded), "connectionId") {
+		t.Fatal("private fields leaked")
+	}
+	peers := view["participants"].([]map[string]any)
+	if peers[0]["id"] != "opponent" || peers[0]["status"] != "disconnected" || peers[0]["deadline"].(int64) <= time.Now().UnixMilli() {
+		t.Fatal(peers)
+	}
+	delete(m.DisconnectedAt, "opponent")
+	if s.matchViewLocked("player", m)["phase"] != "active" {
+		t.Fatal("reconnect not visible")
+	}
+}
+
+func TestUnenteredBattleExpiresWithoutRewards(t *testing.T) {
+	s, _, m, _ := lifecycleFixture(t)
+	m.JoinDeadline = time.Now().Add(-time.Second)
+	if !s.expireMatchLocked(m, time.Now()) || !m.Completed || m.Winner != "" {
+		t.Fatal("unentered battle was not canceled")
+	}
+	if s.data.Users["player"].Experience["pku"] != 0 {
+		t.Fatal("unentered battle awarded XP")
+	}
+}
+
+func TestLifecycleSSEPublishesOpponentExitPromptly(t *testing.T) {
+	s, mux, m, token := lifecycleFixture(t)
+	m.Mode = "pvp"
+	m.Participants["opponent"] = "thu"
+	m.JoinedPlayers["opponent"] = true
+	host := httptest.NewServer(mux)
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", host.URL+"/api/match/presence?room="+m.RoomCode+"&connectionId=test-life", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := host.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	reader := bufio.NewReader(res.Body)
+	if _, err = reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	m.DisconnectedAt["opponent"] = time.Now()
+	s.mu.Unlock()
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal("no prompt opponent notification", err)
+		}
+		if strings.Contains(line, `"status":"disconnected"`) {
+			break
 		}
 	}
 }

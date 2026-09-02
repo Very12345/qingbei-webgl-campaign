@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.3"
+const pluginVersion = "0.3.4"
 
 type userRecord struct {
 	ID                string            `json:"id"`
@@ -53,6 +53,8 @@ type matchRecord struct {
 	LastHeartbeat  map[string]time.Time `json:"lastHeartbeat,omitempty"`
 	DisconnectedAt map[string]time.Time `json:"disconnectedAt,omitempty"`
 	Connections    map[string]string    `json:"connections,omitempty"`
+	JoinedPlayers  map[string]bool      `json:"joinedPlayers,omitempty"`
+	JoinDeadline   time.Time            `json:"joinDeadline,omitempty"`
 }
 
 type persistedData struct {
@@ -145,6 +147,12 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/match/presence", server.matchPresence)
 	mux.HandleFunc("/protocol.js", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := staticFiles.ReadFile("static/protocol.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("/lifecycle-client.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/lifecycle-client.js")
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
@@ -354,6 +362,14 @@ func (server *hubServer) selectCosmetic(writer http.ResponseWriter, request *htt
 }
 
 func ensureMatchMaps(match *matchRecord) {
+	if match.JoinedPlayers == nil {
+		match.JoinedPlayers = map[string]bool{}
+		if match.JoinDeadline.IsZero() {
+			for id, seen := range match.SeenPlayers {
+				match.JoinedPlayers[id] = seen
+			}
+		}
+	}
 	if match.Connections == nil {
 		match.Connections = map[string]string{}
 	}
@@ -383,14 +399,18 @@ func (server *hubServer) matchViewLocked(userID string, match *matchRecord) map[
 		return nil
 	}
 	team := match.Participants[userID]
+	participants, phase := server.participantViewsLocked(userID, match)
 	view := map[string]any{
-		"roomCode":   match.RoomCode,
-		"mode":       match.Mode,
-		"difficulty": match.Difficulty,
-		"team":       team,
-		"completed":  match.Completed,
-		"winner":     match.Winner,
-		"reason":     match.ResultReason,
+		"roomCode":     match.RoomCode,
+		"mode":         match.Mode,
+		"difficulty":   match.Difficulty,
+		"team":         team,
+		"completed":    match.Completed,
+		"winner":       match.Winner,
+		"reason":       match.ResultReason,
+		"phase":        phase,
+		"participants": participants,
+		"serverTime":   time.Now().UnixMilli(),
 	}
 	if !match.Completed && team != "" {
 		view["joinUrl"] = server.joinURL(match.RoomCode, team)
@@ -465,7 +485,7 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 		return
 	}
 	server.mu.Lock()
-	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "ai", Difficulty: input.Difficulty, Participants: map[string]string{userID: input.Team}, CreatedAt: time.Now()}
+	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "ai", Difficulty: input.Difficulty, Participants: map[string]string{userID: input.Team}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
 	_ = server.saveLocked()
 	server.mu.Unlock()
 	writeJSON(writer, http.StatusCreated, map[string]any{"roomCode": room, "joinUrl": server.joinURL(room, input.Team)})
@@ -542,7 +562,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		return
 	}
 	server.mu.Lock()
-	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "pvp", Participants: map[string]string{first.UserID: firstTeam, secondID: secondTeam}, CreatedAt: time.Now()}
+	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "pvp", Participants: map[string]string{first.UserID: firstTeam, secondID: secondTeam}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
 	server.ready[first.UserID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, firstTeam)}
 	server.ready[secondID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, secondTeam)}
 	_ = server.saveLocked()
@@ -790,6 +810,7 @@ func (server *hubServer) playerJoinHook(writer http.ResponseWriter, request *htt
 	match.SeenPlayers[user.ID] = true
 	match.LastHeartbeat[user.ID] = time.Now()
 	// A WebSocket alone must not cancel a plugin presence deadline.
+	match.JoinedPlayers[user.ID] = true
 	if match.Connections[user.ID] == "" {
 		delete(match.DisconnectedAt, user.ID)
 	}
@@ -821,7 +842,7 @@ func (server *hubServer) battleResultHook(writer http.ResponseWriter, request *h
 	server.mu.Unlock()
 	writeJSON(writer, http.StatusOK, map[string]any{"ok": true})
 	if completed {
-		server.scheduleBattleDeletion(roomCode, 10*time.Minute)
+		server.scheduleBattleDeletion(roomCode, 20*time.Second)
 	}
 }
 
