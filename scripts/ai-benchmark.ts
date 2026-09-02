@@ -26,10 +26,13 @@ const scenario = process.argv[2] ?? "thu-hard-idle",
   configuration = configurations[scenario];
 if (!configuration) throw new Error(`未知基准场景 ${scenario}`);
 
+const benchmarkSeed = process.argv[3] == null ? 0x51a7c0de : Number(process.argv[3]);
+if (!Number.isInteger(benchmarkSeed) || benchmarkSeed < 0 || benchmarkSeed > 0xffffffff)
+  throw new Error("随机种子必须为0至4294967295的整数");
 const game = makeFreshGame();
 game.campaign.ai.difficultyByTeam = configuration.difficulty;
 // 固定种子保证每次调优的差异来自代码，而不是一次随机开局。
-game.campaign.ai.seed = 0x51a7c0de;
+game.campaign.ai.seed = benchmarkSeed;
 game.campaign.ai.seedByTeam = {
   pku: game.campaign.ai.seed ^ 0x504b5501,
   thu: game.campaign.ai.seed ^ 0x54485501,
@@ -139,6 +142,11 @@ const summarize = (state: GameData, date: string) => {
         ).length,
       })),
     routes,
+    camps: state.sites.filter(site=>site.type==="camp").map(site=>({
+      id:site.id,team:site.team,destroyed:!!site.destroyed,targetId:site.orderTarget,
+      stationed:state.units.filter(unit=>unit.team===site.team&&unit.siteId===site.id&&unit.targetSiteId==null).length,
+      departing:state.units.filter(unit=>unit.team===site.team&&unit.siteId===site.id&&unit.targetSiteId!=null).length,
+    })),
     outcome: state.campaign.outcome ?? null,
   };
 };
@@ -180,4 +188,4 @@ for (const date of dates) {
     );
   if (sample.outcome) break;
 }
-console.log(JSON.stringify({ scenario, samples }, null, 2));
+console.log(JSON.stringify({ scenario, seed: benchmarkSeed, samples }, null, 2));

@@ -10,6 +10,8 @@
     "test:kernel-smoke": "tsx scripts/kernel-smoke.ts",
     "test:orders": "tsx scripts/order-lifecycle-regressions.ts",
     "test:decisions": "tsx scripts/decision-cancel-regressions.ts",
+    "test:ai-routes": "tsx scripts/ai-route-safety-regressions.ts",
+    "test:ai-camps": "tsx scripts/ai-camp-regressions.ts",
     "benchmark:ai": "tsx scripts/ai-benchmark.ts",
     "verify:ai": "tsx scripts/verify-ai-matrix.ts",
     "dev": "vite",

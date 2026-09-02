@@ -26,6 +26,9 @@ func TestEmbeddedKernelHealthCheck(t *testing.T) {
 	if health["decisionCancellation"] != true {
 		t.Fatal("embedded kernel lacks decision cancellation")
 	}
+	if health["aiTacticsVersion"] != float64(1) {
+		t.Fatal("embedded kernel lacks route-aware camp tactics")
+	}
 }
 
 func TestEmbeddedKernelCanAdvanceState(t *testing.T) {
@@ -61,6 +64,28 @@ func TestEmbeddedKernelCanAdvanceState(t *testing.T) {
 	}
 	if state["elapsedHours"].(float64) <= 0 {
 		t.Fatalf("kernel did not advance time: %#v", state)
+	}
+}
+
+func TestEmbeddedStandardAIPlansAfterWarStarts(t *testing.T) {
+	runtime, err := newJSKernelRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, grid, err := loadKernelSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	campaign := seed["campaign"].(map[string]any)
+	campaign["warUnlocked"] = true
+	campaign["elapsedHours"] = 100
+	campaign["ai"].(map[string]any)["difficultyByTeam"] = map[string]any{"pku": "standard", "thu": "standard"}
+	instance, err := runtime.create(seed, map[string]any{"aiTeams": []string{"pku", "thu"}, "navGrid": grid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = instance.run(4, 250); err != nil {
+		t.Fatalf("embedded route/camp planner failed: %v", err)
 	}
 }
 

@@ -200,6 +200,7 @@ export function progressResearchAndProduction(
   game: GameData,
   random: () => number,
   grid?: KernelNavGrid,
+  reserveFor: (team: Team) => number = () => 0,
 ) {
   for (const team of ["pku", "thu"] as Team[]) {
     const active = game.campaign.research.active[team];
@@ -216,7 +217,7 @@ export function progressResearchAndProduction(
       const definition = RESEARCH_DEFINITIONS[id];
       game.campaign.research.stockpile[team][id] +=
         definition.productionQuantity;
-      if (game.resources[team] < definition.deploymentCost) {
+      if (game.resources[team] < definition.deploymentCost + reserveFor(team)) {
         delete lines[id];
         continue;
       }

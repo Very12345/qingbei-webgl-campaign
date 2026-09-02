@@ -160,6 +160,7 @@ export type ResearchState = {
   lastBikeAllocation: Record<Team, number>;
 };
 export type AiState = {
+  campResourceReserve?: Partial<Record<Team, number>>;
   difficulty: AiDifficulty;
   difficultyByTeam?: Record<Team, AiDifficulty>;
   seed: number;

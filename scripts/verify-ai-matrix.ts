@@ -9,6 +9,7 @@ type Sample = {
   deaths: { pku: number; thu: number };
   routes: Array<{ path?: [number, number][] }>;
   orders: Array<{ source: string; target?: string; sourceTeam: string }>;
+  camps?: Array<{team:string;stationed:number;departing:number;destroyed:boolean}>;
   outcome: null | { winner: "pku" | "thu"; atHour: number };
 };
 
@@ -97,6 +98,7 @@ for (const result of results) {
       final.deaths[attacker] <= final.deaths[defender] * 1.1,
       `${result.scenario} 交换比超出1.1：${final.deaths[attacker]}/${final.deaths[defender]}`,
     );
+    expect(result.samples.some(sample=>sample.camps?.some(camp=>camp.team===attacker&&!camp.destroyed&&(camp.stationed>0||camp.departing>0))),`${result.scenario} 没有实际使用临时营地`);
   }
   if (result.scenario.includes("-vs-")) {
     const attacker = result.scenario.startsWith("pku") ? "pku" : "thu",
@@ -118,7 +120,7 @@ for (const result of results) {
   if (result.scenario === "hard-mirror") {
     const september26 = result.samples.find(
       (sample) => sample.date === "2026-09-26",
-    )!;
+    ) ?? final;
     expect(!september26.outcome, "hard-mirror 在9月26日前结束");
     expect(
       Math.abs(september26.sites.pku - september26.sites.thu) <= 22,

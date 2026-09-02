@@ -17,7 +17,7 @@ import {
 } from "./navigation";
 import { resolveAggregateCombat, routeCollapsedUnits } from "./combat";
 import { runProductionCycles } from "./production";
-import { planStrategicOrders } from "./ai";
+import { AI_TACTICS_VERSION, planStrategicOrders } from "./ai";
 import { simulateKernelMovement } from "./movement";
 import { captureSite } from "./capture";
 import { firstEnemyControlSite } from "./control";
@@ -227,6 +227,7 @@ export function createKernel(
   let fightingUnitIds = new Set<number>();
   const pending: KernelAction[] = [];
   const enabledAiTeams = new Set(options.aiTeams ?? []);
+  const campResourceReserve = (team: Team) => enabledAiTeams.has(team) ? state.campaign.ai.campResourceReserve?.[team] ?? 0 : 0;
   migrateLegacyOrders(state, enabledAiTeams);
   let networkRevision = 0,
     networkCampaignSignature = "";
@@ -659,6 +660,8 @@ export function createKernel(
         );
       state.campaign.ai.intent ??= { pku: "passive", thu: "passive" };
       state.campaign.ai.intent[team] = plan.intent;
+      state.campaign.ai.campResourceReserve ??= {};
+      state.campaign.ai.campResourceReserve[team] = plan.reserveForCamp;
       state.campaign.ai.intentUpdatedAt ??= { pku: 0, thu: 0 };
       state.campaign.ai.intentUpdatedAt[team] = state.campaign.elapsedHours;
       for (const plannedCamp of plan.camps) {
@@ -685,6 +688,7 @@ export function createKernel(
             orderTarget: target.id,
             orderPath: clone(plannedCamp.pathToTarget),
             orderPurpose: "combat",
+            orderOwner: "ai",
             orderIssuedAt: state.campaign.elapsedHours,
           };
         state.resources[team] -= 80;
@@ -694,7 +698,7 @@ export function createKernel(
           team,
           source.id,
           camp.id,
-          Math.max(12, Math.floor(state.units.filter(
+          plannedCamp.count ?? Math.max(12, Math.floor(state.units.filter(
             (unit) =>
               unit.team === team &&
               unit.siteId === source.id &&
@@ -742,7 +746,7 @@ export function createKernel(
         team,
         difficulty,
         random,
-        difficulty === "hard" && activeCamps < 2 ? 80 : 0,
+        Math.max(difficulty === "hard" && activeCamps < 2 ? 80 : 0, campResourceReserve(team)),
       );
     }
   };
@@ -770,7 +774,7 @@ export function createKernel(
           source.orderOwner ?? "ai",
         ),
     );
-    progressResearchAndProduction(state, randomFor("pku"), options.navGrid);
+    progressResearchAndProduction(state, randomFor("pku"), options.navGrid, campResourceReserve);
     progressDecisions(state);
     const campSupply = 1.2 * (elapsed / 1_000);
     if (campSupply > 0)
@@ -1008,6 +1012,7 @@ export function healthCheck() {
     authoritative: true,
     orderRulesVersion: ORDER_RULES_VERSION,
     decisionCancellation: true,
+    aiTacticsVersion: AI_TACTICS_VERSION,
     migrated: [
       "navigation",
       "aggregate_combat",

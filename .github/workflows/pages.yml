@@ -31,6 +31,8 @@ jobs:
       - run: npx tsx scripts/scene-network-regressions.ts
       - run: npm run test:orders
       - run: npm run test:decisions
+      - run: npm run test:ai-routes
+      - run: npm run test:ai-camps
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build
