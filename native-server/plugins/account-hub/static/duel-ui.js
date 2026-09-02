@@ -238,9 +238,12 @@
           img = avatar.querySelector("img"),
           seal = avatar.querySelector("span");
         seal.textContent = p.isAI ? "AI" : p.team === "thu" ? "清" : "北";
-        const cosmetic = /^(pku|thu)-(bronze|gold)$/.test(p.cosmetic || "")
-          ? p.cosmetic
-          : "";
+        const cosmetic =
+          /^(pku|thu)-(bronze|gold|service-[1-9][0-9]{1,4})$/.test(
+            p.cosmetic || "",
+          )
+            ? p.cosmetic
+            : "";
         if (cosmetic) {
           const source = pluginBase + "/assets/" + cosmetic + ".svg";
           if (img.getAttribute("src") !== source) img.src = source;
@@ -296,6 +299,11 @@
       },
       show() {
         if (!visible) {
+          // Join the client's stacking context so its full-screen research,
+          // decision and settings layers naturally cover this battle-only HUD.
+          // This is a plugin DOM adapter; the shared client source stays intact.
+          const shell = document.querySelector(".game-shell");
+          if (shell && root.parentElement !== shell) shell.append(root);
           visible = true;
           document.body.classList.add("plugin-duel-active");
           paint();

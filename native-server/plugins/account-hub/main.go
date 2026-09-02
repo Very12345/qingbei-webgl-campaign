@@ -36,6 +36,7 @@ type userRecord struct {
 	SpeedCards        map[string]int    `json:"speedCards"`
 	Cosmetics         []string          `json:"cosmetics"`
 	SelectedCosmetics map[string]string `json:"selectedCosmetics"`
+	ClaimedRewards    map[string]bool   `json:"claimedRewards,omitempty"`
 	CreatedAt         time.Time         `json:"createdAt"`
 }
 
@@ -137,6 +138,8 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logout", server.logout)
 	mux.HandleFunc("/api/me", server.me)
 	mux.HandleFunc("/api/cosmetic", server.selectCosmetic)
+	mux.HandleFunc("/api/career", server.careerPage)
+	mux.HandleFunc("/api/career/claim", server.claimCareerReward)
 	mux.HandleFunc("/api/lobby/ai", server.createAILobby)
 	mux.HandleFunc("/api/lobby/pvp", server.joinPVPQueue)
 	mux.HandleFunc("/api/lobby/status", server.lobbyStatus)
@@ -209,6 +212,9 @@ func (server *hubServer) servePlay(writer http.ResponseWriter, request *http.Req
 
 func (server *hubServer) asset(writer http.ResponseWriter, request *http.Request) {
 	name := strings.TrimPrefix(request.URL.Path, "/assets/")
+	if renderServiceCosmetic(writer, name) {
+		return
+	}
 	if name == "campus-command.png" || name == "field-table.png" {
 		data, err := staticFiles.ReadFile("static/" + name)
 		if err != nil {
@@ -891,13 +897,16 @@ func (server *hubServer) publicProfileLocked(user *userRecord) map[string]any {
 }
 
 func levelFor(experience int) int {
-	thresholds := []int{0, 100, 250, 500, 900, 1400}
-	for index := len(thresholds) - 1; index >= 0; index-- {
-		if experience >= thresholds[index] {
-			return index + 1
+	low, high := 1, careerLevelLimit
+	for low < high {
+		mid := (low + high + 1) / 2
+		if int64(experience) >= experienceForLevel(mid) {
+			low = mid
+		} else {
+			high = mid - 1
 		}
 	}
-	return 1
+	return low
 }
 
 func (server *hubServer) createBattle(spec any) (string, error) {

@@ -3098,6 +3098,97 @@
           height: 7px;
         }
       }
+
+      .reward-page-switch {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .reward-page-switch button {
+        font-size: 22px;
+        padding: 0 9px;
+        line-height: 30px;
+      }
+      .reward-page-switch h3 {
+        white-space: nowrap;
+      }
+      .reward-art img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .reward-step.cosmetic .reward-art {
+        border-radius: 0;
+        border: 0;
+        background: none !important;
+        box-shadow: none;
+      }
+      .reward-step.bundle .reward-art {
+        font-size: 17px;
+        background: linear-gradient(130deg, #b4a06c, #696e41);
+        border-width: 5px;
+      }
+      .cosmetic-item {
+        display: grid;
+        grid-template-columns: 75px 1fr;
+        gap: 10px 16px;
+        min-width: 230px;
+        max-width: 310px;
+        flex: 1;
+        padding: 16px;
+      }
+      .cosmetic-item img {
+        width: 75px;
+        height: 75px;
+        grid-row: 1/3;
+        object-fit: contain;
+      }
+      .cosmetic-item > span {
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .cosmetic-item button {
+        justify-self: start;
+      }
+      .service-ribbon {
+        background:
+          repeating-linear-gradient(0deg, #0002 0 1px, transparent 1px 3px),
+          var(
+            --ribbon,
+            linear-gradient(90deg, #587b48 0 18%, #e0dcc5 18% 82%, #587b48 82%)
+          );
+      }
+      @media (max-width: 480px) {
+        .reward-page-switch {
+          gap: 10px;
+        }
+        .reward-page-switch h3 {
+          font-size: 16px;
+        }
+        .cosmetic-item {
+          grid-template-columns: 60px 1fr;
+          min-width: 190px;
+          padding: 12px;
+          gap: 8px 12px;
+        }
+        .cosmetic-item img {
+          width: 60px;
+          height: 60px;
+        }
+        .cosmetic-item > span {
+          font-size: 11px;
+        }
+      }
+      .reward-step .level-number:after {
+        content: "";
+        width: 28px;
+        height: 18px;
+        margin: 2px auto 17px;
+        background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23e4d8a5%22%20stroke-width%3D%221.7%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%203c1%2010%205%2016%209%2017M21%203c-1%2010-5%2016-9%2017M5%209l-3-2M7%2014l-4-1M10%2018l-4%201M19%209l3-2M17%2014l4-1M14%2018l4%201%22%2F%3E%3C%2Fsvg%3E");
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
     </style>
   </head>
   <body>
@@ -3671,7 +3762,23 @@
                     </div>
                   </div>
                   <div class="reward-toolbar">
-                    <h3 id="rewardRange">等级奖励</h3>
+                    <div class="reward-page-switch">
+                      <button
+                        id="rewardWindowPrev"
+                        class="subtle-button"
+                        aria-label="上一组50级奖励"
+                      >
+                        ‹
+                      </button>
+                      <h3 id="rewardRange">等级奖励</h3>
+                      <button
+                        id="rewardWindowNext"
+                        class="subtle-button"
+                        aria-label="下一组50级奖励"
+                      >
+                        ›
+                      </button>
+                    </div>
                     <div>
                       <button class="subtle-button" id="rewardJump">
                         定位当前等级</button
@@ -3806,6 +3913,124 @@
         careerTab = "overview";
       const teamNames = { pku: "北京大学", thu: "清华大学" },
         teamSeals = { pku: "北", thu: "清" };
+
+      const rewardPages = { pku: null, thu: null },
+        rewardPageLoads = { pku: 0, thu: 0 };
+      function cosmeticLabel(item) {
+        const team = item.startsWith("pku") ? "北大" : "清华";
+        if (item.includes("-service-")) {
+          const level = Number(item.split("-").at(-1)),
+            names = ["新锐指挥", "前线精英", "战役功勋", "百战荣誉"];
+          return (
+            team + " · " + names[(level / 25 - 1) % 4] + " · " + level + "级"
+          );
+        }
+        return team + (item.endsWith("gold") ? " · 金色" : " · 铜色");
+      }
+      function renderRewardTrack(c, rewards, start) {
+        $("rewardRange").textContent =
+          "等级 " + start + " — " + Math.min(start + 49, c.maxLevel);
+        $("rewardWindowPrev").disabled = start <= 1;
+        $("rewardWindowNext").disabled = start + 50 > c.maxLevel;
+        $("rewardTrack").innerHTML = rewards
+          .map((r) => {
+            const art =
+              r.kind === "cosmetic"
+                ? '<img src="assets/' + r.item + '.svg" alt=""/>'
+                : rewardArt(r);
+            const state = r.automatic
+              ? r.reached
+                ? "✓ 已解锁"
+                : "未解锁"
+              : r.claimed
+                ? "✓ 已领取"
+                : r.claimable
+                  ? "可领取"
+                  : "未解锁";
+            return (
+              '<article class="reward-step ' +
+              r.kind +
+              (r.item?.endsWith("gold") ? " gold" : "") +
+              (r.reached ? " reached" : " locked") +
+              (r.level === c.level ? " current" : "") +
+              '" data-reward-level="' +
+              r.level +
+              '"><span class="level-number">' +
+              r.level +
+              '</span><span class="reward-art" aria-hidden="true">' +
+              art +
+              "</span><h4>" +
+              safeText(r.name) +
+              '</h4><div class="level-bridge"><i style="width:' +
+              r.progress * 100 +
+              '%"></i></div><small>' +
+              r.experience.toLocaleString() +
+              " EXP</small>" +
+              (r.claimable
+                ? '<button class="reward-claim" data-claim-level="' +
+                  r.level +
+                  '">领取奖励</button>'
+                : '<span class="reward-status">' + state + "</span>") +
+              "</article>"
+            );
+          })
+          .join("");
+        $("rewardFootnote").textContent =
+          "50级仅为展示区间。第6级起升级需要100×当前等级EXP；普通等级奖励2×卡，每5级4×卡，每10级补给箱，每25级纪念饰品（里程碑优先）。前6级沿用自动解锁规则。";
+        document.querySelectorAll("[data-claim-level]").forEach(
+          (button) =>
+            (button.onclick = async () => {
+              const team = careerTeam,
+                level = Number(button.dataset.claimLevel),
+                start = rewardPages[team]?.start || careerForTeam().pageStart;
+              button.disabled = true;
+              try {
+                const result = await api("api/career/claim", {
+                  method: "POST",
+                  body: JSON.stringify({ team, level }),
+                });
+                rewardPages[team] = null;
+                render(result.profile);
+                if (team === careerTeam && start !== careerForTeam().pageStart)
+                  await loadRewardPage(start, team);
+                toast(
+                  result.alreadyClaimed
+                    ? "该奖励已经领取"
+                    : "奖励已加入军需或外观收藏",
+                );
+              } catch (error) {
+                button.disabled = false;
+                toast(error.message);
+              }
+            }),
+        );
+      }
+      async function loadRewardPage(start, team = careerTeam) {
+        const requestId = ++rewardPageLoads[team];
+        try {
+          const page = await api("api/career?team=" + team + "&start=" + start);
+          if (requestId !== rewardPageLoads[team]) return;
+          rewardPages[team] = page;
+          if (careerTeam === team) {
+            renderRewardTrack(careerForTeam(), page.rewards, page.start);
+            $("rewardViewport").scrollLeft = 0;
+          }
+        } catch (error) {
+          toast(error.message);
+        }
+      }
+      $("rewardWindowPrev").onclick = () =>
+        loadRewardPage(
+          Math.max(
+            1,
+            (rewardPages[careerTeam]?.start || careerForTeam().pageStart) - 50,
+          ),
+        );
+      $("rewardWindowNext").onclick = () =>
+        loadRewardPage(
+          (rewardPages[careerTeam]?.start || careerForTeam().pageStart) + 50,
+        );
+
       const medalSigns = {
         cross: "✦",
         shield: "◆",
@@ -3841,6 +4066,7 @@
       }
       function rewardArt(reward) {
         if (!reward) return "★";
+        if (reward.kind === "bundle") return "补给";
         if (reward.kind === "speed") return reward.item === "4x" ? "4×" : "2×";
         if (reward.kind === "cosmetic") return teamSeals[careerTeam];
         return "★";
@@ -3961,7 +4187,8 @@
             (c.nextExperience - c.experience) +
             " EXP"
           : "累计经验 " + c.experience + " EXP";
-        const next = c.rewards.find((r) => r.level === c.level + 1);
+        const next =
+          c.nextReward || c.rewards.find((r) => r.level === c.level + 1);
         $("nextRewardArt").innerHTML =
           '<span class="next-reward-art' +
           (next?.item?.endsWith("gold") ? " gold" : "") +
@@ -3969,37 +4196,12 @@
           rewardArt(next) +
           "</span>";
         $("nextRewardName").textContent = next?.name || "全部等级已达成";
-        const start = Math.floor((c.level - 1) / 50) * 50 + 1,
-          end = Math.min(start + 49, c.maxLevel);
-        $("rewardRange").textContent = "等级 " + start + " — " + end;
-        $("rewardTrack").innerHTML = c.rewards
-          .filter((r) => r.level >= start && r.level <= end)
-          .map(
-            (r) =>
-              '<article class="reward-step ' +
-              r.kind +
-              (r.item?.endsWith("gold") ? " gold" : "") +
-              (r.reached ? " reached" : " locked") +
-              (r.level === c.level ? " current" : "") +
-              '" data-reward-level="' +
-              r.level +
-              '"><span class="level-number">' +
-              r.level +
-              '</span><span class="reward-art" aria-hidden="true">' +
-              rewardArt(r) +
-              "</span><h4>" +
-              safeText(r.name) +
-              '</h4><div class="level-bridge"><i style="width:' +
-              r.progress * 100 +
-              '%"></i></div><small>' +
-              r.experience +
-              ' EXP</small><span class="reward-status">' +
-              (r.reached ? "✓ 已达成" : "未解锁") +
-              "</span></article>",
-          )
-          .join("");
-        $("rewardFootnote").textContent =
-          "等级奖励随阵营成长解锁，倍速卡与饰品沿用现有发放规则。";
+        const page = rewardPages[careerTeam];
+        renderRewardTrack(
+          c,
+          page?.rewards || c.rewards,
+          page?.start || c.pageStart,
+        );
       }
       function setCareerTab(tab) {
         careerTab = tab;
@@ -4020,9 +4222,11 @@
         });
         if (tab === "rewards") requestAnimationFrame(jumpToCurrentReward);
       }
-      function jumpToCurrentReward() {
+      async function jumpToCurrentReward() {
         const c = careerForTeam();
         if (!c) return;
+        if ((rewardPages[careerTeam]?.start || c.pageStart) !== c.pageStart)
+          await loadRewardPage(c.pageStart);
         const viewport = $("rewardViewport"),
           step = viewport.querySelector(
             '[data-reward-level="' + c.level + '"]',
@@ -4134,9 +4338,11 @@
           next === "login" ? "current-password" : "new-password";
         $("authError").textContent = "";
       }
-      function progress(xp, level) {
-        const from = thresholds[level - 1] || 0,
-          to = thresholds[level] || from + 500;
+      function progress(xp, level, team) {
+        const c = careerProfile?.career?.[team];
+        if (c && !c.nextExperience) return 100;
+        const from = c?.levelStart ?? thresholds[level - 1] ?? 0,
+          to = c?.nextExperience ?? thresholds[level] ?? from + 500;
         return Math.max(0, Math.min(100, ((xp - from) / (to - from)) * 100));
       }
       function selectTeam(team) {
@@ -4209,7 +4415,7 @@
 
           $("top" + cap + "Xp").textContent = xp;
           $("home" + cap + "Level").textContent = "Lv." + level;
-          $("home" + cap + "Bar").style.width = progress(xp, level) + "%";
+          $("home" + cap + "Bar").style.width = progress(xp, level, team) + "%";
         }
         renderCareer();
         const cards = profile.speedCards || {};
@@ -4238,14 +4444,14 @@
           items = profile.cosmetics || [];
         // Only known cosmetic IDs may be rendered as markup.
         const known = items.filter((item) =>
-          /^(pku|thu)-(bronze|gold)$/.test(item),
+          /^(pku|thu)-(bronze|gold|service-[1-9][0-9]{1,4})$/.test(item),
         );
         $("cosmetics").innerHTML = known.length
           ? known
               .map((item) => {
                 const team = item.startsWith("pku") ? "pku" : "thu",
                   equipped = selected[team] === item;
-                return `<span class="item">${item.replace("pku", "北大").replace("thu", "清华").replace("-bronze", " · 铜色").replace("-gold", " · 金色")}<button data-cosmetic="${item}" ${equipped ? "disabled" : ""}>${equipped ? "已装备" : "装备"}</button></span>`;
+                return `<span class="item cosmetic-item"><img src="assets/${item}.svg" alt=""/><span>${safeText(cosmeticLabel(item))}</span><button data-cosmetic="${item}" ${equipped ? "disabled" : ""}>${equipped ? "已装备" : "装备"}</button></span>`;
               })
               .join("")
           : '<span class="muted">提升阵营等级后解锁饰品。</span>';
