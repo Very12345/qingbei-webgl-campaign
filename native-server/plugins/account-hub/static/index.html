@@ -1,57 +1,2789 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>解放清华园 · 战区指挥部</title>
-  <style>
-    :root{color-scheme:dark;--ink:#07100e;--panel:#0e1b17ed;--gold:#efd06f;--muted:#9eaa9f;--red:#df3f59;--purple:#ad67d5;--line:#ffffff1b}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 18% 12%,#2b3421 0,transparent 32%),radial-gradient(circle at 82% 25%,#281737 0,transparent 34%),linear-gradient(135deg,#06100d,#111816 55%,#09070d);color:#f4edd6;font:16px/1.5 system-ui,"Microsoft YaHei",sans-serif}button,input,select{font:inherit}button{border:1px solid #d6b858;background:#28342d;color:#fff0b4;border-radius:9px;padding:10px 16px;font-weight:800;cursor:pointer;box-shadow:0 5px 0 #080d0b}button:hover{filter:brightness(1.15)}button:disabled{opacity:.45;cursor:not-allowed}.shell{width:min(1180px,94vw);margin:auto;padding:36px 0 60px}.hero{display:flex;justify-content:space-between;gap:20px;align-items:end;border-bottom:1px solid #cdb55b55;padding-bottom:20px}.eyebrow{color:var(--gold);letter-spacing:.18em;font-size:12px}.hero h1{font-size:clamp(34px,7vw,72px);margin:2px 0;line-height:1}.hero p{color:var(--muted);margin:8px 0 0}.pill{border:1px solid #dbc55e;border-radius:99px;padding:8px 14px;color:#ffe89b;background:#0a1512}.panel{margin-top:22px;border:1px solid #d7c16a55;border-radius:15px;background:var(--panel);box-shadow:0 24px 80px #0008;padding:22px;backdrop-filter:blur(12px)}.auth{width:min(520px,100%);margin:70px auto}.auth h2,.panel h2{margin:0 0 14px}.grid{display:grid;gap:13px}.auth-tabs,.battle-tabs{display:flex;gap:8px}.auth-tabs{margin-bottom:16px}.auth-tabs button.active,.battle-tabs button.active{background:#765b19;border-color:#f2d26d;color:#fff6cf}.field{display:grid;gap:5px;color:#d8dfd4}.field input,.field select{width:100%;border:1px solid #cfba6a66;border-radius:9px;background:#07110e;color:#fff3c2;padding:12px;outline:none}.field input:focus,.field select:focus{border-color:#f3d66c;box-shadow:0 0 0 3px #e8c84b22}.error{min-height:24px;color:#ff8293}.hidden{display:none!important}.dashboard{display:grid;grid-template-columns:1fr 1fr;gap:20px}.profile,.battle-panel{grid-column:1/-1}.profile-head,.battle-head{display:flex;justify-content:space-between;gap:15px;align-items:center}.schools{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}.school{border:1px solid var(--line);border-radius:13px;padding:17px;background:#07110e}.school.pku{border-left:5px solid var(--red)}.school.thu{border-left:5px solid var(--purple)}.school header{display:flex;justify-content:space-between;font-size:19px;font-weight:900}.bar{height:9px;border-radius:99px;background:#26302c;overflow:hidden;margin:12px 0 7px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#e45162,#f2ce68)}.thu .bar i{background:linear-gradient(90deg,#8d4db7,#deb1f5)}.muted{color:var(--muted);font-size:13px}.battle-panel{padding:0;overflow:hidden}.battle-head{padding:20px 22px;border-bottom:1px solid #dbc56733;background:linear-gradient(90deg,#4c351d55,#111916 45%,#38204455)}.battle-tabs button{min-width:120px;box-shadow:none}.battle-board{position:relative;display:grid;grid-template-columns:minmax(250px,1fr) minmax(270px,.75fr) minmax(250px,1fr);gap:20px;padding:28px;background:linear-gradient(90deg,#38151d42,transparent 42%,transparent 58%,#2d193d42)}.side-choice{display:grid;align-content:start;gap:10px}.side-choice h3,.battle-command h3{margin:0;color:#f7dea0}.faction-card{position:relative;display:grid;grid-template-columns:82px 1fr;gap:14px;align-items:center;width:100%;min-height:142px;padding:18px;text-align:left;border:2px solid #ffffff20;border-radius:14px;background:#08120f;box-shadow:0 10px 0 #050908}.faction-card.pku{--school:#db3c54}.faction-card.thu{--school:#a55ccb}.faction-card.selected{border-color:var(--school);background:linear-gradient(135deg,color-mix(in srgb,var(--school) 25%,#0a1411),#0a1411);box-shadow:0 0 0 3px color-mix(in srgb,var(--school) 22%,transparent),0 10px 0 #050908}.seal{display:grid;width:76px;height:76px;place-items:center;border:5px solid #f9e8ae;border-radius:50%;background:#101714;color:#fff0bc;font-size:38px;font-weight:900}.faction-card strong{display:block;font-size:23px}.faction-card small{color:#aeb8ae}.faction-card b{position:absolute;right:16px;top:13px;color:var(--school);font-size:18px}.auto-team{width:100%;box-shadow:none;background:#111b17}.auto-team.selected{border-color:#f0cd65;background:#67501c}.battle-command{display:grid;align-content:start;gap:16px;padding:18px;border:1px solid #ffffff15;border-radius:14px;background:#07110ee8}.command-mark{display:grid;width:72px;height:72px;margin:0 auto;place-items:center;border:2px solid #e4c75f;border-radius:50%;color:#f4d56f;font-size:23px;font-weight:900;box-shadow:0 0 30px #d0ae3c22}.difficulty{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.difficulty button{padding:8px 4px;box-shadow:none;background:#14201b}.difficulty button.active{border-color:#f0cd65;background:#6d541d}.battle-action{min-height:56px;background:linear-gradient(#8b6c22,#634a16);font-size:20px;letter-spacing:.08em}.queue-state{min-height:24px;margin:0;text-align:center;color:#d7dece}.reward-line{display:flex;justify-content:center;gap:12px;color:#b8c1b8;font-size:12px}.inventory{display:flex;flex-wrap:wrap;gap:9px}.item{border:1px solid #d8bf6755;border-radius:10px;padding:9px 11px;background:#17231d}.item button{padding:5px 9px;margin-left:7px;box-shadow:none}.notice{position:fixed;z-index:10;right:18px;bottom:18px;max-width:360px;border:1px solid var(--gold);background:#0e1b17f5;border-radius:10px;padding:12px 15px;box-shadow:0 16px 50px #000b;transform:translateY(140%);transition:.2s}.notice.show{transform:none}@media(max-width:900px){.battle-board{grid-template-columns:1fr}.battle-command{grid-row:3}.dashboard{grid-template-columns:1fr}.profile,.battle-panel{grid-column:auto}}@media(max-width:680px){.schools{grid-template-columns:1fr}.hero,.battle-head{align-items:start;flex-direction:column}.shell{padding-top:22px}.battle-tabs{width:100%}.battle-tabs button{min-width:0;flex:1}.battle-board{padding:16px}.faction-card{min-height:120px}.profile-head{align-items:start}}
-    /* Tactical command-table visual system: original styling inspired by WWII field manuals. */
-    :root{--ink:#11130e;--ink-deep:#090b08;--panel:#20231acc;--panel-solid:#20231a;--paper:#e7dfc4;--paper-dim:#b9b29b;--brass:#c9a859;--brass-hi:#f0d889;--olive:#5b6540;--olive-hi:#84905c;--pku:#a83a32;--thu:#3e6990;--line:#d8c68c3d;--shadow:#000b;color-scheme:dark}
-    *{box-sizing:border-box}
-    body{min-height:100vh;overflow-x:hidden;background:radial-gradient(ellipse at 50% -18%,#747a4e44,transparent 42%),linear-gradient(115deg,#080a07 0%,#202218 48%,#0b0d09 100%);color:var(--paper);font:15px/1.45 "Trebuchet MS","Microsoft YaHei",system-ui,sans-serif}
-    body:before,body:after{content:"";position:fixed;z-index:-1;inset:0;pointer-events:none}body:before{opacity:.3;background:repeating-linear-gradient(0deg,transparent 0 3px,#fff 4px,transparent 5px),repeating-linear-gradient(90deg,transparent 0 3px,#000 4px,transparent 5px);mix-blend-mode:overlay}body:after{background:linear-gradient(90deg,#0008,transparent 20% 80%,#0008),radial-gradient(ellipse at center,transparent 35%,#0009 100%)}
-    button,input,select{font:inherit}button{position:relative;border:1px solid #c7a961;border-radius:2px;background:linear-gradient(#505238,#292d20);color:#f9edc5;padding:10px 16px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;box-shadow:inset 0 1px #fff2,0 3px 0 #080906;transition:filter .16s,transform .16s,background .16s}button:hover{filter:brightness(1.18)}button:active{transform:translateY(2px);box-shadow:inset 0 1px #fff2,0 1px 0 #080906}button:disabled{opacity:.45;cursor:not-allowed}.shell{width:min(1320px,94vw);margin:auto;padding:28px 0 64px}
-    .hero{position:relative;display:flex;justify-content:space-between;gap:24px;align-items:center;min-height:130px;padding:22px 26px 20px 138px;border:1px solid var(--brass);border-radius:3px;background:linear-gradient(90deg,#25291d 0%,#303424d8 48%,#1d2018 100%);box-shadow:0 14px 36px #0009,inset 0 0 0 4px #0004}.hero:before{content:"兵";position:absolute;left:28px;top:50%;display:grid;place-items:center;width:76px;height:76px;transform:translateY(-50%);border:3px double var(--brass-hi);border-radius:50%;background:#24291d;color:var(--brass-hi);font:900 42px/1 Georgia,serif;box-shadow:0 0 0 7px #10120d,0 0 0 8px #ad914b}.hero:after{content:"QINGBEI • FIELD COMMAND";position:absolute;right:26px;bottom:9px;color:#d8c37d99;font:700 9px/1 monospace;letter-spacing:.22em}.eyebrow{color:var(--brass-hi);font:700 10px/1.2 monospace;letter-spacing:.25em}.hero h1{margin:6px 0 0;color:#fff4ca;font:900 clamp(30px,5vw,56px)/.92 Georgia,"Microsoft YaHei",serif;letter-spacing:.05em;text-shadow:0 3px #090a07}.hero p{margin:9px 0 0;color:var(--paper-dim)}.pill{position:relative;border:1px solid #bba05a;border-radius:0;padding:9px 12px 9px 29px;color:#f9e7a4;background:#161910;box-shadow:inset 0 0 14px #0008;font-size:12px;font-weight:800}.pill:before{content:"";position:absolute;left:12px;top:50%;width:7px;height:7px;transform:translateY(-50%);border-radius:50%;background:#9ab35f;box-shadow:0 0 10px #9ab35f}
-    .panel{position:relative;margin-top:20px;padding:22px;border:1px solid var(--line);border-radius:2px;background:linear-gradient(135deg,#303327e8,#1b1e16e8);box-shadow:0 18px 50px var(--shadow),inset 0 0 0 1px #0008;backdrop-filter:blur(7px)}.panel:before{content:"";position:absolute;inset:7px;border:1px solid #e7d59512;pointer-events:none}.auth{width:min(510px,100%);margin:58px auto}.auth h2,.panel h2{color:#fff0b9;font:900 25px/1 Georgia,"Microsoft YaHei",serif;letter-spacing:.04em}.grid{display:grid;gap:13px}.auth-tabs,.battle-tabs{display:flex;gap:6px}.auth-tabs{margin-bottom:18px}.auth-tabs button,.battle-tabs button{background:#171a12;border-color:#81794e;box-shadow:none}.auth-tabs button.active,.battle-tabs button.active{background:linear-gradient(#806c35,#4c3d1c);border-color:#f0d780;color:#fff9d8}.field{display:grid;gap:5px;color:#d8d2b8;font-size:12px;letter-spacing:.05em}.field input,.field select{width:100%;border:1px solid #837a58;border-radius:1px;background:#10130e;color:#fff0bd;padding:12px;outline:none}.field input:focus,.field select:focus{border-color:#e9cf79;box-shadow:0 0 0 2px #d9b94a33}.error{min-height:24px;color:#ff9a91}.hidden{display:none!important}
-    .dashboard{display:grid;grid-template-columns:1fr 1fr;gap:20px}.profile,.battle-panel{grid-column:1/-1}.profile-head,.battle-head{display:flex;justify-content:space-between;gap:15px;align-items:center}.schools{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:19px}.school{position:relative;overflow:hidden;border:1px solid #8d8363;border-radius:1px;padding:16px 17px;background:linear-gradient(100deg,#181b14,#292c20)}.school:after{content:"";position:absolute;width:150px;height:150px;right:-70px;bottom:-95px;border:22px solid #ffffff08;border-radius:50%}.school.pku{border-left:5px solid var(--pku)}.school.thu{border-left:5px solid var(--thu)}.school header{display:flex;justify-content:space-between;font:900 19px/1 Georgia,"Microsoft YaHei",serif}.bar{height:7px;border:1px solid #0a0b08;border-radius:0;background:#11130e;overflow:hidden;margin:13px 0 7px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#852d29,#e1bd63)}.thu .bar i{background:linear-gradient(90deg,#355a77,#d0bc71)}.muted{color:var(--paper-dim);font-size:12px}
-    .battle-panel{padding:0;overflow:hidden}.battle-head{padding:20px 23px;border-bottom:1px solid #bb9e593b;background:linear-gradient(90deg,#22261a,#3d422b 50%,#22261a)}.battle-board{position:relative;display:grid;grid-template-columns:minmax(250px,1fr) minmax(270px,.76fr) minmax(250px,1fr);gap:26px;padding:30px;background:linear-gradient(90deg,#7d30241c,transparent 41%,transparent 59%,#31527122),repeating-linear-gradient(0deg,transparent 0 34px,#d6c57808 35px),repeating-linear-gradient(90deg,transparent 0 34px,#d6c57808 35px)}.battle-board:before{content:"战区部署图";position:absolute;top:11px;left:50%;transform:translateX(-50%);color:#d8c88455;font:700 9px monospace;letter-spacing:.38em}.side-choice{display:grid;align-content:start;gap:10px}.side-choice h3,.battle-command h3{margin:0;color:#fff0bb;font:900 19px/1.1 Georgia,"Microsoft YaHei",serif}.faction-card{position:relative;display:grid;grid-template-columns:70px 1fr;gap:14px;align-items:center;width:100%;min-height:138px;padding:17px;text-align:left;border:1px solid #a49b76;border-radius:1px;background:linear-gradient(135deg,#292c20,#171a13);box-shadow:inset 0 0 0 1px #0007,0 7px 12px #0007}.faction-card:after{content:"";position:absolute;inset:5px;border:1px solid #ffffff12}.faction-card.pku{--school:#cf5546}.faction-card.thu{--school:#6094bd}.faction-card.selected{border-color:var(--school);background:linear-gradient(135deg,color-mix(in srgb,var(--school) 26%,#24291d),#161912);box-shadow:0 0 0 2px color-mix(in srgb,var(--school) 35%,transparent),inset 0 0 0 1px #0007,0 7px 12px #0007}.seal{z-index:1;display:grid;width:62px;height:62px;place-items:center;border:3px double #f0d98e;border-radius:50%;background:#23281c;color:#fff1bf;font:900 31px Georgia,serif}.faction-card strong{position:relative;z-index:1;display:block;font:900 22px/1.1 Georgia,"Microsoft YaHei",serif}.faction-card small{position:relative;z-index:1;color:#c1c1ab}.faction-card b{z-index:1;position:absolute;right:15px;top:12px;color:var(--school);font:700 13px monospace}.auto-team{width:100%;box-shadow:none;background:#22251b}.auto-team.selected{border-color:#e6c968;background:#6b5928}.battle-command{display:grid;align-content:start;gap:15px;padding:20px;border:1px solid #ba9e5a;background:linear-gradient(145deg,#2c2f20,#171a12);box-shadow:inset 0 0 0 4px #0b0d09,inset 0 0 0 5px #b89d56}.command-mark{display:grid;width:70px;height:70px;margin:0 auto;place-items:center;border:3px double #f0d77e;border-radius:50%;color:#ffe9a2;background:#25291d;font:900 17px Georgia,serif;box-shadow:0 0 0 5px #11140e}.difficulty{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.difficulty button{padding:8px 3px;box-shadow:none;background:#22261b}.difficulty button.active{border-color:#f0cd65;background:#725b24}.battle-action{min-height:58px;border-color:#ffe494;background:linear-gradient(#a98b3d,#625018);font:900 18px Georgia,"Microsoft YaHei",serif;letter-spacing:.12em;text-shadow:0 1px #332608}.queue-state{min-height:24px;margin:0;text-align:center;color:#e4ddb9}.reward-line{display:flex;justify-content:center;gap:12px;color:#d4cda9;font:700 11px monospace}.inventory{display:flex;flex-wrap:wrap;gap:9px}.item{border:1px solid #9c9067;border-radius:1px;padding:8px 10px;background:#171a12;color:#eee4c1}.item button{padding:5px 9px;margin-left:7px;box-shadow:none}.notice{position:fixed;z-index:10;right:18px;bottom:18px;max-width:360px;border:1px solid var(--brass);border-radius:1px;background:#1c2017f5;color:#fff0bd;padding:13px 15px;box-shadow:0 16px 50px #000b;transform:translateY(140%);transition:.2s}.notice.show{transform:none}
-    @media(max-width:900px){.battle-board{grid-template-columns:1fr}.battle-command{grid-row:3}.dashboard{grid-template-columns:1fr}.profile,.battle-panel{grid-column:auto}}@media(max-width:680px){.schools{grid-template-columns:1fr}.hero,.battle-head{align-items:flex-start;flex-direction:column}.hero{padding:102px 19px 26px}.hero:before{top:18px;left:50%;transform:translateX(-50%)}.hero:after{right:50%;transform:translateX(50%)}.shell{padding-top:16px}.battle-tabs{width:100%}.battle-tabs button{min-width:0;flex:1}.battle-board{padding:27px 15px 15px}.faction-card{min-height:118px}.profile-head{align-items:flex-start}}
-  </style>
-</head>
-<body>
-<main class="shell">
-  <header class="hero"><div><span class="eyebrow">QINGBEI FIELD COMMAND · 2026</span><h1>战区指挥部</h1><p>选择阵营，部署战术，然后出发。</p></div><span class="pill" id="serverState">服务器已连接</span></header>
-  <section class="panel auth" id="authPanel">
-    <div class="auth-tabs"><button id="loginTab" class="active">登录</button><button id="registerTab">注册</button></div>
-    <h2 id="authTitle">验证指挥官身份</h2>
-    <form class="grid" id="authForm"><label class="field">玩家 ID<input id="userId" autocomplete="username" maxlength="24" placeholder="3—24位字母、数字或下划线" /></label><label class="field">密码<input id="password" type="password" autocomplete="current-password" maxlength="72" placeholder="至少8位" /></label><button type="submit" id="authSubmit">登录</button><div class="error" id="authError"></div></form>
-  </section>
-  <section class="dashboard hidden" id="dashboard">
-    <article class="panel profile"><div class="profile-head"><div><span class="eyebrow">PLAYER PROFILE</span><h2 id="profileId">—</h2></div><button id="logout">退出登录</button></div><div class="schools"><div class="school pku"><header><span>北京大学</span><b id="pkuLevel">Lv.1</b></header><div class="bar"><i id="pkuBar"></i></div><span class="muted" id="pkuXp">0 EXP</span></div><div class="school thu"><header><span>清华大学</span><b id="thuLevel">Lv.1</b></header><div class="bar"><i id="thuBar"></i></div><span class="muted" id="thuXp">0 EXP</span></div></div></article>
-    <article class="panel battle-panel">
-      <header class="battle-head"><div><span class="eyebrow">BATTLE DEPLOYMENT</span><h2>部署战局</h2></div><nav class="battle-tabs"><button class="active" data-battle-mode="pvp">联机匹配</button><button data-battle-mode="ai">人机推演</button></nav></header>
-      <div class="battle-board">
-        <section class="side-choice"><h3>北京大学</h3><button class="faction-card pku" data-team="pku"><span class="seal">北</span><span><strong>燕园阵营</strong><small>以北大经验进入战局</small></span><b id="pkuBattleLevel">Lv.1</b></button></section>
-        <section class="battle-command"><div class="command-mark" id="modeMark">PvP</div><h3 id="modeTitle">联机匹配</h3><p class="muted" id="modeDetail">匹配另一名在线玩家；选择的是阵营偏好，系统会在必要时自动平衡双方。</p><button class="auto-team selected" id="autoTeam">阵营自动分配</button><div id="aiOptions" class="hidden grid"><div class="difficulty"><button data-difficulty="casual">休闲</button><button class="active" data-difficulty="standard">标准</button><button data-difficulty="hard">困难</button></div><label class="field">倍速卡<select id="speedCard"><option value="">不使用</option></select></label></div><div class="reward-line"><span id="winReward">胜方 +120 EXP</span><span id="lossReward">负方 +60 EXP</span></div><button class="battle-action" id="battleAction">开始匹配</button><p class="queue-state" id="queueState"></p></section>
-        <section class="side-choice"><h3>清华大学</h3><button class="faction-card thu" data-team="thu"><span class="seal">清</span><span><strong>清华园阵营</strong><small>以清华经验进入战局</small></span><b id="thuBattleLevel">Lv.1</b></button></section>
-      </div>
-    </article>
-    <article class="panel"><h2>倍速卡</h2><div class="inventory" id="cards"></div><p class="muted">仅可在人机战局创建时使用，只改变该独立内核的推演速度。</p></article>
-    <article class="panel"><h2>阵营饰品</h2><div class="inventory" id="cosmetics"></div><p class="muted">装备后，只替换对应阵营的单位材质。</p></article>
-  </section>
-</main><aside class="notice" id="notice"></aside>
-<script>
-const $=id=>document.getElementById(id),api=(path,options={})=>fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options}).then(async response=>{const data=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(data.error||'请求失败');error.data=data;throw error}return data});let authMode='login',battleMode='pvp',selectedTeam='any',difficulty='standard',poll=null;const thresholds=[0,100,250,500,900,1400],rewards={casual:[30,15],standard:[60,30],hard:[100,50]};
-function toast(text){$('notice').textContent=text;$('notice').classList.add('show');setTimeout(()=>$('notice').classList.remove('show'),3200)}
-function setAuthMode(next){authMode=next;$('loginTab').classList.toggle('active',next==='login');$('registerTab').classList.toggle('active',next==='register');$('authTitle').textContent=next==='login'?'进入个人主页':'创建玩家账号';$('authSubmit').textContent=next==='login'?'登录':'注册';$('password').autocomplete=next==='login'?'current-password':'new-password'}
-function progress(xp,level){const from=thresholds[level-1]||0,to=thresholds[level]||from+500;return Math.max(0,Math.min(100,(xp-from)/(to-from)*100))}
-function selectTeam(team){selectedTeam=team;document.querySelectorAll('[data-team]').forEach(card=>card.classList.toggle('selected',card.dataset.team===team));$('autoTeam').classList.toggle('selected',team==='any')}
-function setBattleMode(next){battleMode=next;document.querySelectorAll('[data-battle-mode]').forEach(button=>button.classList.toggle('active',button.dataset.battleMode===next));const ai=next==='ai';$('aiOptions').classList.toggle('hidden',!ai);$('autoTeam').classList.toggle('hidden',ai);$('modeMark').textContent=ai?'AI':'PvP';$('modeTitle').textContent=ai?'人机挑战':'联机匹配';$('modeDetail').textContent=ai?'选择一个阵营和AI难度，创建仅属于你的独立战局。':'匹配另一名在线玩家；选择的是阵营偏好，系统会在必要时自动平衡双方。';$('battleAction').textContent=ai?'创建战局':'开始匹配';if(ai&&selectedTeam==='any')selectTeam('pku');updateReward()}
-function setDifficulty(next){difficulty=next;document.querySelectorAll('[data-difficulty]').forEach(button=>button.classList.toggle('active',button.dataset.difficulty===next));updateReward()}
-function updateReward(){const reward=battleMode==='pvp'?[120,60]:rewards[difficulty];$('winReward').textContent='胜方 +'+reward[0]+' EXP';$('lossReward').textContent='负方 +'+reward[1]+' EXP'}
-function render(profile){if(profile.activeMatch?.joinUrl){location.replace(profile.activeMatch.joinUrl);return}$('authPanel').classList.add('hidden');$('dashboard').classList.remove('hidden');$('profileId').textContent=profile.id;for(const team of ['pku','thu']){const xp=profile.experience[team]||0,level=profile.levels[team]||1;$(team+'Level').textContent='Lv.'+level;$(team+'BattleLevel').textContent='Lv.'+level;$(team+'Xp').textContent=xp+' EXP';$(team+'Bar').style.width=progress(xp,level)+'%'}const cards=profile.speedCards||{};$('cards').innerHTML=['2x','4x'].map(card=>`<span class="item">${card} 倍速卡 × ${cards[card]||0}</span>`).join('');$('speedCard').innerHTML='<option value="">不使用</option>'+['2x','4x'].filter(card=>cards[card]>0).map(card=>`<option value="${card}">${card}（剩余${cards[card]}）</option>`).join('');const selected=profile.selectedCosmetics||{},items=profile.cosmetics||[];$('cosmetics').innerHTML=items.length?items.map(item=>{const team=item.startsWith('pku')?'pku':'thu',equipped=selected[team]===item;return `<span class="item">${item.replace('pku','北大').replace('thu','清华').replace('bronze','铜色').replace('gold','金色')}<button data-cosmetic="${item}" ${equipped?'disabled':''}>${equipped?'已装备':'装备'}</button></span>`}).join(''):'<span class="muted">提升阵营等级后解锁饰品。</span>';document.querySelectorAll('[data-cosmetic]').forEach(button=>button.onclick=()=>api('api/cosmetic',{method:'POST',body:JSON.stringify({item:button.dataset.cosmetic})}).then(result=>{render(result.profile);toast('饰品已装备')}).catch(error=>toast(error.message)))}
-async function refresh(){try{const result=await api('api/me');render(result.profile)}catch{$('authPanel').classList.remove('hidden');$('dashboard').classList.add('hidden')}}
-async function beginBattle(){const action=$('battleAction');action.disabled=true;$('queueState').textContent='';try{if(battleMode==='ai'){const result=await api('api/lobby/ai',{method:'POST',body:JSON.stringify({difficulty,team:selectedTeam,card:$('speedCard').value})});location.href=result.joinUrl;return}const result=await api('api/lobby/pvp',{method:'POST',body:JSON.stringify({preferredTeam:selectedTeam})});if(result.joinUrl){location.href=result.joinUrl;return}$('queueState').textContent='正在寻找另一名玩家…';action.textContent='匹配中';clearInterval(poll);poll=setInterval(async()=>{try{const state=await api('api/lobby/status');if(state.joinUrl)location.href=state.joinUrl}catch{}},1500)}catch(error){if(error.data?.activeMatch?.joinUrl){location.replace(error.data.activeMatch.joinUrl);return}toast(error.message);action.disabled=false;action.textContent=battleMode==='ai'?'创建战局':'开始匹配'}}
-$('loginTab').onclick=()=>setAuthMode('login');$('registerTab').onclick=()=>setAuthMode('register');$('authForm').onsubmit=async event=>{event.preventDefault();$('authError').textContent='';try{const result=await api('api/'+authMode,{method:'POST',body:JSON.stringify({id:$('userId').value,password:$('password').value})});render(result.profile)}catch(error){$('authError').textContent=error.message}};$('logout').onclick=()=>api('api/logout',{method:'POST'}).finally(()=>location.reload());document.querySelectorAll('[data-battle-mode]').forEach(button=>button.onclick=()=>setBattleMode(button.dataset.battleMode));document.querySelectorAll('[data-team]').forEach(card=>card.onclick=()=>selectTeam(card.dataset.team));document.querySelectorAll('[data-difficulty]').forEach(button=>button.onclick=()=>setDifficulty(button.dataset.difficulty));$('autoTeam').onclick=()=>selectTeam('any');$('battleAction').onclick=beginBattle;setBattleMode('pvp');refresh();
-</script></body></html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#282e2f" />
+    <title>解放清华园 · 指挥部</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --cream: #e4e2d1;
+        --muted: #b7b7a6;
+        --orange: #d89831;
+        --black: #25292b;
+        --line: #7e82766b;
+        --type:
+          "Arial Narrow", "Roboto Condensed", "Microsoft YaHei", Arial,
+          sans-serif;
+        --metal:
+          linear-gradient(#24292de8, #252b2de8), url("assets/field-table.png");
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: #777051 url("assets/field-table.png") center/cover fixed;
+        color: var(--cream);
+        font: 14px/1.5 var(--type);
+      }
+      body:after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: -1;
+        box-shadow: inset 0 0 110px 20px #151712aa;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        color: inherit;
+        border: 1px solid #a2a39480;
+        border-radius: 0;
+        background: var(--metal);
+        background-size: auto, 440px;
+        box-shadow:
+          inset 1px 1px 2px #e0e1d35c,
+          inset -1px -1px 3px #0b1014,
+          2px 4px 8px #1117;
+        font-weight: 900;
+        transition:
+          filter 0.15s,
+          transform 0.15s;
+      }
+      button:hover:not(:disabled) {
+        filter: brightness(1.19);
+      }
+      button:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+      button:disabled {
+        opacity: 0.52;
+        cursor: not-allowed;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #e3a343;
+        outline-offset: 3px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1,
+      h2,
+      h3 {
+        font-weight: 900;
+        line-height: 1.1;
+      }
+      svg {
+        display: block;
+      }
+      .symbol {
+        width: 45px;
+        height: 45px;
+        flex-shrink: 0;
+        filter: drop-shadow(1px 2px 0 #1116);
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      .muted {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .shell {
+        max-width: 1920px;
+        margin: auto;
+        min-height: 100vh;
+      }
+      .topbar {
+        position: relative;
+        z-index: 5;
+        display: flex;
+        align-items: stretch;
+        height: 76px;
+        background: var(--metal);
+        background-size: auto, 550px;
+        border-bottom: 2px solid #838474;
+        box-shadow: 0 5px 12px #121514a0;
+      }
+      .brand {
+        width: 150px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        padding: 0 10px;
+        border: 0;
+        border-right: 2px solid #0c111566;
+        box-shadow: inset -1px 0 #91948833;
+        background: none;
+        color: #dfad4e;
+      }
+      .brand .symbol {
+        width: 46px;
+        height: 46px;
+      }
+      .brand strong {
+        font-size: 25px;
+        line-height: 1;
+        letter-spacing: -1px;
+      }
+      .brand small {
+        display: block;
+        font: 8px/1.2 var(--type);
+        letter-spacing: 2px;
+        margin-top: 6px;
+        color: #d0bea0;
+      }
+      .profile-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 222px;
+        padding: 9px 22px;
+        border: 0;
+        border-right: 2px solid #10151688;
+        box-shadow: inset -1px 0 #92968b42;
+        background: none;
+        text-align: left;
+      }
+      .avatar {
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        width: 43px;
+        height: 52px;
+        background:
+          linear-gradient(#545c38bb, #292e1acc),
+          url("assets/campus-command.png") 50% 50% / auto 120px;
+        border: 2px solid #a69865;
+        box-shadow: inset 0 0 0 2px #d6d3b64a;
+        font-size: 25px;
+        color: #efde9b;
+      }
+      .profile-copy {
+        min-width: 0;
+      }
+      .profile-rank {
+        display: inline-block;
+        background: #b29c68;
+        color: #262b25;
+        padding: 0 12px 0 5px;
+        clip-path: polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%);
+        font-size: 11px;
+        font-weight: 900;
+        line-height: 18px;
+      }
+      .profile-bar h1 {
+        font-size: 20px;
+        margin-top: 3px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 190px;
+        white-space: nowrap;
+      }
+      .top-resources {
+        display: flex;
+        align-items: center;
+        gap: 23px;
+        padding: 0 26px;
+        flex: 1;
+      }
+      .resource {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 22px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+      .resource em {
+        font-style: normal;
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        font-size: 16px;
+        border: 2px solid #cfbf85;
+        background: linear-gradient(145deg, #ddc87c, #a68e49);
+        color: #393627;
+        box-shadow: 1px 2px 3px #0008;
+      }
+      .resource.thu em {
+        background: linear-gradient(145deg, #b3b9b5, #65716b);
+        border-color: #bfc5b8;
+        color: #2b3431;
+      }
+      .resource.card-resource {
+        font-size: 18px;
+        gap: 7px;
+      }
+      .ticket-mini {
+        display: grid;
+        place-items: center;
+        width: 23px;
+        height: 32px;
+        background: #464939;
+        border: 2px solid #b6ae85;
+        color: #ddd3a7;
+        font-size: 11px;
+        transform: rotate(-7deg);
+        margin-right: 2px;
+      }
+      .top-actions {
+        display: flex;
+        align-items: stretch;
+        margin-left: auto;
+      }
+      .status-box {
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        font-size: 10px;
+        color: #b6b9a7;
+      }
+      .status-box:before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #c4c89e;
+        margin-right: 7px;
+      }
+      .status-box[data-state="error"]:before {
+        background: #d8906e;
+      }
+      .icon-button {
+        width: 69px;
+        border: 0;
+        border-left: 2px solid #171d1d88;
+        box-shadow: inset 1px 0 #8c968844;
+        background: transparent;
+        display: grid;
+        place-items: center;
+      }
+      .icon-button .symbol {
+        width: 30px;
+        height: 30px;
+      }
+      .layout {
+        position: relative;
+        display: grid;
+        grid-template-columns: 125px minmax(0, 1fr);
+        min-height: calc(100vh - 76px);
+      }
+      .sidebar {
+        padding-top: 87px;
+        z-index: 3;
+      }
+      .main-nav {
+        display: grid;
+        gap: 9px;
+      }
+      .main-nav button {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 108px;
+        width: 125px;
+        border-left: 0;
+        border-color: #a9b1a269;
+        background: var(--metal);
+        background-size: auto, 380px;
+        color: #dbddcc;
+        font-size: 18px;
+        line-height: 1;
+        letter-spacing: 0.02em;
+      }
+      .main-nav button.active {
+        color: var(--orange);
+        background:
+          linear-gradient(#1c2429e6, #24292ce6), url("assets/field-table.png");
+        border-color: #c2b89180;
+        box-shadow:
+          inset 0 0 15px #0a111b,
+          2px 5px 12px #1117;
+      }
+      .main-nav button.active:after {
+        content: "";
+        position: absolute;
+        right: 0;
+        top: 0;
+        width: 4px;
+        height: 100%;
+        background: var(--orange);
+      }
+      .main-nav .symbol {
+        width: 43px;
+        height: 43px;
+      }
+      .lobby-content {
+        padding: 66px 62px 45px 77px;
+        min-width: 0;
+      }
+      .home-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 250px;
+        gap: 28px;
+      }
+      .hero-poster {
+        display: block;
+        position: relative;
+        min-height: 425px;
+        width: 100%;
+        padding: 0;
+        border: 2px solid #b3b3a57c;
+        text-align: left;
+        background: url("assets/campus-command.png") center 58% / cover;
+        box-shadow:
+          0 4px 8px #151711c9,
+          inset 0 0 0 2px #c4c7b644;
+        isolation: isolate;
+      }
+      .hero-poster:before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(0deg, #070c09e8, transparent 62%);
+      }
+      .poster-copy {
+        position: absolute;
+        bottom: 29px;
+        left: 29px;
+        right: 25px;
+      }
+      .poster-copy strong {
+        display: block;
+        font-size: clamp(30px, 3.4vw, 55px);
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        text-shadow: 2px 3px #1a1b1299;
+      }
+      .poster-copy span {
+        display: block;
+        font-size: 19px;
+        margin-top: 12px;
+        font-weight: 800;
+        color: #e1e0cb;
+      }
+      .poster-copy small {
+        display: block;
+        font-size: 11px;
+        margin-top: 8px;
+        color: #c7c8b4;
+      }
+      .poster-label {
+        position: absolute;
+        left: 22px;
+        top: 20px;
+        font-size: 11px;
+        letter-spacing: 0.09em;
+        background: #232a26d9;
+        padding: 4px 9px;
+        border: 1px solid #d3c59677;
+        color: #e3dba7;
+      }
+      .poster-arrow {
+        position: absolute;
+        right: 25px;
+        bottom: 29px;
+        color: #e6e5d5;
+        font-size: 27px;
+      }
+      .mode-rail {
+        display: grid;
+        grid-template-rows: repeat(3, 1fr);
+        gap: 23px;
+      }
+      .mode-tile {
+        position: relative;
+        min-height: 118px;
+        display: flex;
+        align-items: center;
+        gap: 17px;
+        text-align: left;
+        padding: 18px 21px;
+        isolation: isolate;
+        border: 2px solid #a4ada277;
+        background:
+          linear-gradient(90deg, #24382ede, #35413388),
+          url("assets/campus-command.png") 25% 60% / auto 250px;
+        box-shadow:
+          1px 3px 7px #1119,
+          inset 0 0 0 1px #d0d2b944;
+      }
+      .mode-tile.training {
+        background:
+          linear-gradient(90deg, #23343ddb, #22354675),
+          url("assets/campus-command.png") 85% 60% / auto 250px;
+      }
+      .mode-tile.supplies {
+        background:
+          linear-gradient(#46522dec, #3f492ce0),
+          url("assets/field-table.png") center/cover;
+      }
+      .mode-tile .symbol {
+        width: 51px;
+        height: 51px;
+        color: #e5e4cd;
+      }
+      .mode-tile strong {
+        display: block;
+        font-size: 28px;
+        line-height: 1.15;
+        letter-spacing: -0.04em;
+      }
+      .mode-tile small {
+        display: block;
+        font-size: 11px;
+        color: #c2c8b6;
+        margin-top: 5px;
+        letter-spacing: 0.08em;
+      }
+      .home-bottom {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1.8fr;
+        gap: 24px;
+        margin-top: 38px;
+      }
+      .home-info {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 20px;
+        min-height: 109px;
+        text-align: left;
+      }
+      .home-info .symbol {
+        width: 42px;
+        height: 42px;
+        color: #d49935;
+      }
+      .home-info strong {
+        display: block;
+        font-size: 23px;
+        line-height: 1.2;
+      }
+      .home-info small {
+        display: block;
+        color: #c0c2af;
+        font-size: 11px;
+        margin-top: 5px;
+      }
+      .home-progress {
+        display: grid;
+        gap: 16px;
+        border: 1px solid #acac936e;
+        background:
+          linear-gradient(#665c38dd, #655c36e8), url("assets/field-table.png");
+        padding: 17px 21px;
+        box-shadow:
+          inset 1px 1px #d1c59466,
+          2px 4px 6px #1117;
+      }
+      .mini-record {
+        display: grid;
+        grid-template-columns: 22px 58px 1fr 32px;
+        align-items: center;
+        gap: 9px;
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .mini-record > span:first-child {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        background: #903d32;
+        color: #e6dac7;
+      }
+      .mini-record.thu > span:first-child {
+        background: #635466;
+      }
+      .mini-track {
+        height: 7px;
+        background: #252823;
+        border: 1px solid #c9c5a17a;
+        overflow: hidden;
+      }
+      .mini-track i {
+        display: block;
+        height: 100%;
+        background: #d9932b;
+        transition: width 0.3s;
+      }
+      .mini-record > b {
+        font-size: 13px;
+      }
+      .screen-title {
+        display: flex;
+        align-items: center;
+        gap: 17px;
+        margin-bottom: 31px;
+        color: #e7e5d4;
+        text-shadow: 1px 3px #292c22a6;
+      }
+      .screen-title h2 {
+        font-size: 34px;
+      }
+      .back-button {
+        width: 36px;
+        height: 36px;
+        font-size: 22px;
+        line-height: 1;
+        background: #272e2add;
+      }
+      .screen-title small {
+        font-size: 12px;
+        color: #d0cfb7;
+        margin-left: auto;
+      }
+      .battle-layout {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr) 285px;
+        gap: 23px;
+        align-items: stretch;
+      }
+      .mode-list {
+        align-self: start;
+        display: grid;
+        padding: 15px;
+        background: var(--metal);
+        background-size: auto, 400px;
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 10px #1117;
+      }
+      .mode-list button {
+        background: none;
+        border: 0;
+        box-shadow: none;
+        font-size: 20px;
+        padding: 18px 4px;
+        text-align: left;
+        color: #d7dbca;
+      }
+      .mode-list button + button {
+        border-top: 1px solid #adb09c40;
+      }
+      .mode-list button.active {
+        color: var(--orange);
+      }
+      .deck-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 26px;
+        align-content: start;
+        padding: 5px 7px 28px;
+      }
+      .faction-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        max-width: 248px;
+        margin: auto;
+        width: 100%;
+        padding: 0;
+        background: none;
+        border: 0;
+        box-shadow: none;
+        color: #e6e2cc;
+        text-align: center;
+      }
+      .deck-back {
+        position: relative;
+        display: grid;
+        place-items: center;
+        aspect-ratio: 2/2.8;
+        min-height: 240px;
+        background:
+          linear-gradient(145deg, #80372fd9, #4c2323ed),
+          url("assets/field-table.png");
+        background-size: auto, 420px;
+        border: 5px solid #d6cc99;
+        border-radius: 6px;
+        box-shadow:
+          0 6px 10px #0c160dd9,
+          inset 0 0 0 3px #5c3028,
+          inset 0 0 0 5px #e0d3a788;
+        isolation: isolate;
+      }
+      .deck-back:before {
+        content: "";
+        position: absolute;
+        inset: 12px;
+        border: 1px solid #e1d19d9e;
+        background: repeating-linear-gradient(
+          35deg,
+          transparent 0 33px,
+          #ddd2a008 34px 35px
+        );
+      }
+      .deck-back:after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          145deg,
+          transparent 37%,
+          #eee1b013 38%,
+          transparent 48%
+        );
+        pointer-events: none;
+      }
+      .thu .deck-back {
+        background:
+          linear-gradient(145deg, #4d5369e8, #273341eb),
+          url("assets/field-table.png");
+      }
+      .deck-emblem {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        z-index: 1;
+      }
+      .deck-emblem > b {
+        display: grid;
+        place-items: center;
+        border: 4px double #e0d2a1;
+        border-radius: 50%;
+        width: 92px;
+        height: 92px;
+        font-size: 52px;
+        font-weight: 900;
+        color: #e7d6a2;
+        line-height: 1;
+        box-shadow: 0 0 0 6px #c6b58121;
+      }
+      .deck-emblem > span {
+        font-size: 10px;
+        margin-top: 16px;
+        letter-spacing: 0.15em;
+        color: #d4c896;
+      }
+      .deck-corner {
+        position: absolute;
+        top: 18px;
+        left: 18px;
+        font-size: 12px;
+        font-weight: 900;
+        color: #e8dcab;
+      }
+      .deck-caption {
+        background: var(--metal);
+        background-size: auto, 300px;
+        border: 1px solid #848b7c60;
+        width: 85%;
+        margin: auto;
+        padding: 13px 5px 10px;
+        box-shadow: 0 4px 7px #1118;
+      }
+      .deck-caption strong {
+        display: block;
+        font-size: 20px;
+        line-height: 1.3;
+      }
+      .deck-caption small {
+        font-size: 11px;
+        color: #d3c58f;
+      }
+      .card-check {
+        display: none;
+        position: absolute;
+        left: -11px;
+        top: 30px;
+        z-index: 2;
+        width: 58px;
+        height: 44px;
+        background: var(--orange);
+        color: #e9dfc0;
+        clip-path: polygon(0 0, 100% 0, 86% 50%, 100% 100%, 0 100%);
+        font-size: 31px;
+        line-height: 44px;
+        text-align: center;
+      }
+      .selected .card-check {
+        display: block;
+      }
+      .faction-card.selected .deck-back {
+        border-color: #ead7a3;
+        box-shadow:
+          0 0 0 2px #c79438,
+          0 8px 15px #131a11bb;
+      }
+      .battle-command {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 24px;
+        background: var(--metal);
+        background-size: auto, 480px;
+        border: 1px solid #9ca59260;
+        box-shadow:
+          inset 0 0 35px #161d205c,
+          2px 6px 12px #101a1480;
+      }
+      .command-head {
+        text-align: center;
+      }
+      .command-head h3 {
+        font-size: 27px;
+        margin-top: 6px;
+      }
+      .command-head small {
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        color: #939e8c;
+      }
+      .command-mark {
+        font-size: 54px;
+        font-weight: 900;
+        line-height: 1.25;
+        color: #d6d9c2;
+        text-align: center;
+        text-shadow: 1px 3px #080e11;
+      }
+      .battle-command > .muted {
+        font-size: 12px;
+        line-height: 1.8;
+        color: #b6c0ad;
+      }
+      .auto-team {
+        padding: 10px 4px;
+        font-size: 12px;
+        box-shadow: inset 0 1px #a8b49f55;
+        border-color: #858f7a;
+        background: #2b352d;
+      }
+      .auto-team.selected {
+        background: #b4b99a;
+        color: #242f27;
+      }
+      .grid {
+        display: grid;
+        gap: 15px;
+      }
+      .difficulty {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0;
+      }
+      .difficulty button {
+        padding: 8px 3px;
+        font-size: 12px;
+        border: 1px solid #9ea38b;
+        background: #29362d;
+        box-shadow: none;
+      }
+      .difficulty button + button {
+        border-left: 0;
+      }
+      .difficulty button.active {
+        background: #d2d4b9;
+        color: #25322a;
+      }
+      .field {
+        display: grid;
+        gap: 7px;
+        font-size: 12px;
+      }
+      .field input,
+      .field select {
+        width: 100%;
+        min-width: 0;
+        padding: 11px;
+        border: 1px solid #8a9581;
+        background: #111a1dcc;
+        color: #e3e5cf;
+        border-radius: 0;
+      }
+      .field input::placeholder {
+        color: #8f9b8b;
+        font-size: 11px;
+      }
+      .battle-command select {
+        padding: 9px;
+      }
+      .reward-line {
+        margin-top: auto;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: #c9d1b7;
+        font-size: 10px;
+      }
+      .battle-action,
+      .primary {
+        min-height: 44px;
+        padding: 10px 16px;
+        border: 1px solid #cbcdb5;
+        background:
+          linear-gradient(#dfdfcdee, #babbaceb), url("assets/field-table.png");
+        color: #272b27;
+        font-weight: 900;
+        font-size: 22px;
+        line-height: 1.3;
+        text-shadow: 0 1px #f0f1dc99;
+        box-shadow:
+          inset 1px 1px #ffffff66,
+          0 3px 5px #0008;
+      }
+      .battle-action:hover:not(:disabled),
+      .primary:hover:not(:disabled) {
+        background:
+          linear-gradient(#e1b65bee, #c28d37eb), url("assets/field-table.png");
+      }
+      .queue-state {
+        text-align: center;
+        font-size: 12px;
+        color: #e0c27f;
+        line-height: 1.6;
+      }
+      .queue-state:empty {
+        display: none;
+      }
+      .battle-note {
+        font-size: 11px;
+        color: #d6d8be;
+        text-shadow: 0 1px 2px #222;
+        line-height: 1.7;
+        padding: 15px 0 0;
+      }
+      .career-panel {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+      }
+      .school {
+        padding: 30px;
+        background: var(--metal);
+        background-size: auto, 450px;
+        border: 2px solid #abb19b66;
+        box-shadow: 3px 5px 9px #161b1499;
+      }
+      .school-header {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+      }
+      .school-seal {
+        display: grid;
+        place-items: center;
+        width: 65px;
+        height: 75px;
+        background: #934235;
+        border: 3px double #d1c291;
+        font-size: 35px;
+      }
+      .thu .school-seal {
+        background: #555c71;
+      }
+      .school h3 {
+        font-size: 26px;
+      }
+      .school header b {
+        display: block;
+        font-size: 16px;
+        color: #c8ceba;
+        margin-top: 7px;
+      }
+      .bar {
+        height: 8px;
+        margin: 27px 0 12px;
+        background: #0c171acc;
+        border: 1px solid #b9beaa70;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        background: #d99c37;
+      }
+      .school > .muted {
+        font-size: 14px;
+      }
+      .career-note {
+        grid-column: 1/-1;
+        background: #242d27db;
+        padding: 18px 22px;
+        border: 1px solid #9caa7e50;
+        color: #bfc9b0;
+        font-size: 12px;
+      }
+      .supply-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+      }
+      .supply-panel {
+        padding: 27px;
+        background: var(--metal);
+        background-size: auto, 400px;
+        border: 1px solid #b6b6a570;
+        box-shadow: 3px 5px 10px #1118;
+      }
+      .supply-panel h3 {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        font-size: 27px;
+      }
+      .supply-panel h3 .symbol {
+        width: 34px;
+        height: 34px;
+        color: #d8b467;
+      }
+      .inventory {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        margin: 29px 0;
+        min-height: 90px;
+      }
+      .supply-ticket {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 18px;
+        background:
+          linear-gradient(#989061cf, #686847e6), url("assets/field-table.png");
+        border: 3px double #d2c89c;
+        box-shadow: 2px 4px 5px #121b11c2;
+        transform: rotate(-3deg);
+      }
+      .supply-ticket strong {
+        font-size: 33px;
+        color: #eeead0;
+      }
+      .supply-ticket span {
+        font-size: 12px;
+      }
+      .supply-ticket small {
+        display: block;
+        color: #d3d8bd;
+        font-size: 9px;
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        padding: 12px;
+        border: 1px solid #9ca4847a;
+        background: #1b2926aa;
+        font-size: 13px;
+      }
+      .item button {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+      .item button:disabled {
+        background: #535d3d;
+        color: #d0d8b7;
+        opacity: 1;
+      }
+      .auth-layout {
+        max-width: 1200px;
+        margin: 0 auto;
+        min-height: calc(100vh - 76px);
+        padding: 70px 45px;
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 50px;
+        align-items: center;
+      }
+      .auth-poster {
+        position: relative;
+        min-height: 510px;
+        border: 2px solid #adae9377;
+        box-shadow: 4px 8px 16px #10180ea6;
+        background:
+          linear-gradient(0deg, #111d15ed, transparent 70%),
+          url("assets/campus-command.png") center/cover;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        padding: 34px;
+      }
+      .auth-poster h2 {
+        font-size: 48px;
+        letter-spacing: -0.03em;
+        color: #eae6d0;
+        text-shadow: 2px 3px #0c151d;
+      }
+      .auth-poster p {
+        font-size: 17px;
+        font-weight: 800;
+        margin-top: 15px;
+      }
+      .auth-poster small {
+        font-size: 11px;
+        color: #c4ceb7;
+        letter-spacing: 0.07em;
+        margin-top: 8px;
+      }
+      .auth {
+        padding: 30px;
+        background: var(--metal);
+        background-size: auto, 500px;
+        border: 1px solid #b0b49c88;
+        box-shadow:
+          inset 1px 1px #d5d6bf50,
+          3px 8px 18px #151b15aa;
+      }
+      .auth h2 {
+        font-size: 28px;
+        text-align: center;
+      }
+      .auth-subtitle {
+        text-align: center;
+        color: #abb8a2;
+        font-size: 12px;
+        margin: 10px 0 24px;
+      }
+      .auth-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        margin-bottom: 24px;
+      }
+      .auth-tabs button {
+        padding: 10px;
+        box-shadow: none;
+        border: 1px solid #b0b7a178;
+        background: #1a2527;
+      }
+      .auth-tabs button + button {
+        border-left: 0;
+      }
+      .auth-tabs button.active {
+        background: #cfd2b8;
+        color: #273028;
+      }
+      .auth .primary {
+        margin-top: 9px;
+        font-size: 20px;
+      }
+      .error {
+        min-height: 20px;
+        color: #ecb392;
+        font-size: 12px;
+      }
+      .auth-foot {
+        font-size: 10px;
+        color: #919f88;
+        border-top: 1px solid #8094784a;
+        padding-top: 16px;
+        margin-top: 15px;
+        line-height: 1.8;
+      }
+      .notice {
+        position: fixed;
+        z-index: 30;
+        left: 50%;
+        bottom: 27px;
+        max-width: min(480px, calc(100vw - 34px));
+        transform: translate(-50%, 15px);
+        opacity: 0;
+        visibility: hidden;
+        padding: 13px 23px;
+        background: var(--metal);
+        background-size: auto, 400px;
+        border: 1px solid #b4b49b;
+        box-shadow: 0 4px 18px #111a;
+        color: #e2dbb6;
+        font-size: 13px;
+        transition: 0.2s;
+      }
+      .notice.show {
+        transform: translate(-50%, 0);
+        opacity: 1;
+        visibility: visible;
+      }
+      .page-footer {
+        font-size: 9px;
+        color: #ddd9bead;
+        text-shadow: 0 1px #222;
+        text-align: right;
+        padding: 0 62px 15px;
+        margin-top: -24px;
+        pointer-events: none;
+      }
+      @media (min-width: 1650px) {
+        .lobby-content {
+          padding: 86px 95px 65px 110px;
+        }
+        .hero-poster {
+          min-height: 520px;
+        }
+        .home-grid {
+          grid-template-columns: minmax(0, 1fr) 295px;
+          gap: 35px;
+        }
+        .home-bottom {
+          margin-top: 48px;
+        }
+        .mode-tile strong {
+          font-size: 33px;
+        }
+        .topbar {
+          height: 84px;
+        }
+        .layout {
+          min-height: calc(100vh - 84px);
+        }
+        .sidebar {
+          padding-top: 100px;
+        }
+        .main-nav button {
+          height: 125px;
+          width: 145px;
+          font-size: 21px;
+        }
+        .layout {
+          grid-template-columns: 145px minmax(0, 1fr);
+        }
+        .deck-back {
+          min-height: 330px;
+        }
+        .faction-card {
+          max-width: 265px;
+        }
+        .battle-layout {
+          grid-template-columns: 175px minmax(0, 1fr) 320px;
+        }
+      }
+      @media (max-width: 1250px) {
+        .brand {
+          width: 125px;
+        }
+        .brand strong {
+          font-size: 22px;
+        }
+        .profile-bar {
+          min-width: 185px;
+          padding: 9px 15px;
+        }
+        .top-resources {
+          gap: 15px;
+          padding: 0 18px;
+        }
+        .resource {
+          font-size: 19px;
+        }
+        .status-box {
+          display: none;
+        }
+        .lobby-content {
+          padding: 50px 32px 45px 45px;
+        }
+        .home-grid {
+          grid-template-columns: minmax(0, 1fr) 215px;
+          gap: 20px;
+        }
+        .hero-poster {
+          min-height: 365px;
+        }
+        .mode-rail {
+          gap: 17px;
+        }
+        .mode-tile {
+          padding: 16px;
+          gap: 12px;
+          min-height: 105px;
+        }
+        .mode-tile strong {
+          font-size: 25px;
+        }
+        .mode-tile .symbol {
+          width: 41px;
+          height: 41px;
+        }
+        .poster-copy strong {
+          font-size: 38px;
+        }
+        .poster-copy span {
+          font-size: 15px;
+        }
+        .home-bottom {
+          gap: 17px;
+          margin-top: 27px;
+        }
+        .home-info {
+          padding: 14px;
+          gap: 10px;
+        }
+        .home-info strong {
+          font-size: 20px;
+        }
+        .home-progress {
+          padding: 14px;
+        }
+        .battle-layout {
+          grid-template-columns: 125px minmax(0, 1fr) 235px;
+          gap: 18px;
+        }
+        .battle-command {
+          padding: 19px;
+          gap: 16px;
+        }
+        .deck-grid {
+          gap: 17px;
+          padding: 5px 4px 20px;
+        }
+        .deck-back {
+          min-height: 220px;
+          border-width: 4px;
+        }
+        .deck-emblem > b {
+          width: 70px;
+          height: 70px;
+          font-size: 39px;
+        }
+        .deck-caption strong {
+          font-size: 18px;
+        }
+        .mode-list {
+          padding: 10px;
+        }
+        .mode-list button {
+          font-size: 18px;
+        }
+        .command-head h3 {
+          font-size: 24px;
+        }
+        .screen-title h2 {
+          font-size: 29px;
+        }
+      }
+      @media (max-width: 1000px) {
+        .topbar {
+          height: 65px;
+        }
+        .brand {
+          width: 100px;
+        }
+        .brand .symbol {
+          width: 32px;
+          height: 32px;
+        }
+        .brand strong {
+          font-size: 20px;
+        }
+        .profile-bar {
+          min-width: 160px;
+          padding: 7px 12px;
+        }
+        .profile-bar h1 {
+          font-size: 16px;
+          max-width: 145px;
+        }
+        .avatar {
+          width: 35px;
+          height: 44px;
+          font-size: 21px;
+        }
+        .top-resources {
+          gap: 13px;
+          padding: 0 15px;
+        }
+        .resource {
+          font-size: 16px;
+          gap: 5px;
+        }
+        .resource em {
+          width: 25px;
+          height: 25px;
+          font-size: 13px;
+        }
+        .resource.card-resource {
+          font-size: 14px;
+        }
+        .icon-button {
+          width: 47px;
+        }
+        .icon-button .symbol {
+          width: 24px;
+          height: 24px;
+        }
+        .layout {
+          grid-template-columns: 95px minmax(0, 1fr);
+        }
+        .sidebar {
+          padding-top: 55px;
+        }
+        .main-nav button {
+          width: 95px;
+          height: 93px;
+          font-size: 16px;
+        }
+        .main-nav .symbol {
+          width: 36px;
+          height: 36px;
+        }
+        .lobby-content {
+          padding: 40px 24px 40px 29px;
+        }
+        .home-grid {
+          grid-template-columns: minmax(0, 1fr) 180px;
+          gap: 16px;
+        }
+        .hero-poster {
+          min-height: 325px;
+        }
+        .poster-copy {
+          left: 20px;
+          bottom: 24px;
+        }
+        .poster-copy strong {
+          font-size: 30px;
+        }
+        .poster-copy span {
+          font-size: 13px;
+        }
+        .poster-copy small {
+          display: none;
+        }
+        .mode-rail {
+          gap: 13px;
+        }
+        .mode-tile {
+          min-height: 98px;
+          padding: 14px;
+          gap: 10px;
+        }
+        .mode-tile strong {
+          font-size: 21px;
+        }
+        .mode-tile small {
+          font-size: 9px;
+        }
+        .mode-tile .symbol {
+          width: 34px;
+          height: 34px;
+        }
+        .home-bottom {
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+        }
+        .home-progress {
+          grid-column: 1/-1;
+          display: flex;
+          gap: 22px;
+        }
+        .mini-record {
+          flex: 1;
+          grid-template-columns: 20px 51px 1fr 28px;
+          gap: 7px;
+        }
+        .home-info {
+          min-height: 88px;
+        }
+        .battle-layout {
+          grid-template-columns: minmax(0, 1fr) 230px;
+          gap: 20px;
+        }
+        .mode-list {
+          grid-column: 1/-1;
+          display: flex;
+          gap: 20px;
+          padding: 0 18px;
+        }
+        .mode-list button {
+          padding: 12px 0;
+          flex: 1;
+        }
+        .mode-list button + button {
+          border: 0;
+        }
+        .deck-grid {
+          gap: 18px;
+        }
+        .deck-back {
+          min-height: 220px;
+        }
+        .deck-emblem > b {
+          width: 64px;
+          height: 64px;
+          font-size: 35px;
+        }
+        .deck-emblem > span {
+          font-size: 8px;
+        }
+        .card-check {
+          left: -8px;
+          width: 43px;
+          height: 34px;
+          font-size: 23px;
+          line-height: 34px;
+        }
+        .auth-layout {
+          padding: 50px 35px;
+          gap: 30px;
+        }
+        .auth-poster {
+          min-height: 470px;
+          padding: 25px;
+        }
+        .auth-poster h2 {
+          font-size: 37px;
+        }
+        .auth-poster p {
+          font-size: 15px;
+        }
+        .auth {
+          padding: 26px;
+        }
+        .career-panel,
+        .supply-grid {
+          gap: 18px;
+        }
+        .school,
+        .supply-panel {
+          padding: 23px;
+        }
+        .school h3 {
+          font-size: 22px;
+        }
+        .school-seal {
+          width: 49px;
+          height: 60px;
+          font-size: 29px;
+        }
+        .school-header {
+          gap: 13px;
+        }
+      }
+      @media (max-width: 760px) {
+        .topbar {
+          height: 61px;
+        }
+        .brand {
+          width: 76px;
+          gap: 4px;
+        }
+        .brand .symbol {
+          width: 27px;
+          height: 27px;
+        }
+        .brand strong {
+          font-size: 17px;
+        }
+        .brand small {
+          font-size: 5px;
+          letter-spacing: 1px;
+        }
+        .profile-bar {
+          min-width: 0;
+          padding: 6px 10px;
+          gap: 8px;
+        }
+        .profile-bar h1 {
+          font-size: 14px;
+          max-width: 100px;
+        }
+        .profile-rank {
+          font-size: 9px;
+          line-height: 14px;
+        }
+        .avatar {
+          width: 29px;
+          height: 37px;
+          font-size: 18px;
+        }
+        .top-resources {
+          padding: 0 10px;
+          gap: 12px;
+        }
+        .resource {
+          font-size: 14px;
+        }
+        .resource em {
+          width: 20px;
+          height: 20px;
+          font-size: 11px;
+          border-width: 1px;
+        }
+        .resource.card-resource {
+          display: none;
+        }
+        .icon-button {
+          width: 40px;
+        }
+        .icon-button .symbol {
+          width: 22px;
+          height: 22px;
+        }
+        .layout {
+          grid-template-columns: 73px minmax(0, 1fr);
+          min-height: calc(100vh - 61px);
+        }
+        .sidebar {
+          padding-top: 32px;
+        }
+        .main-nav {
+          gap: 7px;
+        }
+        .main-nav button {
+          width: 73px;
+          height: 83px;
+          font-size: 14px;
+          gap: 7px;
+        }
+        .main-nav .symbol {
+          width: 32px;
+          height: 32px;
+        }
+        .lobby-content {
+          padding: 31px 18px 43px 20px;
+        }
+        .home-grid {
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+        .hero-poster {
+          min-height: 320px;
+        }
+        .poster-copy strong {
+          font-size: 34px;
+        }
+        .mode-rail {
+          grid-template-columns: repeat(3, 1fr);
+          grid-template-rows: 1fr;
+          gap: 10px;
+        }
+        .mode-tile {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          text-align: center;
+          min-height: 115px;
+          gap: 8px;
+          padding: 10px 6px;
+        }
+        .mode-tile strong {
+          font-size: 18px;
+        }
+        .mode-tile small {
+          font-size: 8px;
+        }
+        .mode-tile .symbol {
+          width: 35px;
+          height: 35px;
+        }
+        .home-bottom {
+          margin-top: 20px;
+          gap: 12px;
+        }
+        .home-info {
+          padding: 12px;
+          gap: 9px;
+          min-height: 82px;
+        }
+        .home-info .symbol {
+          width: 30px;
+          height: 30px;
+        }
+        .home-info strong {
+          font-size: 18px;
+        }
+        .home-info small {
+          font-size: 9px;
+        }
+        .home-progress {
+          display: grid;
+          gap: 13px;
+        }
+        .mini-record {
+          grid-template-columns: 22px 58px 1fr 30px;
+          gap: 9px;
+        }
+        .page-footer {
+          padding: 0 18px 12px;
+          font-size: 8px;
+        }
+        .screen-title {
+          gap: 12px;
+          margin-bottom: 22px;
+        }
+        .screen-title h2 {
+          font-size: 25px;
+        }
+        .screen-title small {
+          display: none;
+        }
+        .battle-layout {
+          grid-template-columns: 1fr;
+          gap: 22px;
+        }
+        .mode-list {
+          gap: 20px;
+          padding: 0 15px;
+        }
+        .mode-list button {
+          font-size: 18px;
+        }
+        .deck-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 23px;
+          max-width: 460px;
+          margin: auto;
+          width: 100%;
+          padding: 0 5px;
+        }
+        .deck-back {
+          min-height: 0;
+          aspect-ratio: 2/2.8;
+        }
+        .battle-command {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px 25px;
+          padding: 22px;
+        }
+        .command-head {
+          grid-column: 1;
+          text-align: left;
+        }
+        .command-head h3 {
+          font-size: 23px;
+        }
+        .command-mark {
+          display: none;
+        }
+        .battle-command > .muted {
+          grid-column: 1;
+          grid-row: 2;
+          font-size: 11px;
+        }
+        .auto-team,
+        #aiOptions {
+          grid-column: 2;
+          grid-row: 1/3;
+          align-self: center;
+        }
+        .reward-line {
+          grid-column: 1/-1;
+        }
+        .battle-action {
+          grid-column: 1/-1;
+        }
+        .queue-state {
+          grid-column: 1/-1;
+        }
+        .career-panel,
+        .supply-grid {
+          grid-template-columns: 1fr;
+        }
+        .auth-layout {
+          grid-template-columns: 1fr;
+          gap: 22px;
+          padding: 30px 22px;
+        }
+        .auth-poster {
+          min-height: 215px;
+          background-position: center 60%;
+          padding: 25px;
+        }
+        .auth-poster h2 {
+          font-size: 35px;
+        }
+        .auth-poster p {
+          font-size: 13px;
+          margin-top: 10px;
+        }
+        .auth-poster small {
+          display: none;
+        }
+        .auth {
+          padding: 25px;
+          max-width: 430px;
+          width: 100%;
+          justify-self: center;
+        }
+        .auth h2 {
+          font-size: 26px;
+        }
+      }
+      @media (max-width: 480px) {
+        .profile-bar {
+          border-right: 0;
+          box-shadow: none;
+          padding: 5px 8px;
+        }
+        .avatar {
+          display: none;
+        }
+        .profile-bar h1 {
+          max-width: 91px;
+          font-size: 13px;
+        }
+        .top-resources {
+          gap: 9px;
+          padding: 0 8px;
+          justify-content: flex-end;
+        }
+        .resource {
+          font-size: 13px;
+          gap: 4px;
+        }
+        .resource em {
+          width: 18px;
+          height: 18px;
+          font-size: 10px;
+        }
+        .icon-button {
+          width: 33px;
+        }
+        .icon-button .symbol {
+          width: 20px;
+          height: 20px;
+        }
+        .layout {
+          grid-template-columns: 61px minmax(0, 1fr);
+        }
+        .sidebar {
+          padding-top: 22px;
+        }
+        .main-nav button {
+          width: 61px;
+          height: 74px;
+          font-size: 12px;
+          gap: 7px;
+        }
+        .main-nav .symbol {
+          width: 29px;
+          height: 29px;
+        }
+        .main-nav {
+          gap: 6px;
+        }
+        .lobby-content {
+          padding: 22px 13px 42px 14px;
+        }
+        .hero-poster {
+          min-height: 295px;
+          background-position: 60% 60%;
+        }
+        .poster-copy {
+          left: 16px;
+          bottom: 20px;
+          right: 16px;
+        }
+        .poster-copy strong {
+          font-size: 29px;
+        }
+        .poster-copy span {
+          font-size: 12px;
+          max-width: 195px;
+        }
+        .poster-label {
+          left: 14px;
+          top: 15px;
+          font-size: 9px;
+        }
+        .poster-arrow {
+          right: 15px;
+          bottom: 18px;
+          font-size: 22px;
+        }
+        .mode-rail {
+          gap: 8px;
+        }
+        .mode-tile {
+          min-height: 108px;
+          padding: 8px 4px;
+        }
+        .mode-tile strong {
+          font-size: 16px;
+        }
+        .mode-tile small {
+          font-size: 7px;
+          letter-spacing: 0;
+        }
+        .mode-tile .symbol {
+          width: 29px;
+          height: 29px;
+        }
+        .home-bottom {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        .home-info {
+          min-height: 74px;
+          padding: 13px 18px;
+          gap: 15px;
+        }
+        .home-info strong {
+          font-size: 20px;
+        }
+        .home-info small {
+          font-size: 10px;
+        }
+        .home-info .symbol {
+          width: 34px;
+          height: 34px;
+        }
+        .home-progress {
+          grid-column: auto;
+          padding: 16px 13px;
+        }
+        .mini-record {
+          grid-template-columns: 19px 46px 1fr 27px;
+          gap: 6px;
+          font-size: 10px;
+        }
+        .mini-record > span:first-child {
+          width: 19px;
+          height: 19px;
+        }
+        .screen-title h2 {
+          font-size: 23px;
+        }
+        .back-button {
+          width: 31px;
+          height: 31px;
+          font-size: 19px;
+        }
+        .deck-grid {
+          gap: 16px;
+          padding: 0 3px;
+        }
+        .deck-back {
+          border-width: 3px;
+          border-radius: 4px;
+        }
+        .deck-back:before {
+          inset: 7px;
+        }
+        .deck-emblem > b {
+          width: 55px;
+          height: 55px;
+          font-size: 29px;
+        }
+        .deck-emblem > span {
+          font-size: 6px;
+          letter-spacing: 0.06em;
+          margin-top: 10px;
+        }
+        .deck-corner {
+          font-size: 8px;
+          top: 10px;
+          left: 10px;
+        }
+        .deck-caption {
+          width: 92%;
+          padding: 9px 2px;
+        }
+        .deck-caption strong {
+          font-size: 15px;
+        }
+        .deck-caption small {
+          font-size: 9px;
+        }
+        .card-check {
+          width: 35px;
+          height: 29px;
+          font-size: 20px;
+          line-height: 29px;
+          left: -7px;
+          top: 20px;
+        }
+        .battle-command {
+          display: flex;
+          padding: 20px;
+          gap: 15px;
+        }
+        .command-head {
+          text-align: center;
+        }
+        .battle-command > .muted {
+          font-size: 12px;
+        }
+        .auto-team,
+        #aiOptions {
+          align-self: stretch;
+        }
+        .reward-line {
+          font-size: 10px;
+        }
+        .school,
+        .supply-panel {
+          padding: 22px 18px;
+        }
+        .school h3,
+        .supply-panel h3 {
+          font-size: 23px;
+        }
+        .auth-layout {
+          padding: 24px 18px;
+        }
+        .auth-poster {
+          min-height: 210px;
+        }
+        .auth-poster h2 {
+          font-size: 35px;
+        }
+        .auth {
+          padding: 25px;
+        }
+        .topbar {
+          height: 59px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *:before,
+        *:after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <button class="brand" id="homeButton" aria-label="返回主菜单">
+          <svg
+            class="symbol"
+            viewBox="0 0 64 64"
+            aria-hidden="true"
+            fill="currentColor"
+          >
+            <path d="m10 14 12-3 9 40-12 3Zm17-6 12-1 3 44-12 1Z" />
+            <path
+              d="M39 10h19v43H39Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+            />
+            <path d="m48 21 3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" /></svg
+          ><span><strong>清北</strong><small>QINGBEI</small></span></button
+        ><button
+          class="profile-bar"
+          id="profileButton"
+          aria-label="查看生涯"
+          disabled
+        >
+          <span class="avatar" aria-hidden="true">令</span
+          ><span class="profile-copy"
+            ><span class="profile-rank" id="profileRank">指挥官</span>
+            <h1 id="profileId">尚未登录</h1></span
+          >
+        </button>
+        <div class="top-resources" aria-label="账号资源">
+          <span class="resource" title="北大经验"
+            ><em aria-hidden="true">北</em
+            ><b id="topPkuXp" aria-label="北大经验">—</b></span
+          ><span class="resource thu" title="清华经验"
+            ><em aria-hidden="true">清</em
+            ><b id="topThuXp" aria-label="清华经验">—</b></span
+          ><span class="resource card-resource" title="2倍速卡"
+            ><span class="ticket-mini" aria-hidden="true">2×</span
+            ><b id="topCards2">—</b></span
+          ><span class="resource card-resource" title="4倍速卡"
+            ><span class="ticket-mini" aria-hidden="true">4×</span
+            ><b id="topCards4">—</b></span
+          >
+        </div>
+        <div class="top-actions">
+          <span class="status-box" id="serverState" role="status">连接中</span
+          ><button
+            class="icon-button hidden"
+            id="logout"
+            title="退出登录"
+            aria-label="退出登录"
+          >
+            <svg
+              class="symbol"
+              viewBox="0 0 64 64"
+              aria-hidden="true"
+              fill="currentColor"
+            >
+              <path
+                d="M27 10H11v44h16M35 17l15 15-15 15M21 32h29"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="5"
+              />
+            </svg>
+          </button>
+        </div>
+      </header>
+      <section class="auth-layout" id="authPanel">
+        <div class="auth-poster">
+          <h2>解放清华园</h2>
+          <p>清北校园实时战略</p>
+          <small>占领据点 · 组织兵线 · 指挥你的校园战役</small>
+        </div>
+        <section class="auth" aria-labelledby="authTitle">
+          <h2 id="authTitle">指挥官登录</h2>
+          <p class="auth-subtitle" id="authSubtitle">登录账号，进入战场。</p>
+          <div class="auth-tabs" aria-label="账号操作">
+            <button id="loginTab" class="active" aria-pressed="true">
+              登录</button
+            ><button id="registerTab" aria-pressed="false">注册</button>
+          </div>
+          <form class="grid" id="authForm">
+            <label class="field"
+              >玩家 ID<input
+                id="userId"
+                autocomplete="username"
+                minlength="3"
+                maxlength="24"
+                pattern="[A-Za-z0-9_]{3,24}"
+                required
+                placeholder="3—24位字母、数字或下划线" /></label
+            ><label class="field"
+              >密码<input
+                id="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="8"
+                maxlength="72"
+                required
+                placeholder="至少8位" /></label
+            ><button class="primary" type="submit" id="authSubmit">登录</button>
+            <div class="error" id="authError" role="alert"></div>
+          </form>
+          <p class="auth-foot">
+            账号保存你的阵营经验、倍速卡与饰品。<br />两园之间，下一场战役由你指挥。
+          </p>
+        </section>
+      </section>
+      <section class="layout hidden" id="dashboard">
+        <aside class="sidebar">
+          <nav class="main-nav" aria-label="主菜单">
+            <button data-view="deployment" aria-label="开始游戏">
+              <svg
+                class="symbol"
+                viewBox="0 0 64 64"
+                aria-hidden="true"
+                fill="currentColor"
+              >
+                <path
+                  d="M15 9 51 32 15 55Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="6"
+                />
+                <path d="m27 24 14 8-14 8Z" /></svg
+              ><span>开始游戏</span></button
+            ><button data-view="career" aria-label="阵营生涯">
+              <svg
+                class="symbol"
+                viewBox="0 0 64 64"
+                aria-hidden="true"
+                fill="currentColor"
+              >
+                <path d="m10 14 12-3 9 40-12 3Zm17-6 12-1 3 44-12 1Z" />
+                <path
+                  d="M39 10h19v43H39Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                />
+                <path d="m48 21 3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" /></svg
+              ><span>阵营生涯</span></button
+            ><button data-view="supply" aria-label="军需物资">
+              <svg
+                class="symbol"
+                viewBox="0 0 64 64"
+                aria-hidden="true"
+                fill="currentColor"
+              >
+                <path d="M9 20h46v33H9Zm-3-9h52v9H6Z" />
+                <path d="M27 11h10v42H27Z" fill="#333b34" />
+                <path
+                  d="m32 26 3 6 7 1-5 4 1 7-6-3-6 3 1-7-5-4 7-1Z"
+                  fill="#e5e1c9"
+                /></svg
+              ><span>军需物资</span>
+            </button>
+          </nav>
+        </aside>
+        <div class="lobby-content">
+          <section id="view-home" aria-label="游戏主菜单">
+            <div class="home-grid">
+              <button
+                class="hero-poster"
+                data-enter="pvp"
+                aria-label="解放清华园，进入对战"
+              >
+                <span class="poster-label">清北校园战役 · 2026</span
+                ><span class="poster-copy"
+                  ><strong>解放清华园</strong
+                  ><span>从未名湖畔，到清华园中。</span
+                  ><small>组织兵线，争夺据点，展开你的校园战役。</small></span
+                ><span class="poster-arrow" aria-hidden="true">▸</span>
+              </button>
+              <div class="mode-rail">
+                <button class="mode-tile" data-enter="pvp">
+                  <svg
+                    class="symbol"
+                    viewBox="0 0 64 64"
+                    aria-hidden="true"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M15 9 51 32 15 55Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="6"
+                    />
+                    <path d="m27 24 14 8-14 8Z" /></svg
+                  ><span
+                    ><strong>联机<br />对战</strong
+                    ><small>ONLINE BATTLE</small></span
+                  ></button
+                ><button class="mode-tile training" data-enter="ai">
+                  <svg
+                    class="symbol"
+                    viewBox="0 0 64 64"
+                    aria-hidden="true"
+                    fill="currentColor"
+                  >
+                    <path d="M10 19h44v7H10Zm4 12h36v7H14Zm6 12h24v7H20Z" />
+                    <path d="m20 8 12-6 12 6-12 6Z" /></svg
+                  ><span
+                    ><strong>人机<br />训练</strong
+                    ><small>TRAINING</small></span
+                  ></button
+                ><button class="mode-tile supplies" data-open="supply">
+                  <svg
+                    class="symbol"
+                    viewBox="0 0 64 64"
+                    aria-hidden="true"
+                    fill="currentColor"
+                  >
+                    <path d="M9 20h46v33H9Zm-3-9h52v9H6Z" />
+                    <path d="M27 11h10v42H27Z" fill="#333b34" />
+                    <path
+                      d="m32 26 3 6 7 1-5 4 1 7-6-3-6 3 1-7-5-4 7-1Z"
+                      fill="#e5e1c9"
+                    /></svg
+                  ><span
+                    ><strong>整备<br />军需</strong
+                    ><small>SUPPLIES</small></span
+                  >
+                </button>
+              </div>
+            </div>
+            <div class="home-bottom">
+              <button class="home-info" data-open="career">
+                <svg
+                  class="symbol"
+                  viewBox="0 0 64 64"
+                  aria-hidden="true"
+                  fill="currentColor"
+                >
+                  <path
+                    d="m32 5 8 18 20 2-15 13 5 20-18-10-18 10 5-20L4 25l20-2Z"
+                  /></svg
+                ><span
+                  ><strong>阵营生涯</strong><small>查看等级与经验</small></span
+                ></button
+              ><button class="home-info" data-open="supply">
+                <svg
+                  class="symbol"
+                  viewBox="0 0 64 64"
+                  aria-hidden="true"
+                  fill="currentColor"
+                >
+                  <path d="m10 14 12-3 9 40-12 3Zm17-6 12-1 3 44-12 1Z" />
+                  <path
+                    d="M39 10h19v43H39Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="3"
+                  />
+                  <path d="m48 21 3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z" /></svg
+                ><span
+                  ><strong>倍速卡</strong
+                  ><small id="homeCardCount">你的军需库存</small></span
+                >
+              </button>
+              <div class="home-progress" aria-label="阵营经验进度">
+                <div class="mini-record">
+                  <span>北</span><span>北京大学</span>
+                  <div class="mini-track"><i id="homePkuBar"></i></div>
+                  <b id="homePkuLevel">Lv.1</b>
+                </div>
+                <div class="mini-record thu">
+                  <span>清</span><span>清华大学</span>
+                  <div class="mini-track"><i id="homeThuBar"></i></div>
+                  <b id="homeThuLevel">Lv.1</b>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section
+            id="view-deployment"
+            class="hidden"
+            aria-labelledby="deploymentTitle"
+          >
+            <header class="screen-title">
+              <button
+                class="back-button"
+                data-open="home"
+                aria-label="返回主菜单"
+              >
+                ‹
+              </button>
+              <h2 id="deploymentTitle">选择你的阵营</h2>
+              <small>SELECT YOUR SIDE</small>
+            </header>
+            <div class="battle-layout">
+              <nav class="mode-list" aria-label="战斗模式">
+                <button
+                  class="active"
+                  data-battle-mode="pvp"
+                  aria-pressed="true"
+                >
+                  联机对战</button
+                ><button data-battle-mode="ai" aria-pressed="false">
+                  人机训练
+                </button>
+              </nav>
+              <div class="deck-grid">
+                <button
+                  class="faction-card pku"
+                  data-team="pku"
+                  aria-pressed="false"
+                  aria-label="选择北京大学"
+                >
+                  <span class="deck-back"
+                    ><span class="deck-corner">PKU</span
+                    ><span class="deck-emblem"
+                      ><b>北</b><span>PEKING UNIVERSITY</span></span
+                    ></span
+                  ><span class="deck-caption"
+                    ><strong>北京大学</strong
+                    ><small id="pkuBattleLevel">Lv.1</small></span
+                  ><span class="card-check" aria-hidden="true">★</span></button
+                ><button
+                  class="faction-card thu"
+                  data-team="thu"
+                  aria-pressed="false"
+                  aria-label="选择清华大学"
+                >
+                  <span class="deck-back"
+                    ><span class="deck-corner">THU</span
+                    ><span class="deck-emblem"
+                      ><b>清</b><span>TSINGHUA UNIVERSITY</span></span
+                    ></span
+                  ><span class="deck-caption"
+                    ><strong>清华大学</strong
+                    ><small id="thuBattleLevel">Lv.1</small></span
+                  ><span class="card-check" aria-hidden="true">★</span>
+                </button>
+              </div>
+              <section class="battle-command" aria-labelledby="modeTitle">
+                <div class="command-head">
+                  <small>READY FOR BATTLE</small>
+                  <h3 id="modeTitle">联机对战</h3>
+                </div>
+                <div class="command-mark" id="modeMark" aria-hidden="true">
+                  VS
+                </div>
+                <p class="muted" id="modeDetail"></p>
+                <button
+                  class="auto-team selected"
+                  id="autoTeam"
+                  aria-pressed="true"
+                >
+                  随机阵营
+                </button>
+                <div class="hidden grid" id="aiOptions">
+                  <div class="difficulty" aria-label="AI难度">
+                    <button data-difficulty="casual" aria-pressed="false">
+                      休闲</button
+                    ><button
+                      class="active"
+                      data-difficulty="standard"
+                      aria-pressed="true"
+                    >
+                      标准</button
+                    ><button data-difficulty="hard" aria-pressed="false">
+                      困难
+                    </button>
+                  </div>
+                  <label class="field"
+                    >倍速卡<select id="speedCard">
+                      <option value="">不使用</option>
+                    </select></label
+                  >
+                </div>
+                <div class="reward-line">
+                  <span id="winReward"></span><span id="lossReward"></span>
+                </div>
+                <button class="battle-action" id="battleAction">
+                  开始匹配
+                </button>
+                <p
+                  class="queue-state"
+                  id="queueState"
+                  role="status"
+                  aria-live="polite"
+                ></p>
+              </section>
+            </div>
+            <p class="battle-note">
+              联机匹配按阵营偏好分配双方；人机训练可自由选择阵营、难度与倍速卡。
+            </p>
+          </section>
+          <section
+            id="view-career"
+            class="hidden"
+            aria-labelledby="careerTitle"
+          >
+            <header class="screen-title">
+              <button
+                class="back-button"
+                data-open="home"
+                aria-label="返回主菜单"
+              >
+                ‹
+              </button>
+              <h2 id="careerTitle">阵营生涯</h2>
+              <small>SERVICE RECORD</small>
+            </header>
+            <div class="career-panel">
+              <article class="school pku">
+                <header class="school-header">
+                  <span class="school-seal" aria-hidden="true">北</span>
+                  <div>
+                    <h3>北京大学</h3>
+                    <b id="pkuLevel">Lv.1</b>
+                  </div>
+                </header>
+                <div class="bar"><i id="pkuBar"></i></div>
+                <span class="muted" id="pkuXp">0 EXP</span>
+              </article>
+              <article class="school thu">
+                <header class="school-header">
+                  <span class="school-seal" aria-hidden="true">清</span>
+                  <div>
+                    <h3>清华大学</h3>
+                    <b id="thuLevel">Lv.1</b>
+                  </div>
+                </header>
+                <div class="bar"><i id="thuBar"></i></div>
+                <span class="muted" id="thuXp">0 EXP</span>
+              </article>
+              <p class="career-note">
+                两个阵营分别积累经验与等级。参与战斗，解锁倍速卡与阵营饰品。
+              </p>
+            </div>
+          </section>
+          <section
+            id="view-supply"
+            class="hidden"
+            aria-labelledby="supplyTitle"
+          >
+            <header class="screen-title">
+              <button
+                class="back-button"
+                data-open="home"
+                aria-label="返回主菜单"
+              >
+                ‹
+              </button>
+              <h2 id="supplyTitle">军需物资</h2>
+              <small>SUPPLIES</small>
+            </header>
+            <div class="supply-grid">
+              <article class="supply-panel">
+                <h3>
+                  <svg
+                    class="symbol"
+                    viewBox="0 0 64 64"
+                    aria-hidden="true"
+                    fill="currentColor"
+                  >
+                    <path d="m10 14 12-3 9 40-12 3Zm17-6 12-1 3 44-12 1Z" />
+                    <path
+                      d="M39 10h19v43H39Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="3"
+                    />
+                    <path
+                      d="m48 21 3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1Z"
+                    /></svg
+                  >倍速卡
+                </h3>
+                <div class="inventory" id="cards"></div>
+                <p class="muted">创建人机战局时使用，让战役以对应倍率推进。</p>
+              </article>
+              <article class="supply-panel">
+                <h3>
+                  <svg
+                    class="symbol"
+                    viewBox="0 0 64 64"
+                    aria-hidden="true"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="m32 5 8 18 20 2-15 13 5 20-18-10-18 10 5-20L4 25l20-2Z"
+                    /></svg
+                  >阵营饰品
+                </h3>
+                <div class="inventory" id="cosmetics"></div>
+                <p class="muted">装备阵营外观，以你的颜色出战。</p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+      <footer class="page-footer">解放清华园 · 清北校园实时战略</footer>
+    </main>
+    <aside class="notice" id="notice" role="status" aria-live="polite"></aside>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          credentials: "same-origin",
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+          },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(data.error || "请求失败");
+          error.data = data;
+          error.status = response.status;
+          throw error;
+        }
+        return data;
+      }
+      let authMode = "login",
+        battleMode = "pvp",
+        selectedTeam = "any",
+        difficulty = "standard",
+        poll = null,
+        queueBusy = false,
+        toastTimer;
+      const thresholds = [0, 100, 250, 500, 900, 1400],
+        rewards = { casual: [30, 15], standard: [60, 30], hard: [100, 50] };
+      function toast(text) {
+        $("notice").textContent = text;
+        $("notice").classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(
+          () => $("notice").classList.remove("show"),
+          3200,
+        );
+      }
+      function setView(view) {
+        for (const name of ["home", "deployment", "career", "supply"])
+          $("view-" + name).classList.toggle("hidden", name !== view);
+        document.querySelectorAll("[data-view]").forEach((button) => {
+          const active = button.dataset.view === view;
+          button.classList.toggle("active", active);
+          if (active) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+      }
+      function setAuthMode(next) {
+        authMode = next;
+        for (const mode of ["login", "register"]) {
+          $(mode + "Tab").classList.toggle("active", mode === next);
+          $(mode + "Tab").setAttribute("aria-pressed", String(mode === next));
+        }
+        $("authTitle").textContent =
+          next === "login" ? "指挥官登录" : "创建账号";
+        $("authSubtitle").textContent =
+          next === "login"
+            ? "登录账号，进入战场。"
+            : "选择你的玩家 ID，开始两园征程。";
+        $("authSubmit").textContent = next === "login" ? "登录" : "注册";
+        $("password").autocomplete =
+          next === "login" ? "current-password" : "new-password";
+        $("authError").textContent = "";
+      }
+      function progress(xp, level) {
+        const from = thresholds[level - 1] || 0,
+          to = thresholds[level] || from + 500;
+        return Math.max(0, Math.min(100, ((xp - from) / (to - from)) * 100));
+      }
+      function selectTeam(team) {
+        selectedTeam = team;
+        document.querySelectorAll("[data-team]").forEach((card) => {
+          card.classList.toggle("selected", card.dataset.team === team);
+          card.setAttribute("aria-pressed", String(card.dataset.team === team));
+        });
+        $("autoTeam").classList.toggle("selected", team === "any");
+        $("autoTeam").setAttribute("aria-pressed", String(team === "any"));
+      }
+      function setBattleMode(next) {
+        if (queueBusy) return;
+        battleMode = next;
+        document.querySelectorAll("[data-battle-mode]").forEach((button) => {
+          button.classList.toggle("active", button.dataset.battleMode === next);
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.battleMode === next),
+          );
+        });
+        const ai = next === "ai";
+        $("aiOptions").classList.toggle("hidden", !ai);
+        $("autoTeam").classList.toggle("hidden", ai);
+        $("modeMark").textContent = ai ? "AI" : "VS";
+        $("modeTitle").textContent = ai ? "人机训练" : "联机对战";
+        $("modeDetail").textContent = ai
+          ? "选择你的阵营与对手难度，在校园战场磨炼指挥。"
+          : "匹配另一名在线玩家。你可以选择阵营偏好，也可以随机分配。";
+        $("battleAction").textContent = ai ? "开始训练" : "开始匹配";
+        if (ai && selectedTeam === "any") selectTeam("pku");
+        updateReward();
+      }
+      function setDifficulty(next) {
+        difficulty = next;
+        document.querySelectorAll("[data-difficulty]").forEach((button) => {
+          button.classList.toggle("active", button.dataset.difficulty === next);
+          button.setAttribute(
+            "aria-pressed",
+            String(button.dataset.difficulty === next),
+          );
+        });
+        updateReward();
+      }
+      function updateReward() {
+        const reward = battleMode === "pvp" ? [120, 60] : rewards[difficulty];
+        $("winReward").textContent = "胜方 +" + reward[0] + " EXP";
+        $("lossReward").textContent = "负方 +" + reward[1] + " EXP";
+      }
+      function render(profile) {
+        if (profile.activeMatch?.joinUrl) {
+          location.replace(profile.activeMatch.joinUrl);
+          return;
+        }
+        $("authPanel").classList.add("hidden");
+        $("dashboard").classList.remove("hidden");
+        $("profileButton").disabled = false;
+        $("logout").classList.remove("hidden");
+        $("profileId").textContent = profile.id;
+        $("profileRank").textContent = "指挥官";
+        $("serverState").textContent = "已连接";
+        $("serverState").dataset.state = "connected";
+        for (const team of ["pku", "thu"]) {
+          const xp = profile.experience[team] || 0,
+            level = profile.levels[team] || 1,
+            cap = team === "pku" ? "Pku" : "Thu";
+          $(team + "Level").textContent = "Lv." + level;
+          $(team + "BattleLevel").textContent = "Lv." + level;
+          $(team + "Xp").textContent = xp + " EXP";
+          $(team + "Bar").style.width = progress(xp, level) + "%";
+          $("top" + cap + "Xp").textContent = xp;
+          $("home" + cap + "Level").textContent = "Lv." + level;
+          $("home" + cap + "Bar").style.width = progress(xp, level) + "%";
+        }
+        const cards = profile.speedCards || {};
+        $("topCards2").textContent = cards["2x"] || 0;
+        $("topCards4").textContent = cards["4x"] || 0;
+        $("homeCardCount").textContent =
+          "库存 " + ((cards["2x"] || 0) + (cards["4x"] || 0)) + " 张";
+        $("cards").innerHTML = ["2x", "4x"]
+          .map(
+            (card) =>
+              `<span class="supply-ticket"><strong>${card.replace("x", "×")}</strong><span>倍速卡 × ${cards[card] || 0}<small>SPEED CARD</small></span></span>`,
+          )
+          .join("");
+        const previousCard = $("speedCard").value;
+        $("speedCard").innerHTML =
+          '<option value="">不使用</option>' +
+          ["2x", "4x"]
+            .filter((card) => cards[card] > 0)
+            .map(
+              (card) =>
+                `<option value="${card}">${card}（剩余${cards[card]}）</option>`,
+            )
+            .join("");
+        if (cards[previousCard] > 0) $("speedCard").value = previousCard;
+        const selected = profile.selectedCosmetics || {},
+          items = profile.cosmetics || [];
+        // Only known cosmetic IDs may be rendered as markup.
+        const known = items.filter((item) =>
+          /^(pku|thu)-(bronze|gold)$/.test(item),
+        );
+        $("cosmetics").innerHTML = known.length
+          ? known
+              .map((item) => {
+                const team = item.startsWith("pku") ? "pku" : "thu",
+                  equipped = selected[team] === item;
+                return `<span class="item">${item.replace("pku", "北大").replace("thu", "清华").replace("-bronze", " · 铜色").replace("-gold", " · 金色")}<button data-cosmetic="${item}" ${equipped ? "disabled" : ""}>${equipped ? "已装备" : "装备"}</button></span>`;
+              })
+              .join("")
+          : '<span class="muted">提升阵营等级后解锁饰品。</span>';
+        document.querySelectorAll("[data-cosmetic]").forEach(
+          (button) =>
+            (button.onclick = () =>
+              api("api/cosmetic", {
+                method: "POST",
+                body: JSON.stringify({ item: button.dataset.cosmetic }),
+              })
+                .then((result) => {
+                  render(result.profile);
+                  toast("饰品已装备");
+                })
+                .catch((error) => toast(error.message))),
+        );
+      }
+      async function refresh() {
+        try {
+          render((await api("api/me")).profile);
+        } catch (error) {
+          $("authPanel").classList.remove("hidden");
+          $("dashboard").classList.add("hidden");
+          const available = error.status === 401;
+          $("serverState").textContent = available ? "等待登录" : "连接失败";
+          $("serverState").dataset.state = available ? "connected" : "error";
+          if (!available)
+            $("authError").textContent = "暂时无法连接服务器，请稍后重试。";
+        }
+      }
+      function setQueueBusy(busy) {
+        queueBusy = busy;
+        document
+          .querySelectorAll(
+            "[data-battle-mode],[data-team],[data-difficulty],#autoTeam,#speedCard",
+          )
+          .forEach((control) => (control.disabled = busy));
+      }
+      async function beginBattle() {
+        const action = $("battleAction");
+        if (action.disabled) return;
+        action.disabled = true;
+        setQueueBusy(true);
+        $("queueState").textContent = "";
+        try {
+          if (battleMode === "ai") {
+            const result = await api("api/lobby/ai", {
+              method: "POST",
+              body: JSON.stringify({
+                difficulty,
+                team: selectedTeam,
+                card: $("speedCard").value,
+              }),
+            });
+            location.href = result.joinUrl;
+            return;
+          }
+          const result = await api("api/lobby/pvp", {
+            method: "POST",
+            body: JSON.stringify({ preferredTeam: selectedTeam }),
+          });
+          if (result.joinUrl) {
+            location.href = result.joinUrl;
+            return;
+          }
+          $("queueState").textContent = "正在寻找另一名玩家…";
+          action.textContent = "匹配中";
+          clearInterval(poll);
+          poll = setInterval(async () => {
+            try {
+              const state = await api("api/lobby/status");
+              if (state.joinUrl) location.href = state.joinUrl;
+            } catch {}
+          }, 1500);
+        } catch (error) {
+          if (error.data?.activeMatch?.joinUrl) {
+            location.replace(error.data.activeMatch.joinUrl);
+            return;
+          }
+          toast(error.message);
+          action.disabled = false;
+          setQueueBusy(false);
+          action.textContent = battleMode === "ai" ? "开始训练" : "开始匹配";
+        }
+      }
+      $("loginTab").onclick = () => setAuthMode("login");
+      $("registerTab").onclick = () => setAuthMode("register");
+      $("authForm").onsubmit = async (event) => {
+        event.preventDefault();
+        $("authError").textContent = "";
+        $("authSubmit").disabled = true;
+        try {
+          const result = await api("api/" + authMode, {
+            method: "POST",
+            body: JSON.stringify({
+              id: $("userId").value,
+              password: $("password").value,
+            }),
+          });
+          setView("home");
+          render(result.profile);
+        } catch (error) {
+          $("authError").textContent = error.message;
+        } finally {
+          $("authSubmit").disabled = false;
+        }
+      };
+      $("logout").onclick = () =>
+        api("api/logout", { method: "POST" })
+          .then(() => location.reload())
+          .catch((error) => toast(error.message));
+      $("homeButton").onclick = () => setView("home");
+      $("profileButton").onclick = () => setView("career");
+      document
+        .querySelectorAll("[data-view]")
+        .forEach(
+          (button) => (button.onclick = () => setView(button.dataset.view)),
+        );
+      document
+        .querySelectorAll("[data-open]")
+        .forEach(
+          (button) => (button.onclick = () => setView(button.dataset.open)),
+        );
+      document.querySelectorAll("[data-enter]").forEach(
+        (button) =>
+          (button.onclick = () => {
+            setBattleMode(button.dataset.enter);
+            setView("deployment");
+          }),
+      );
+      document
+        .querySelectorAll("[data-battle-mode]")
+        .forEach(
+          (button) =>
+            (button.onclick = () => setBattleMode(button.dataset.battleMode)),
+        );
+      document
+        .querySelectorAll("[data-team]")
+        .forEach(
+          (card) => (card.onclick = () => selectTeam(card.dataset.team)),
+        );
+      document
+        .querySelectorAll("[data-difficulty]")
+        .forEach(
+          (button) =>
+            (button.onclick = () => setDifficulty(button.dataset.difficulty)),
+        );
+      $("autoTeam").onclick = () => selectTeam("any");
+      $("battleAction").onclick = beginBattle;
+      setBattleMode("pvp");
+      refresh();
+    </script>
+  </body>
+</html>

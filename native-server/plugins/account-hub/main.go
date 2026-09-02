@@ -203,6 +203,17 @@ func (server *hubServer) servePlay(writer http.ResponseWriter, request *http.Req
 
 func (server *hubServer) asset(writer http.ResponseWriter, request *http.Request) {
 	name := strings.TrimPrefix(request.URL.Path, "/assets/")
+	if name == "campus-command.png" || name == "field-table.png" {
+		data, err := staticFiles.ReadFile("static/" + name)
+		if err != nil {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "image/png")
+		writer.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = writer.Write(data)
+		return
+	}
 	allowed := map[string][2]string{
 		"pku-bronze.svg": {"#d44b5d", "北"},
 		"pku-gold.svg":   {"#f0bf45", "北"},
