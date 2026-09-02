@@ -189,7 +189,7 @@ export function runProductionCycles(
           continue;
         }
         const idle = game.units.filter(
-          (unit) => unit.siteId === source.id && unit.targetSiteId == null,
+          (unit) => unit.team === source.team && unit.siteId === source.id && unit.targetSiteId == null && !unit.movementOrder,
         ).length;
         issueOrder(
           source.team,

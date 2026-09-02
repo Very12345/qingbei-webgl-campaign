@@ -45,6 +45,20 @@ export type SiteState = {
 
 export type TransportKind = "bus" | "bike";
 
+// Logical movement intent is separate from the current intercepted waypoint.
+// Only the authoritative kernel assigns this; clients send actions, not orders.
+export type UnitMovementOrder = {
+  team: Team;
+  goalSiteId?: number;
+  goalX: number;
+  goalZ: number;
+  sourceSiteId?: number;
+  purpose: "combat" | "logistics" | "probe";
+  effectiveSiteId?: number;
+  retryAt?: number;
+  awaitingContinuation?: boolean;
+};
+
 export type UnitState = {
   id: number;
   team: Team;
@@ -57,6 +71,7 @@ export type UnitState = {
   strength: number;
   siteId: number;
   targetSiteId?: number;
+  movementOrder?: UnitMovementOrder;
   path?: [number, number][];
   pathIndex?: number;
   attackModifier?: number;
@@ -103,11 +118,13 @@ export type CampaignOutcome = {
 export type AiDifficulty = "casual" | "standard" | "hard";
 export type DecisionProgress = {
   id: string;
+  instanceId?: string;
   team: Team;
   startedAt: number;
   completesAt: number;
 };
 export type DecisionState = {
+  nextInstance?: number;
   active: Record<Team, DecisionProgress | null>;
   completed: string[];
   locked: string[];
@@ -190,6 +207,7 @@ export type DecisionVote = {
 
 export type CampaignState = {
   rulesVersion: number;
+  orderRulesVersion?: number;
   startDateISO: string;
   elapsedHours: number;
   firedEvents: string[];
@@ -347,6 +365,7 @@ export type MultiplayerEnvelope =
   | {
       type: "client_action";
       action:
+        | { kind: "decision_cancel"; id: string; startedAt: number; instanceId?: string }
         | { kind: "research"; id: import("./research").ResearchId }
         | { kind: "production_start"; id: import("./research").ResearchId }
         | { kind: "production_stop"; id: import("./research").ResearchId }

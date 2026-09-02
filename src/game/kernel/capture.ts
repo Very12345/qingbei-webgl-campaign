@@ -12,6 +12,7 @@ export type CaptureResult =
   | { kind: "captured"; siteId: number; oldTeam: Team; newTeam: Team };
 
 const clearOrder = (unit: UnitState) => {
+  unit.movementOrder = undefined;
   unit.targetSiteId = undefined;
   unit.path = undefined;
   unit.pathIndex = undefined;
@@ -130,8 +131,15 @@ export function captureSite(
       ? `北大清华园校区·${baseName}`
       : `清华燕园校区·${baseName}`;
   attackers.forEach((unit, index) => {
+    const movementOrder = unit.movementOrder;
     unit.siteId = site.id;
     clearOrder(unit);
+    // Only this squad continues its original goal after an intercepted point.
+    // Do not turn the intermediate site into a new persistent command source.
+    if (movementOrder?.team === newTeam && movementOrder.goalSiteId !== site.id) {
+      movementOrder.awaitingContinuation = true;
+      unit.movementOrder = movementOrder;
+    }
     parkBikeAtSite(game, unit, site);
     const angle = (index / Math.max(1, attackers.length)) * Math.PI * 2;
     unit.x = siteX + Math.cos(angle) * 0.9;

@@ -47,7 +47,10 @@
   }
 
   // Observe the native relay target; never invent peer IDs or send client-supplied identities.
-  function createChatModel({ onChange = () => {} } = {}) {
+  function createChatModel({
+    onChange = () => {},
+    onCampaign = () => {},
+  } = {}) {
     const messages = new Map();
     let socket = null,
       target = null,
@@ -92,6 +95,10 @@
         const wire = JSON.parse(raw);
         if (wire.type !== "relay") return;
         const payload = JSON.parse(wire.data);
+        if (payload.type === "state" && payload.game?.campaign)
+          onCampaign(payload.game.campaign);
+        if (payload.type === "state_delta" && payload.campaign)
+          onCampaign(payload.campaign);
         const batch =
           payload.type === "chat_history"
             ? payload.messages
@@ -156,6 +163,37 @@
       observeOutgoing,
       receive,
       send,
+      cancelDecision(active) {
+        if (
+          closed ||
+          !socket ||
+          socket.readyState !== 1 ||
+          !target ||
+          !active?.id ||
+          !Number.isFinite(active.startedAt)
+        )
+          return false;
+        try {
+          socket.send(
+            JSON.stringify({
+              type: "relay",
+              peerId: target,
+              data: JSON.stringify({
+                type: "client_action",
+                action: {
+                  kind: "decision_cancel",
+                  id: active.id,
+                  startedAt: active.startedAt,
+                  instanceId: active.instanceId,
+                },
+              }),
+            }),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
       close() {
         closed = true;
       },
@@ -175,7 +213,22 @@
     const log = get("duel-chat-log"),
       form = get("duel-chat-form"),
       input = get("duel-chat-input");
+    let currentDecision = null,
+      cancelPending = null;
     const model = createChatModel({
+      onCampaign(campaign) {
+        currentDecision = campaign.decisions?.active?.[team] || null;
+        if (
+          cancelPending &&
+          (!currentDecision ||
+            currentDecision.id !== cancelPending.id ||
+            currentDecision.startedAt !== cancelPending.startedAt ||
+            currentDecision.instanceId !== cancelPending.instanceId)
+        ) {
+          cancelPending = null;
+          notify("服务器已更新当前决策状态");
+        }
+      },
       onChange(messages) {
         const pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 45;
         log.replaceChildren();
@@ -286,6 +339,24 @@
     const timer = setInterval(paint, 1000);
     paint();
     return {
+      cancelDecision() {
+        if (completed || !connected) {
+          notify("连接已断开，取消请求未发送", true);
+          return;
+        }
+        if (!currentDecision) {
+          notify("服务器当前没有进行中的决策", true);
+          return;
+        }
+        if (cancelPending && Date.now() - cancelPending.at < 3000) {
+          notify("取消请求已发送，正在等待确认");
+          return;
+        }
+        if (model.cancelDecision(currentDecision)) {
+          cancelPending = { ...currentDecision, at: Date.now() };
+          notify("取消决策请求已发送，等待服务器确认");
+        } else notify("连接尚未就绪，取消请求未发送", true);
+      },
       outgoing: (raw, socket) => model.observeOutgoing(raw, socket),
       incoming: (raw) => model.receive(raw),
       state(value) {

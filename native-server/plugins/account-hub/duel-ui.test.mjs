@@ -9,6 +9,35 @@ const wire = (payload) =>
     data: JSON.stringify(payload),
   });
 
+test("decision cancel uses the current authoritative instance and the native relay", () => {
+  const sent = [],
+    campaigns = [],
+    socket = { readyState: 1, send: (raw) => sent.push(JSON.parse(raw)) };
+  const model = createChatModel({
+    onCampaign: (campaign) => campaigns.push(campaign),
+  });
+  model.observeOutgoing(wire({ type: "hello" }), socket);
+  const active = {
+    id: "decision-test",
+    startedAt: 24,
+    instanceId: "decision-9",
+  };
+  model.receive(
+    wire({
+      type: "state_delta",
+      campaign: { decisions: { active: { pku: active } } },
+    }),
+  );
+  assert.equal(campaigns[0].decisions.active.pku.instanceId, "decision-9");
+  assert.equal(model.cancelDecision(active), true);
+  assert.deepEqual(JSON.parse(sent[0].data), {
+    type: "client_action",
+    action: { kind: "decision_cancel", ...active },
+  });
+  model.close();
+  assert.equal(model.cancelDecision(active), false);
+});
+
 test("duel names use authoritative participants and identify AI explicitly", () => {
   const cards = participantCards(
     {

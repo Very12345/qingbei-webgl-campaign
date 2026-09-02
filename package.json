@@ -8,6 +8,8 @@
   "scripts": {
     "build:kernel": "node scripts/build-kernel.mjs && tsx scripts/build-kernel-seed.ts",
     "test:kernel-smoke": "tsx scripts/kernel-smoke.ts",
+    "test:orders": "tsx scripts/order-lifecycle-regressions.ts",
+    "test:decisions": "tsx scripts/decision-cancel-regressions.ts",
     "benchmark:ai": "tsx scripts/ai-benchmark.ts",
     "verify:ai": "tsx scripts/verify-ai-matrix.ts",
     "dev": "vite",

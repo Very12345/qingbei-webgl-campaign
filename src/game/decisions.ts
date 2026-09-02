@@ -5,6 +5,11 @@ import {
 } from "../campaign-content";
 import type { CampaignState, Team, TimedStatus } from "./types";
 
+export function nextDecisionInstance(campaign: CampaignState) {
+  campaign.decisions.nextInstance = (campaign.decisions.nextInstance ?? 0) + 1;
+  return `decision-${campaign.decisions.nextInstance}`;
+}
+
 const decisionRequirementMet = (requirement: string, completed: string[]) =>
   requirement.split("|").some((id) => completed.includes(id));
 

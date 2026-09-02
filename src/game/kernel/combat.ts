@@ -216,6 +216,7 @@ export function routeCollapsedUnits(
         : ([[targetX, targetZ]] as [number, number][]);
     if (!path.length) continue;
     unit.retreating = true;
+    unit.movementOrder = undefined;
     unit.targetSiteId = fallback.id;
     unit.path = path;
     unit.pathIndex = 0;

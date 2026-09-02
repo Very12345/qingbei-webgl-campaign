@@ -48,7 +48,8 @@ import {
   readIndexedSnapshot,
   readSaves,
 } from "../src/game/storage";
-import { decisionAvailable } from "../src/game/decisions";
+import { decisionAvailable, nextDecisionInstance } from "../src/game/decisions";
+import { applyProgressionAction } from "../src/game/kernel/progression";
 import { createId } from "../src/game/id";
 import { EVENT_CARDS } from "../src/game/events/event-cards";
 import { makeFreshGame } from "../src/game/create-game";
@@ -481,6 +482,7 @@ export default function Game3D() {
       game.resources[team] -= decision.cost;
       campaign.decisions.active[team] = {
         id: decision.id,
+        instanceId: nextDecisionInstance(campaign),
         team,
         startedAt: campaign.elapsedHours,
         completesAt: campaign.elapsedHours + decision.days * 24,
@@ -491,13 +493,15 @@ export default function Game3D() {
     },
     [],
   );
-  const cancelDecision = useCallback((team: Team) => {
+  const cancelDecision = useCallback((team: Team, expected?: { id: string; startedAt: number; instanceId?: string }) => {
     const active = gameRef.current.campaign.decisions.active[team];
     if (!active) return;
-    const definition = DECISIONS.find((item) => item.id === active.id);
-    if (definition)
-      gameRef.current.resources[team] += Math.floor(definition.cost * 0.5);
-    gameRef.current.campaign.decisions.active[team] = null;
+    if (expected && (expected.id !== active.id || expected.startedAt !== active.startedAt || (expected.instanceId ?? null) !== (active.instanceId ?? null))) return;
+    if (clientActionSenderRef.current({ kind: "decision_cancel", id: active.id, startedAt: active.startedAt, instanceId: active.instanceId })) {
+      setNotice("取消决策请求已发送，等待服务器确认");
+      return;
+    }
+    if (!applyProgressionAction(gameRef.current, { type: "decision_cancel", team, id: active.id, startedAt: active.startedAt, instanceId: active.instanceId })) return;
     setNotice("决策已取消，返还50%战略资源");
   }, []);
   const beginResearch = useCallback(
@@ -2323,6 +2327,8 @@ export default function Game3D() {
           const team = identity.team,
             action = structuredClone(payload.action);
           enqueueHostOperation(() => {
+          if (action.kind === "decision_cancel")
+            cancelDecision(team, { id: action.id, startedAt: action.startedAt, instanceId: action.instanceId });
           if (action.kind === "research")
             beginResearch(action.id, team, true);
           if (action.kind === "production_start")

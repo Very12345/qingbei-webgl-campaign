@@ -463,6 +463,11 @@ func (battle *kernelBattle) handleAction(client *wsClient, raw any) {
 	kind, _ := action["kind"].(string)
 	translated := map[string]any{"team": client.team}
 	switch kind {
+	case "decision_cancel":
+		translated["type"] = "decision_cancel"
+		translated["id"] = action["id"]
+		translated["startedAt"] = action["startedAt"]
+		translated["instanceId"] = action["instanceId"]
 	case "research":
 		translated["type"] = "research_start"
 		translated["id"] = action["id"]

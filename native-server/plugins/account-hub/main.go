@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.4"
+const pluginVersion = "0.3.5"
 
 type userRecord struct {
 	ID                string            `json:"id"`

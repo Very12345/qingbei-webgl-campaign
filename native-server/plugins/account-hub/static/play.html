@@ -1194,6 +1194,16 @@
           "click",
           (event) => {
             const button = event.target.closest?.("button");
+            if (
+              button?.closest(".focus-tree-footer") &&
+              button.textContent.includes("取消当前决策")
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              event.stopImmediatePropagation();
+              duelUI?.cancelDecision();
+              return;
+            }
             if (!button || button.dataset.pluginSurrender !== "1") return;
             event.preventDefault();
             event.stopPropagation();

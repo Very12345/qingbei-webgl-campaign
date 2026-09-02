@@ -347,7 +347,7 @@ export function planStrategicOrders(
           ? 24
           : 48,
     isStaleCombatOrder = (site: SiteState) => {
-      if (site.orderTarget == null || site.orderPurpose === "logistics")
+      if (site.orderOwner === "player" || site.orderTarget == null || site.orderPurpose === "logistics")
         return false;
       const target = game.sites[site.orderTarget];
       return (
@@ -380,6 +380,7 @@ export function planStrategicOrders(
     reinforcementSources = new Set<number>();
   if (peerHard && stalemateEscalation < 0.72 && controlAdvantage > 0.05)
     for (const site of friendlySites) {
+      if (site.orderOwner === "player") continue;
       const target = site.orderTarget == null ? undefined : game.sites[site.orderTarget];
       if (!target || target.team === team) continue;
       site.orderTarget = undefined;
@@ -402,7 +403,7 @@ export function planStrategicOrders(
       (unit) =>
         unit.team === team &&
         unit.siteId === site.id &&
-        unit.targetSiteId === site.orderTarget,
+        (unit.targetSiteId === site.orderTarget || unit.movementOrder?.goalSiteId === site.orderTarget),
     );
     if (hasCommittedUnits || idleAt(site) >= profile.minimumSource) continue;
     site.orderTarget = undefined;
@@ -506,6 +507,7 @@ export function planStrategicOrders(
     .slice(0, difficulty === "hard" ? 3 : 1);
   if (difficulty === "hard")
     for (const site of friendlySites) {
+      if (site.orderOwner === "player") continue;
       const incoming = hostileGroups.get(site.id) ?? 0,
         production = site.type === "dorm" || site.type === "dining",
         valuable =

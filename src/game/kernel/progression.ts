@@ -1,5 +1,5 @@
 import { DECISIONS } from "../../campaign-content";
-import { decisionAvailable } from "../decisions";
+import { decisionAvailable, nextDecisionInstance } from "../decisions";
 import {
   RESEARCH_DEFINITIONS,
   hasResearch,
@@ -11,6 +11,7 @@ import { navIndex, type KernelNavGrid } from "./navigation";
 
 export type ProgressionAction =
   | { type: "decision_start"; team: Team; id: string }
+  | { type: "decision_cancel"; team: Team; id: string; startedAt: number; instanceId?: string }
   | { type: "research_start"; team: Team; id: ResearchId }
   | { type: "production_start"; team: Team; id: ResearchId }
   | { type: "production_stop"; team: Team; id: ResearchId }
@@ -24,6 +25,15 @@ export function applyProgressionAction(
   action: ProgressionAction,
 ) {
   const { team } = action;
+  if (action.type === "decision_cancel") {
+    const active = game.campaign.decisions.active[team];
+    if (!active || active.id !== action.id || active.startedAt !== action.startedAt || (active.instanceId ?? null) !== (action.instanceId ?? null)) return false;
+    const decision = DECISIONS.find(candidate => candidate.id === active.id && candidate.team === team);
+    if (!decision || game.campaign.elapsedHours >= active.completesAt) return false;
+    game.campaign.decisions.active[team] = null;
+    game.resources[team] += Math.floor(decision.cost * .5);
+    return true;
+  }
   if (action.type === "decision_start") {
     const decision = DECISIONS.find(
       (candidate) => candidate.id === action.id && candidate.team === team,
@@ -38,6 +48,7 @@ export function applyProgressionAction(
     game.resources[team] -= decision.cost;
     game.campaign.decisions.active[team] = {
       id: decision.id,
+      instanceId: nextDecisionInstance(game.campaign),
       team,
       startedAt: game.campaign.elapsedHours,
       completesAt: game.campaign.elapsedHours + decision.days * 24,
@@ -285,6 +296,7 @@ export function runAiProgression(
       game.resources[team] -= selected.cost;
       game.campaign.decisions.active[team] = {
         id: selected.id,
+        instanceId: nextDecisionInstance(game.campaign),
         team,
         startedAt: game.campaign.elapsedHours,
         completesAt: game.campaign.elapsedHours + selected.days * 24,

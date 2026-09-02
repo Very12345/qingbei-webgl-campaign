@@ -30,6 +30,7 @@ import {
 } from "./progression";
 import { processKernelEvents, recordKernelEvent } from "./events";
 import { EVENT_CARDS } from "../events/event-cards";
+import { cancelSiteMovement, migrateLegacyOrders, ORDER_RULES_VERSION } from "./orders";
 export {
   KernelPathfinder,
   navIndex,
@@ -226,6 +227,7 @@ export function createKernel(
   let fightingUnitIds = new Set<number>();
   const pending: KernelAction[] = [];
   const enabledAiTeams = new Set(options.aiTeams ?? []);
+  migrateLegacyOrders(state, enabledAiTeams);
   let networkRevision = 0,
     networkCampaignSignature = "";
   const networkUnitSignatures = new Map<number, string>(),
@@ -272,6 +274,14 @@ export function createKernel(
       target.destroyed
     )
       return 0;
+    // Player intent persists even when no unit or path is currently available.
+    if (owner === "player") {
+      if (source.orderTarget !== targetId) source.orderIssuedAt = state.campaign.elapsedHours;
+      source.orderTarget = targetId;
+      source.orderPurpose = purpose;
+      source.orderOwner = "player";
+      source.orderIssuedAt ??= state.campaign.elapsedHours;
+    }
     const path = pathfinder
       ? pathfinder.find(
           source.navX ?? source.x,
@@ -283,7 +293,10 @@ export function createKernel(
           number,
           number,
         ][]);
-    if (!path.length) return 0;
+    if (!path.length) {
+      if (owner === "player") source.orderPath = undefined;
+      return 0;
+    }
     const blocker =
         purpose !== "logistics"
           ? firstEnemyControlSite(state, team, path, targetId)
@@ -302,23 +315,21 @@ export function createKernel(
               number,
             ][])
         : path;
+    if (owner === "player") source.orderPath = clone(path);
     if (!effectivePath.length) return 0;
-    if (blocker && purpose === "combat") {
-      blocker.plannedOrderTargets ??= {};
-      blocker.plannedOrderPaths ??= {};
-      blocker.plannedOrderTargets[team] = target.id;
-      blocker.plannedOrderOwners ??= {};
-      blocker.plannedOrderOwners[team] = owner;
-      blocker.plannedOrderPaths[team] = clone(path);
-    }
     const idle = state.units.filter(
       (unit) =>
         unit.team === team &&
         unit.siteId === sourceId &&
-        unit.targetSiteId == null,
+        unit.targetSiteId == null && !unit.movementOrder,
     );
     const moving = idle.slice(0, Math.max(0, Math.min(idle.length, count)));
     for (const unit of moving) {
+      unit.movementOrder = {
+        team, goalSiteId: target.id, goalX: target.navX ?? target.x, goalZ: target.navZ ?? target.z,
+        sourceSiteId: owner === "player" ? sourceId : undefined,
+        purpose, effectiveSiteId: effectiveTarget.id,
+      };
       unit.targetSiteId = effectiveTarget.id;
       unit.path = clone(effectivePath);
       unit.pathIndex = 0;
@@ -409,14 +420,10 @@ export function createKernel(
                 ][])
             : path;
         if (!effectivePath.length) continue;
-        if (blocker && target) {
-          blocker.plannedOrderTargets ??= {};
-          blocker.plannedOrderPaths ??= {};
-          blocker.plannedOrderTargets[action.team] = target.id;
-          blocker.plannedOrderOwners ??= {};
-          blocker.plannedOrderOwners[action.team] = "player";
-          blocker.plannedOrderPaths[action.team] = clone(path);
-        }
+        unit.movementOrder = {
+          team: action.team, goalSiteId: target?.id, goalX: tx, goalZ: tz,
+          purpose: "combat", effectiveSiteId: blocker?.id ?? target?.id,
+        };
         unit.targetSiteId = blocker?.id ?? target?.id;
         unit.path = effectivePath;
         unit.pathIndex = 0;
@@ -434,6 +441,7 @@ export function createKernel(
         if (action.displayName?.trim())
           site.displayName = action.displayName.trim().slice(0, 24);
         if (action.orderTarget === null) {
+          cancelSiteMovement(state, action.team, site.id);
           site.orderTarget = undefined;
           site.orderPath = undefined;
           site.orderPurpose = undefined;
@@ -443,13 +451,15 @@ export function createKernel(
           issueOrder(action.team, site.id, action.orderTarget, undefined, "combat", "player");
         }
       }
-      site.plannedOrderTargets ??= {};
-      site.plannedOrderPaths ??= {};
-      site.plannedOrderTargets[action.team] =
-        action.plannedOrderTarget ?? undefined;
-      site.plannedOrderOwners ??= {};
-      site.plannedOrderOwners[action.team] = action.plannedOrderTarget == null ? undefined : "player";
-      site.plannedOrderPaths[action.team] = undefined;
+      if (Object.prototype.hasOwnProperty.call(action, "plannedOrderTarget")) {
+        site.plannedOrderTargets ??= {};
+        site.plannedOrderPaths ??= {};
+        if (site.plannedOrderTargets[action.team] !== (action.plannedOrderTarget ?? undefined))
+          site.plannedOrderPaths[action.team] = undefined;
+        site.plannedOrderTargets[action.team] = action.plannedOrderTarget ?? undefined;
+        site.plannedOrderOwners ??= {};
+        site.plannedOrderOwners[action.team] = action.plannedOrderTarget == null ? undefined : "player";
+      }
       return;
     }
     if (action.type === "build_camp") {
@@ -494,6 +504,7 @@ export function createKernel(
     if (
       action.type === "research_start" ||
       action.type === "decision_start" ||
+      action.type === "decision_cancel" ||
       action.type === "production_start" ||
       action.type === "production_stop" ||
       action.type === "mobilize"
@@ -655,6 +666,7 @@ export function createKernel(
         const source = state.sites[plannedCamp.sourceId],
           target = state.sites[plannedCamp.targetId];
         if (!source || !target || source.destroyed || target.destroyed) continue;
+        if (source.orderOwner === "player" && source.orderTarget != null) continue;
         const id = state.campaign.nextSiteId++,
           camp: SiteState = {
             id,
@@ -696,6 +708,8 @@ export function createKernel(
       }
       for (const order of plan.orders)
         {
+          const commandedSource = state.sites[order.sourceId];
+          if (commandedSource?.orderOwner === "player" && commandedSource.orderTarget != null) continue;
           const deployed = issueOrder(
             team,
             order.sourceId,
@@ -992,6 +1006,8 @@ export function healthCheck() {
     language: "typescript",
     deterministic: true,
     authoritative: true,
+    orderRulesVersion: ORDER_RULES_VERSION,
+    decisionCancellation: true,
     migrated: [
       "navigation",
       "aggregate_combat",

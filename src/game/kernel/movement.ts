@@ -2,6 +2,7 @@ import { RESEARCH_DEFINITIONS } from "../research";
 import type { GameData, SiteState, UnitState } from "../types";
 import { navIndex, type KernelNavGrid, type KernelPathfinder } from "./navigation";
 import { unitModifiers } from "./modifiers";
+import { prepareUnitMovement } from "./orders";
 
 const insideTsinghuaCampus = (x: number, z: number) =>
   x > -18 && x < 38 && z > -48 && z < 17;
@@ -40,8 +41,14 @@ const finishFriendlyArrival = (
   unit: UnitState,
   target: SiteState,
 ) => {
+  const movementOrder = unit.movementOrder;
   unit.siteId = target.id;
   unit.targetSiteId = undefined;
+  unit.movementOrder = undefined;
+  if (movementOrder?.team === unit.team && movementOrder.goalSiteId !== target.id && !unit.retreating) {
+    movementOrder.awaitingContinuation = true;
+    unit.movementOrder = movementOrder;
+  }
   unit.path = undefined;
   unit.pathIndex = undefined;
   if (unit.retreating) {
@@ -67,9 +74,11 @@ export function simulateKernelMovement(
     if (unit.hp <= 0) continue;
     if (game.campaign.freezeUntil[unit.team] > game.campaign.elapsedHours)
       continue;
+    if (!prepareUnitMovement(game, unit, pathfinder)) continue;
     const target =
       unit.targetSiteId == null ? undefined : game.sites[unit.targetSiteId];
     if (unit.targetSiteId != null && (!target || target.destroyed)) {
+      unit.movementOrder = undefined;
       unit.targetSiteId = undefined;
       unit.path = undefined;
       unit.pathIndex = undefined;
@@ -77,14 +86,17 @@ export function simulateKernelMovement(
     }
     const targetX = target ? target.navX ?? target.x : unit.tx,
       targetZ = target ? target.navZ ?? target.z : unit.tz;
-    if (!target && Math.hypot(unit.x - targetX, unit.z - targetZ) <= 0.18)
+    if (!target && Math.hypot(unit.x - targetX, unit.z - targetZ) <= 0.18) {
+      unit.movementOrder = undefined;
       continue;
+    }
     if (!unit.path || (unit.pathIndex ?? 0) >= unit.path.length) {
       const nextPath = pathfinder
         ? pathfinder.find(unit.x, unit.z, targetX, targetZ)
         : ([[targetX, targetZ]] as [number, number][]);
       if (!nextPath.length) {
-        unit.targetSiteId = undefined;
+        if (unit.movementOrder) unit.movementOrder.retryAt = game.campaign.elapsedHours + .25;
+        else unit.targetSiteId = undefined;
         unit.path = undefined;
         unit.pathIndex = undefined;
         continue;
