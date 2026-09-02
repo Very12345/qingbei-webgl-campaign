@@ -1,0 +1,60 @@
+name: Release account hub plugin
+on:
+  push:
+    tags: ['hub-v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {goos: windows, goarch: amd64, suffix: .exe}
+          - {goos: linux, goarch: amd64, suffix: ''}
+          - {goos: darwin, goarch: amd64, suffix: ''}
+          - {goos: darwin, goarch: arm64, suffix: ''}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test plugin
+        working-directory: native-server
+        run: |
+          go test -race ./plugins/account-hub
+          node --test plugins/account-hub/protocol.test.mjs
+      - name: Build plugin only
+        working-directory: native-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          output="qingbei-account-hub-${GOOS}-${GOARCH}${{ matrix.suffix }}"
+          go build -trimpath -ldflags '-s -w' -o "../$output" ./plugins/account-hub
+          cd ..
+          sha256sum "$output" > "$output.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hub-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: qingbei-account-hub-*
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Account hub plugin ${{ github.ref_name }}
+          body_path: native-server/plugins/account-hub/RELEASES.md
+          make_latest: false
+          files: artifacts/*

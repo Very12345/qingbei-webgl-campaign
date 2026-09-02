@@ -109,3 +109,47 @@ func TestSecureProxySessionAndJoinURL(t *testing.T) {
 		t.Fatalf("join URL leaked authentication data: %s", joinURL)
 	}
 }
+
+func TestActiveMatchAndDisconnectForfeit(t *testing.T) {
+	server, _ := newTestHub(t)
+	server.data.Users["leaver"] = &userRecord{ID: "leaver", Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, SelectedCosmetics: map[string]string{}}
+	server.data.Users["stayer"] = &userRecord{ID: "stayer", Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, SelectedCosmetics: map[string]string{}}
+	match := &matchRecord{
+		RoomCode:     "ACTIVE1234",
+		Mode:         "pvp",
+		Participants: map[string]string{"leaver": "pku", "stayer": "thu"},
+		SeenPlayers:  map[string]bool{"leaver": true, "stayer": true},
+		DisconnectedAt: map[string]time.Time{
+			"leaver": time.Now().Add(-59 * time.Second),
+		},
+	}
+	server.data.Matches[match.RoomCode] = match
+	profile := server.publicProfileLocked(server.data.Users["leaver"])
+	active := profile["activeMatch"].(map[string]any)
+	if !strings.Contains(active["joinUrl"].(string), "/plugins/account-hub/play/") {
+		t.Fatalf("active match did not use the plugin-native play shell: %v", active)
+	}
+	if completed := server.expireDisconnectedMatchesLocked(time.Now()); len(completed) != 0 {
+		t.Fatal("player forfeited before the 60 second grace period")
+	}
+	match.DisconnectedAt["leaver"] = time.Now().Add(-61 * time.Second)
+	completed := server.expireDisconnectedMatchesLocked(time.Now())
+	if len(completed) != 1 || !match.Completed || match.Winner != "thu" {
+		t.Fatalf("disconnect did not forfeit correctly: %#v", match)
+	}
+	if server.data.Users["leaver"].Experience["pku"] != 60 || server.data.Users["stayer"].Experience["thu"] != 120 {
+		t.Fatal("disconnect result did not award normal PvP experience")
+	}
+}
+
+func TestPlayShellOwnsExitAndCommandReliability(t *testing.T) {
+	data, err := staticFiles.ReadFile("static/play.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"确认投降", "api/match/disconnect", "QingbeiProtocol", "PluginWebSocket", "保存并退出"} {
+		if !bytes.Contains(data, []byte(expected)) {
+			t.Fatalf("play shell is missing %q", expected)
+		}
+	}
+}

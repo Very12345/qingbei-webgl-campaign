@@ -141,3 +141,38 @@ X-Qingbei-Plugin-Secret: <QINGBEI_PLUGIN_SECRET>
 - 等级奖励 2×/4×倍速卡和两档阵营材质；倍速卡只在创建人机独立内核时消耗。
 
 示例部署配置见 `examples/account-hub/qingbei-server.json`。
+
+## 插件拥有对局页面（账号大厅 0.3.2）
+
+插件可以通过自己的路由返回完整 HTML、CSS 和 JS，并以 `landingPlugin` 接管首页。
+账号大厅的 `/plugins/account-hub/play/` 是同源页面，不是 iframe：它加载同一份已发布的游戏客户端资源，由插件适配界面入口、账号阵营、投降与结算流程。没有另写模拟内核，也没有修改服务器本体。
+
+目前客户端没有稳定的 UI 生命周期扩展 API，因此 `static/play.html` 的适配器仍依赖 `.team-lobby-card`、`.webgl-stage` 等结构和退出按钮文案。升级客户端时须回归这些选择器，不能将其视为通用且永不变化的 Hook。不同插件也可以提供自己的完整客户端，但仍应复用共享内核和网络协议。
+
+账号插件自有接口（均需要账号 Cookie）：
+
+| 路径 | 用途 |
+| --- | --- |
+| `GET /api/match/status?room=…` | 查询本账号参与战局及结算结果 |
+| `GET /api/match/presence?room=…&connectionId=…` | SSE 在线连接；每 10 秒发状态，页面确认心跳 |
+| `POST /api/match/heartbeat` | `{roomCode, connectionId}`，确认页面收到状态 |
+| `POST /api/match/disconnect` | 相同参数，幂等记录离开时间；旧页面标识不能关闭新页面 |
+| `POST /api/match/surrender` | `{roomCode}`，幂等投降和经验结算 |
+
+明确关窗或连接关闭从检测时间起提供 60 秒宽限，清理周期最多增加约 3 秒。突然断网时通过未确认的 SSE 心跳识别：从预计下一次心跳时刻起计 60 秒，因此检测存在最多约一个心跳周期的误差。后台标签页不依赖定时器发送心跳，而是在 SSE 收到数据时确认；被浏览器完全冻结的页面视为失联。
+
+插件每轮先通过内部 API 核对存活内核，仅成功获取完整列表才处理不存在的战局，避免短暂 API 故障被算成失败。中断不发经验；正常胜负、投降、超时判负沿用原有奖励且每局只结算一次。插件重启后会话需重新登录。
+
+`static/protocol.js` 是旧服务器的协议兼容层：在浏览器一侧把 `network_chunk` 还原为完整消息再发送，不伪造 ACK、不增加命令权限、不重发已经处理的序号。服务器仍只接受操作并校验阵营，客户端不能上传权威兵力或胜负。
+
+测试与独立发布：
+
+```bash
+cd native-server
+go test ./plugins/account-hub
+node --test plugins/account-hub/protocol.test.mjs
+# 对一次性、无账号保护的本地测试内核运行调兵回归：
+node plugins/account-hub/protocol-e2e.mjs http://127.0.0.1:17991
+```
+
+`hub-v*` 标签仅构建和发布四个平台的插件及 SHA-256 校验文件，不重建服务器。`GET /plugins/account-hub/health` 包含独立插件版本；服务器 `/api/info` 的版本可以保持不变。

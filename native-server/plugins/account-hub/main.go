@@ -25,6 +25,8 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
+const pluginVersion = "0.3.2"
+
 type userRecord struct {
 	ID                string            `json:"id"`
 	Salt              string            `json:"salt"`
@@ -38,13 +40,19 @@ type userRecord struct {
 }
 
 type matchRecord struct {
-	RoomCode     string            `json:"roomCode"`
-	Mode         string            `json:"mode"`
-	Difficulty   string            `json:"difficulty,omitempty"`
-	Participants map[string]string `json:"participants"`
-	Completed    bool              `json:"completed"`
-	Winner       string            `json:"winner,omitempty"`
-	CreatedAt    time.Time         `json:"createdAt"`
+	RoomCode       string               `json:"roomCode"`
+	Mode           string               `json:"mode"`
+	Difficulty     string               `json:"difficulty,omitempty"`
+	Participants   map[string]string    `json:"participants"`
+	Completed      bool                 `json:"completed"`
+	Winner         string               `json:"winner,omitempty"`
+	ResultReason   string               `json:"resultReason,omitempty"`
+	CreatedAt      time.Time            `json:"createdAt"`
+	CompletedAt    time.Time            `json:"completedAt,omitempty"`
+	SeenPlayers    map[string]bool      `json:"seenPlayers,omitempty"`
+	LastHeartbeat  map[string]time.Time `json:"lastHeartbeat,omitempty"`
+	DisconnectedAt map[string]time.Time `json:"disconnectedAt,omitempty"`
+	Connections    map[string]string    `json:"connections,omitempty"`
 }
 
 type persistedData struct {
@@ -80,6 +88,8 @@ type hubServer struct {
 	waiting       *queueEntry
 	ready         map[string]map[string]string
 	client        *http.Client
+	creating      map[string]bool
+	presence      map[string]string
 }
 
 func main() {
@@ -99,6 +109,7 @@ func main() {
 	if err := server.load(); err != nil {
 		log.Fatalf("读取账号数据失败: %v", err)
 	}
+	go server.runMatchJanitor()
 	mux := http.NewServeMux()
 	server.routes(mux)
 	log.Printf("账号与匹配大厅插件监听 127.0.0.1:%s\n", port)
@@ -116,7 +127,7 @@ func envOr(name, fallback string) string {
 
 func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", func(writer http.ResponseWriter, request *http.Request) {
-		writeJSON(writer, http.StatusOK, map[string]any{"ok": true, "plugin": server.pluginID})
+		writeJSON(writer, http.StatusOK, map[string]any{"ok": true, "plugin": server.pluginID, "version": pluginVersion})
 	})
 	mux.HandleFunc("/assets/", server.asset)
 	mux.HandleFunc("/api/register", server.register)
@@ -127,8 +138,20 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lobby/ai", server.createAILobby)
 	mux.HandleFunc("/api/lobby/pvp", server.joinPVPQueue)
 	mux.HandleFunc("/api/lobby/status", server.lobbyStatus)
+	mux.HandleFunc("/api/match/status", server.matchStatus)
+	mux.HandleFunc("/api/match/heartbeat", server.matchHeartbeat)
+	mux.HandleFunc("/api/match/disconnect", server.matchDisconnect)
+	mux.HandleFunc("/api/match/surrender", server.matchSurrender)
+	mux.HandleFunc("/api/match/presence", server.matchPresence)
+	mux.HandleFunc("/protocol.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/protocol.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
 	mux.HandleFunc("/hooks/player/join", server.playerJoinHook)
 	mux.HandleFunc("/hooks/battle/result", server.battleResultHook)
+	mux.HandleFunc("/play/", server.servePlay)
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/" {
 			http.NotFound(writer, request)
@@ -144,6 +167,30 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 		writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		_, _ = writer.Write(data)
 	})
+}
+
+func securePageHeaders(writer http.ResponseWriter, allowCDN bool) {
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-cache")
+	contentSecurityPolicy := "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	if allowCDN {
+		contentSecurityPolicy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://very12345.github.io; style-src 'self' 'unsafe-inline' https://very12345.github.io; img-src 'self' data: blob: https://very12345.github.io; connect-src 'self' ws: wss: https://very12345.github.io; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	}
+	writer.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	writer.Header().Set("Referrer-Policy", "no-referrer")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.Header().Set("X-Frame-Options", "DENY")
+	writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+}
+
+func (server *hubServer) servePlay(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/play/" {
+		http.NotFound(writer, request)
+		return
+	}
+	data, _ := staticFiles.ReadFile("static/play.html")
+	securePageHeaders(writer, true)
+	_, _ = writer.Write(data)
 }
 
 func (server *hubServer) asset(writer http.ResponseWriter, request *http.Request) {
@@ -248,8 +295,16 @@ func (server *hubServer) login(writer http.ResponseWriter, request *http.Request
 }
 
 func (server *hubServer) logout(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	token := server.token(request)
 	server.mu.Lock()
+	if user := server.userForTokenLocked(token); user != nil && server.rejectActiveLocked(writer, user.ID) {
+		server.mu.Unlock()
+		return
+	}
 	delete(server.sessions, token)
 	server.mu.Unlock()
 	http.SetCookie(writer, &http.Cookie{Name: "qingbei_hub", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
@@ -282,6 +337,9 @@ func (server *hubServer) selectCosmetic(writer http.ResponseWriter, request *htt
 		return
 	}
 	team := strings.Split(input.Item, "-")[0]
+	if server.rejectActiveLocked(writer, user.ID) {
+		return
+	}
 	if team != "pku" && team != "thu" {
 		writeError(writer, http.StatusBadRequest, "饰品无效")
 		return
@@ -293,6 +351,54 @@ func (server *hubServer) selectCosmetic(writer http.ResponseWriter, request *htt
 	user.SelectedCosmetics[team] = input.Item
 	_ = server.saveLocked()
 	writeJSON(writer, http.StatusOK, map[string]any{"profile": server.publicProfileLocked(user)})
+}
+
+func ensureMatchMaps(match *matchRecord) {
+	if match.Connections == nil {
+		match.Connections = map[string]string{}
+	}
+	if match.SeenPlayers == nil {
+		match.SeenPlayers = map[string]bool{}
+	}
+	if match.LastHeartbeat == nil {
+		match.LastHeartbeat = map[string]time.Time{}
+	}
+	if match.DisconnectedAt == nil {
+		match.DisconnectedAt = map[string]time.Time{}
+	}
+}
+
+func (server *hubServer) activeMatchForUserLocked(userID string) *matchRecord {
+	for _, match := range server.data.Matches {
+		if !match.Completed && match.Participants[userID] != "" {
+			ensureMatchMaps(match)
+			return match
+		}
+	}
+	return nil
+}
+
+func (server *hubServer) matchViewLocked(userID string, match *matchRecord) map[string]any {
+	if match == nil {
+		return nil
+	}
+	team := match.Participants[userID]
+	view := map[string]any{
+		"roomCode":   match.RoomCode,
+		"mode":       match.Mode,
+		"difficulty": match.Difficulty,
+		"team":       team,
+		"completed":  match.Completed,
+		"winner":     match.Winner,
+		"reason":     match.ResultReason,
+	}
+	if !match.Completed && team != "" {
+		view["joinUrl"] = server.joinURL(match.RoomCode, team)
+	}
+	if disconnectedAt := match.DisconnectedAt[userID]; !disconnectedAt.IsZero() {
+		view["disconnectDeadline"] = disconnectedAt.Add(time.Minute).UnixMilli()
+	}
+	return view
 }
 
 func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http.Request) {
@@ -315,6 +421,20 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 		server.mu.Unlock()
 		writeError(writer, http.StatusUnauthorized, "尚未登录")
 		return
+	}
+	if active := server.activeMatchForUserLocked(user.ID); active != nil {
+		view := server.matchViewLocked(user.ID, active)
+		server.mu.Unlock()
+		writeJSON(writer, http.StatusConflict, map[string]any{"error": "已有进行中的战斗", "activeMatch": view})
+		return
+	}
+	if !server.reserveCreationLocked(writer, user.ID) {
+		server.mu.Unlock()
+		return
+	}
+	defer server.releaseCreation(user.ID)
+	if server.waiting != nil && server.waiting.UserID == user.ID {
+		server.waiting = nil
 	}
 	timeScale := 1
 	if input.Card != "" {
@@ -369,9 +489,20 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, "尚未登录")
 		return
 	}
+	if active := server.activeMatchForUserLocked(user.ID); active != nil {
+		view := server.matchViewLocked(user.ID, active)
+		server.mu.Unlock()
+		writeJSON(writer, http.StatusConflict, map[string]any{"error": "已有进行中的战斗", "activeMatch": view})
+		return
+	}
 	if ready := server.ready[user.ID]; ready != nil {
 		server.mu.Unlock()
 		writeJSON(writer, http.StatusOK, ready)
+		return
+	}
+	if server.creating[user.ID] {
+		server.mu.Unlock()
+		writeError(writer, http.StatusConflict, "战局正在创建，请稍候")
 		return
 	}
 	if server.waiting == nil || server.waiting.UserID == user.ID || time.Since(server.waiting.JoinedAt) > 10*time.Minute {
@@ -381,6 +512,16 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		return
 	}
 	first := server.waiting
+	if server.creating[first.UserID] || server.activeMatchForUserLocked(first.UserID) != nil {
+		server.waiting = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, JoinedAt: time.Now()}
+		server.mu.Unlock()
+		writeJSON(writer, http.StatusAccepted, map[string]any{"queued": true})
+		return
+	}
+	server.reserveCreationLocked(writer, user.ID)
+	server.reserveCreationLocked(writer, first.UserID)
+	defer server.releaseCreation(user.ID)
+	defer server.releaseCreation(first.UserID)
 	server.waiting = nil
 	secondID := user.ID
 	server.mu.Unlock()
@@ -418,12 +559,211 @@ func (server *hubServer) lobbyStatus(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusUnauthorized, "尚未登录")
 		return
 	}
+	if active := server.activeMatchForUserLocked(user.ID); active != nil {
+		writeJSON(writer, http.StatusOK, server.matchViewLocked(user.ID, active))
+		return
+	}
 	if ready := server.ready[user.ID]; ready != nil {
 		writeJSON(writer, http.StatusOK, ready)
 		return
 	}
 	queued := server.waiting != nil && server.waiting.UserID == user.ID
 	writeJSON(writer, http.StatusOK, map[string]any{"queued": queued})
+}
+
+func (server *hubServer) matchForUserLocked(userID, roomCode string) *matchRecord {
+	match := server.data.Matches[normalizeRoom(roomCode)]
+	if match == nil || match.Participants[userID] == "" {
+		return nil
+	}
+	ensureMatchMaps(match)
+	return match
+}
+
+func (server *hubServer) authenticatedMatch(writer http.ResponseWriter, request *http.Request, roomCode string) (*userRecord, *matchRecord, bool) {
+	user := server.userForTokenLocked(server.token(request))
+	if user == nil {
+		writeError(writer, http.StatusUnauthorized, "尚未登录")
+		return nil, nil, false
+	}
+	match := server.matchForUserLocked(user.ID, roomCode)
+	if match == nil {
+		writeError(writer, http.StatusNotFound, "没有找到这个账号的战斗")
+		return nil, nil, false
+	}
+	return user, match, true
+}
+
+func (server *hubServer) matchStatus(writer http.ResponseWriter, request *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	user, match, ok := server.authenticatedMatch(writer, request, request.URL.Query().Get("room"))
+	if !ok {
+		return
+	}
+	writeJSON(writer, http.StatusOK, server.matchViewLocked(user.ID, match))
+}
+
+func (server *hubServer) matchHeartbeat(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		RoomCode     string `json:"roomCode"`
+		ConnectionID string `json:"connectionId"`
+	}
+	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	user, match, ok := server.authenticatedMatch(writer, request, input.RoomCode)
+	if !ok {
+		return
+	}
+	server.expireMatchLocked(match, time.Now())
+	if match.Completed {
+		writeJSON(writer, http.StatusOK, server.matchViewLocked(user.ID, match))
+		return
+	}
+	ensureMatchMaps(match)
+	if match.Connections[user.ID] != input.ConnectionID {
+		writeError(writer, http.StatusConflict, "战斗已在另一个页面打开")
+		return
+	}
+	match.SeenPlayers[user.ID] = true
+	match.LastHeartbeat[user.ID] = time.Now()
+	if _, disconnected := match.DisconnectedAt[user.ID]; disconnected {
+		delete(match.DisconnectedAt, user.ID)
+		_ = server.saveLocked()
+	}
+	writeJSON(writer, http.StatusOK, server.matchViewLocked(user.ID, match))
+}
+
+func (server *hubServer) matchDisconnect(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		RoomCode     string `json:"roomCode"`
+		ConnectionID string `json:"connectionId"`
+	}
+	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	user, match, ok := server.authenticatedMatch(writer, request, input.RoomCode)
+	if !ok {
+		return
+	}
+	if !match.Completed && input.ConnectionID == match.Connections[user.ID] {
+		ensureMatchMaps(match)
+		match.SeenPlayers[user.ID] = true
+		if match.DisconnectedAt[user.ID].IsZero() {
+			match.DisconnectedAt[user.ID] = time.Now()
+		}
+		_ = server.saveLocked()
+	}
+	writeJSON(writer, http.StatusOK, server.matchViewLocked(user.ID, match))
+}
+
+func oppositeTeam(team string) string {
+	if team == "pku" {
+		return "thu"
+	}
+	return "pku"
+}
+
+func (server *hubServer) completeMatchLocked(match *matchRecord, winner, reason string) bool {
+	if match == nil || match.Completed || (winner != "pku" && winner != "thu") {
+		return false
+	}
+	match.Completed = true
+	match.Winner = winner
+	match.ResultReason = reason
+	match.CompletedAt = time.Now()
+	for userID, team := range match.Participants {
+		delete(server.ready, userID)
+		user := server.data.Users[userID]
+		if user == nil {
+			continue
+		}
+		gain := 30
+		if match.Mode == "pvp" {
+			if team == winner {
+				gain = 120
+			} else {
+				gain = 60
+			}
+		} else {
+			switch match.Difficulty {
+			case "standard":
+				gain = 60
+			case "hard":
+				gain = 100
+			}
+			if team != winner {
+				gain /= 2
+			}
+		}
+		user.Experience[team] += gain
+		server.applyRewards(user, team)
+	}
+	_ = server.saveLocked()
+	return true
+}
+
+func (server *hubServer) scheduleBattleDeletion(roomCode string, delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		server.deleteBattle(roomCode)
+	}()
+}
+
+func (server *hubServer) matchSurrender(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		RoomCode string `json:"roomCode"`
+	}
+	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	server.mu.Lock()
+	user, match, ok := server.authenticatedMatch(writer, request, input.RoomCode)
+	if !ok {
+		server.mu.Unlock()
+		return
+	}
+	winner := oppositeTeam(match.Participants[user.ID])
+	completed := server.completeMatchLocked(match, winner, user.ID+" 投降")
+	view := server.matchViewLocked(user.ID, match)
+	server.mu.Unlock()
+	if completed {
+		server.scheduleBattleDeletion(match.RoomCode, 20*time.Second)
+	}
+	writeJSON(writer, http.StatusOK, view)
+}
+
+func (server *hubServer) runMatchJanitor() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		// A missing kernel after a server restart is an interruption, never a loss.
+		if !server.reconcileBattles(now) {
+			continue
+		}
+		server.mu.Lock()
+		server.expireDisconnectedMatchesLocked(now)
+		server.mu.Unlock()
+	}
+}
+
+func (server *hubServer) expireDisconnectedMatchesLocked(now time.Time) []string {
+	completedRooms := []string{}
+	for _, match := range server.data.Matches {
+		if match.Completed {
+			continue
+		}
+		ensureMatchMaps(match)
+		if server.expireMatchLocked(match, now) {
+			completedRooms = append(completedRooms, match.RoomCode)
+		}
+	}
+	return completedRooms
 }
 
 func (server *hubServer) playerJoinHook(writer http.ResponseWriter, request *http.Request) {
@@ -439,9 +779,19 @@ func (server *hubServer) playerJoinHook(writer http.ResponseWriter, request *htt
 	defer server.mu.Unlock()
 	user := server.userForTokenLocked(input.Token)
 	match := server.data.Matches[normalizeRoom(input.RoomCode)]
-	if user == nil || match == nil || match.Participants[user.ID] != input.Team {
+	if match != nil {
+		server.expireMatchLocked(match, time.Now())
+	}
+	if user == nil || match == nil || match.Completed || match.Participants[user.ID] != input.Team {
 		writeJSON(writer, http.StatusOK, map[string]any{"allow": false, "message": "账号不属于这个大厅或阵营"})
 		return
+	}
+	ensureMatchMaps(match)
+	match.SeenPlayers[user.ID] = true
+	match.LastHeartbeat[user.ID] = time.Now()
+	// A WebSocket alone must not cancel a plugin presence deadline.
+	if match.Connections[user.ID] == "" {
+		delete(match.DisconnectedAt, user.ID)
 	}
 	profile := server.publicProfileLocked(user)
 	if item := user.SelectedCosmetics[input.Team]; item != "" && contains(user.Cosmetics, item) {
@@ -460,46 +810,19 @@ func (server *hubServer) battleResultHook(writer http.ResponseWriter, request *h
 		return
 	}
 	server.mu.Lock()
-	defer server.mu.Unlock()
 	match := server.data.Matches[normalizeRoom(input.RoomCode)]
 	if match == nil || match.Completed {
+		server.mu.Unlock()
 		writeJSON(writer, http.StatusOK, map[string]any{"ok": true, "duplicate": true})
 		return
 	}
-	match.Completed = true
-	match.Winner = input.Winner
-	for userID, team := range match.Participants {
-		user := server.data.Users[userID]
-		if user == nil {
-			continue
-		}
-		gain := 30
-		if match.Mode == "pvp" {
-			if team == input.Winner {
-				gain = 120
-			} else {
-				gain = 60
-			}
-		} else {
-			switch match.Difficulty {
-			case "standard":
-				gain = 60
-			case "hard":
-				gain = 100
-			}
-			if team != input.Winner {
-				gain /= 2
-			}
-		}
-		user.Experience[team] += gain
-		server.applyRewards(user, team)
-	}
-	_ = server.saveLocked()
+	completed := server.completeMatchLocked(match, input.Winner, "战局胜负已确定")
+	roomCode := match.RoomCode
+	server.mu.Unlock()
 	writeJSON(writer, http.StatusOK, map[string]any{"ok": true})
-	go func(roomCode string) {
-		time.Sleep(10 * time.Minute)
-		server.deleteBattle(roomCode)
-	}(match.RoomCode)
+	if completed {
+		server.scheduleBattleDeletion(roomCode, 10*time.Minute)
+	}
 }
 
 func (server *hubServer) applyRewards(user *userRecord, team string) {
@@ -521,7 +844,11 @@ func (server *hubServer) applyRewards(user *userRecord, team string) {
 }
 
 func (server *hubServer) publicProfileLocked(user *userRecord) map[string]any {
-	return map[string]any{"id": user.ID, "experience": user.Experience, "levels": map[string]int{"pku": levelFor(user.Experience["pku"]), "thu": levelFor(user.Experience["thu"])}, "speedCards": user.SpeedCards, "cosmetics": user.Cosmetics, "selectedCosmetics": user.SelectedCosmetics}
+	profile := map[string]any{"id": user.ID, "experience": user.Experience, "levels": map[string]int{"pku": levelFor(user.Experience["pku"]), "thu": levelFor(user.Experience["thu"])}, "speedCards": user.SpeedCards, "cosmetics": user.Cosmetics, "selectedCosmetics": user.SelectedCosmetics}
+	if active := server.activeMatchForUserLocked(user.ID); active != nil {
+		profile["activeMatch"] = server.matchViewLocked(user.ID, active)
+	}
+	return profile
 }
 
 func levelFor(experience int) int {
@@ -567,7 +894,7 @@ func (server *hubServer) deleteBattle(room string) {
 }
 
 func (server *hubServer) joinURL(room, team string) string {
-	return "/qingbei-webgl-campaign/?local=1&join=" + url.QueryEscape(room) + "&pluginTeam=" + url.QueryEscape(team)
+	return "/plugins/" + url.PathEscape(server.pluginID) + "/play/?local=1&join=" + url.QueryEscape(room) + "&pluginTeam=" + url.QueryEscape(team)
 }
 func (server *hubServer) refundCard(userID, card string) {
 	if card == "" {
@@ -696,6 +1023,10 @@ func contains(values []string, target string) bool {
 	return false
 }
 func decodeJSON(writer http.ResponseWriter, request *http.Request, target any) bool {
+	if request.Method != http.MethodPost {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		return false
+	}
 	if json.NewDecoder(http.MaxBytesReader(writer, request.Body, 64<<10)).Decode(target) != nil {
 		writeError(writer, http.StatusBadRequest, "请求格式不正确")
 		return false
