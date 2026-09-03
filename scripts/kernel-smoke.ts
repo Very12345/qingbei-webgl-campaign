@@ -71,6 +71,7 @@ const commandKernel = createKernel(commandState),
   )!,
   target = commandState.sites.find((site) => site.team === "thu")!;
 commandKernel.networkFull();
+commandKernel.dispatch({type:"configure_site",team:"pku",siteId:source.id,stance:"standby",dispatchRatio:1});
 commandKernel.dispatch({
   type: "order_site",
   team: "pku",

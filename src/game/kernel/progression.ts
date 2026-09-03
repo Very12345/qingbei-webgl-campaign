@@ -57,7 +57,10 @@ export function applyProgressionAction(
   }
   if (action.type === "mobilize") {
     for (const site of game.sites)
-      if (site.team === team && !site.destroyed) site.stance = action.stance;
+      if (site.team === team && !site.destroyed) {
+        site.stance = action.stance;
+        site.dispatchRatio = action.stance === "defend" ? .4 : action.stance === "guard" ? .7 : 1;
+      }
     return true;
   }
   const definition = RESEARCH_DEFINITIONS[action.id];

@@ -13,6 +13,7 @@
     "test:ai-routes": "tsx scripts/ai-route-safety-regressions.ts",
     "test:ai-camps": "tsx scripts/ai-camp-regressions.ts",
     "test:server-modes": "tsx scripts/server-mode-regressions.ts",
+    "test:realtime-dispatch": "tsx scripts/realtime-dispatch-regressions.ts",
     "benchmark:ai": "tsx scripts/ai-benchmark.ts",
     "verify:ai": "tsx scripts/verify-ai-matrix.ts",
     "dev": "vite",

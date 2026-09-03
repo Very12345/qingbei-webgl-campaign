@@ -35,7 +35,7 @@ for (const opening of ["standard", "blitz"] as const) {
 for (const team of ["pku","thu"] as const) {
   const game=makeFreshGame(), enemy=team === "pku" ? "thu" : "pku", template=game.sites[0];
   game.sites=[
-    {...template,id:0,team,type:"camp",name:"camp",x:0,z:0,navX:0,navZ:0,dispatchRatio:1},
+    {...template,id:0,team,type:"camp",name:"camp",stance:"standby",x:0,z:0,navX:0,navZ:0,dispatchRatio:1},
     {...template,id:1,team,type:"teaching",name:"friend",x:5,z:0,navX:5,navZ:0},
     {...template,id:2,team:enemy,type:"teaching",name:"enemy",x:60,z:0,navX:60,navZ:0},
   ];
@@ -46,7 +46,7 @@ for (const team of ["pku","thu"] as const) {
   assert.equal(unit.targetSiteId,1);
   const reinforcement={...unit,id:1,x:0,z:0,tx:0,tz:0,targetSiteId:undefined,movementOrder:undefined,path:undefined};
   game.units.push(reinforcement);
-  game.campaign.elapsedHours=6;
+  game.campaign.elapsedHours+=.01;
   kernel.step(1);
   assert.equal(reinforcement.targetSiteId,1,"a later arrival at a human camp must follow the persistent line");
   assert.equal(game.sites[0].orderOwner,"player");

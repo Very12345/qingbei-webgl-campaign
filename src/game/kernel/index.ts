@@ -32,6 +32,7 @@ import { processKernelEvents, recordKernelEvent } from "./events";
 import { EVENT_CARDS } from "../events/event-cards";
 import { cancelSiteMovement, migrateLegacyOrders, ORDER_RULES_VERSION } from "./orders";
 import { prepareServerDeployment } from "./deployment";
+import { dispatchPlayerRoutes, PLAYER_DISPATCH_VERSION } from "./player-dispatch";
 export {
   KernelPathfinder,
   navIndex,
@@ -229,6 +230,7 @@ export function createKernel(
   let lastEventHour = Number.NEGATIVE_INFINITY;
   let fightingUnitIds = new Set<number>();
   const pending: KernelAction[] = [];
+  const playerBatchLimits = new Map<number, number>();
   const enabledAiTeams = new Set(options.aiTeams ?? []);
   const campResourceReserve = (team: Team) => enabledAiTeams.has(team) ? state.campaign.ai.campResourceReserve?.[team] ?? 0 : 0;
   migrateLegacyOrders(state, enabledAiTeams);
@@ -269,6 +271,7 @@ export function createKernel(
     count = Number.POSITIVE_INFINITY,
     purpose: "combat" | "logistics" | "probe" = "combat",
     owner: "player" | "ai" = "ai",
+    selectedUnits?: ReadonlySet<number>,
   ) => {
     const source = state.sites[sourceId],
       target = state.sites[targetId];
@@ -283,6 +286,8 @@ export function createKernel(
     if (owner === "ai" && source.orderOwner === "player") return 0;
     // Player intent persists even when no unit or path is currently available.
     if (owner === "player") {
+      const stanceLimit = source.stance === "defend" ? .45 : source.stance === "guard" ? .72 : 1;
+      source.dispatchRatio = Math.min(source.dispatchRatio ?? stanceLimit, stanceLimit);
       if (source.orderTarget !== targetId) source.orderIssuedAt = state.campaign.elapsedHours;
       source.orderTarget = targetId;
       source.orderPurpose = purpose;
@@ -324,11 +329,13 @@ export function createKernel(
         : path;
     if (owner === "player") source.orderPath = clone(path);
     if (!effectivePath.length) return 0;
+    if (owner === "player" && !selectedUnits) return 0;
     const idle = state.units.filter(
       (unit) =>
         unit.team === team &&
         unit.siteId === sourceId &&
-        unit.targetSiteId == null && !unit.movementOrder,
+        unit.targetSiteId == null && !unit.movementOrder &&
+        (!selectedUnits || selectedUnits.has(unit.id)),
     );
     const moving = idle.slice(0, Math.max(0, Math.min(idle.length, count)));
     for (const unit of moving) {
@@ -365,6 +372,7 @@ export function createKernel(
       return;
     }
     if (action.type === "order_site") {
+      if (Number.isFinite(action.count)) playerBatchLimits.set(action.sourceId, Math.max(0, Math.floor(action.count!)));
       issueOrder(
         action.team,
         action.sourceId,
@@ -442,7 +450,10 @@ export function createKernel(
       const site = state.sites[action.siteId];
       if (!site || site.destroyed) return;
       if (site.team === action.team) {
-        if (action.stance) site.stance = action.stance;
+        if (action.stance) {
+          site.stance = action.stance;
+          if (action.dispatchRatio == null) site.dispatchRatio = action.stance === "defend" ? .4 : action.stance === "guard" ? .7 : 1;
+        }
         if (action.dispatchRatio != null && Number.isFinite(action.dispatchRatio))
           site.dispatchRatio = Math.max(0.1, Math.min(1, action.dispatchRatio));
         if (action.displayName?.trim())
@@ -454,6 +465,7 @@ export function createKernel(
           site.orderPurpose = undefined;
           site.orderIssuedAt = undefined;
           site.orderOwner = undefined;
+          site.playerDispatch = undefined;
         } else if (action.orderTarget != null) {
           issueOrder(action.team, site.id, action.orderTarget, undefined, "combat", "player");
         }
@@ -807,6 +819,11 @@ export function createKernel(
       processKernelEvents(state, { fightingUnitIds, issueOrder });
       lastEventHour = state.campaign.elapsedHours;
     }
+    dispatchPlayerRoutes(state, (source, units) => issueOrder(
+      source.team, source.id, source.orderTarget!, units.length,
+      source.orderPurpose ?? "combat", "player", new Set(units.map(unit => unit.id)),
+    ), playerBatchLimits);
+    playerBatchLimits.clear();
     if (!state.campaign.outcome) {
       const pkuAlive = state.sites.some(
           (site) => site.team === "pku" && !site.destroyed,
@@ -1037,6 +1054,7 @@ export function healthCheck() {
     orderRulesVersion: ORDER_RULES_VERSION,
     decisionCancellation: true,
     serverScenariosVersion: 1,
+    playerDispatchVersion: PLAYER_DISPATCH_VERSION,
     aiTacticsVersion: AI_TACTICS_VERSION,
     migrated: [
       "navigation",

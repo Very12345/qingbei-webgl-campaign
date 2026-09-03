@@ -34,6 +34,7 @@ jobs:
       - run: npm run test:ai-routes
       - run: npm run test:ai-camps
       - run: npm run test:server-modes
+      - run: npm run test:realtime-dispatch
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build

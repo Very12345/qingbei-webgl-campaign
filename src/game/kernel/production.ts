@@ -165,7 +165,8 @@ export function runProductionCycles(
       for (const source of game.sites) {
         if (
           source.destroyed ||
-          (source.type === "camp" && source.orderOwner !== "player") ||
+          source.orderOwner === "player" ||
+          source.type === "camp" ||
           source.orderTarget == null
         )
           continue;
@@ -179,7 +180,7 @@ export function runProductionCycles(
         if (
           !target ||
           target.destroyed ||
-          (target.team === source.team && !logisticsRoute && source.orderOwner !== "player")
+          (target.team === source.team && !logisticsRoute)
         ) {
           source.orderTarget = undefined;
           source.orderPath = undefined;
@@ -237,6 +238,7 @@ export function runProductionCycles(
         }
       }
     for (const source of producing) {
+      if (source.orderOwner === "player") continue;
       if (source.orderTarget == null) continue;
       const target = game.sites[source.orderTarget];
       if (target && !target.destroyed)

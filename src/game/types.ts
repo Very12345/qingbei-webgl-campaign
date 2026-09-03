@@ -31,6 +31,16 @@ export type SiteState = {
   orderPurpose?: "combat" | "logistics" | "probe";
   orderIssuedAt?: number;
   orderOwner?: "player" | "ai";
+  playerDispatch?: {
+    team: Team;
+    ratio: number;
+    minimum: number;
+    observedUnits: [number, number][];
+    committedUnitIds: number[];
+    credit: number;
+    retryAt?: number;
+    targetId: number;
+  };
   plannedOrderTargets?: Partial<Record<Team, number>>;
   plannedOrderPaths?: Partial<Record<Team, [number, number][]>>;
   plannedOrderOwners?: Partial<Record<Team, "player" | "ai">>;

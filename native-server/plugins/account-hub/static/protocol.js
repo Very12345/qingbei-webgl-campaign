@@ -6,7 +6,7 @@ globalThis.QingbeiProtocol = {
     const transfers = new Map(), pendingCommands = new Map(), knownSites = new Map(), knownUnits = new Map();
     const sameSite = (expected, actual) => !!actual &&
       (actual.team === team ? (actual.orderTarget ?? null) === (expected.orderTarget ?? null) &&
-        actual.stance === expected.stance && Math.abs((actual.dispatchRatio ?? .6) - expected.dispatchRatio) < .001 &&
+        actual.stance === expected.stance && Math.abs((actual.dispatchRatio ?? .6) - Math.min(expected.dispatchRatio, expected.stance === 'defend' ? .45 : expected.stance === 'guard' ? .72 : 1)) < .001 &&
         (expected.displayName == null || actual.displayName === expected.displayName) : true) &&
       (actual.plannedOrderTargets?.[team] ?? null) === (expected.plannedOrderTarget ?? null);
     const sameUnit = (expected, actual) => !!actual &&
@@ -87,7 +87,7 @@ globalThis.QingbeiProtocol = {
         else if (now() - p.at > 8000) { pendingCommands.delete(key); timedOut++; }
       }
       if (timedOut) notify('部分调兵命令尚未确认，请检查目标或重新下达', true);
-      else if (confirmed) notify('服务器已确认命令；据点连线为持续兵线，每6游戏小时继续派兵');
+      else if (confirmed) notify('服务器已确认命令；持续兵线按防御姿态实时调度到站和新增兵力');
     }
     return { outgoing, incoming, pendingCommands };
   }

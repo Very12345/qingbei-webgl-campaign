@@ -32,6 +32,72 @@ func TestEmbeddedKernelHealthCheck(t *testing.T) {
 	if health["serverScenariosVersion"] != float64(1) {
 		t.Fatal("embedded kernel lacks server scenarios and battle stats")
 	}
+	if health["playerDispatchVersion"] != float64(1) {
+		t.Fatal("embedded kernel lacks realtime player dispatch")
+	}
+}
+
+func TestEmbeddedRealtimeDispatchHonorsReserves(t *testing.T) {
+	runtime, err := newJSKernelRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _, err := loadKernelSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed["sites"] = []any{
+		map[string]any{"id": 0, "name": "source", "team": "pku", "type": "teaching", "stance": "defend", "dispatchRatio": .4, "supply": 100, "x": 0, "z": 0},
+		map[string]any{"id": 1, "name": "friend", "team": "pku", "type": "camp", "stance": "standby", "supply": 100, "x": 10, "z": 0},
+		map[string]any{"id": 2, "name": "enemy", "team": "thu", "type": "teaching", "stance": "defend", "supply": 100, "x": 50, "z": 0},
+	}
+	units := []any{}
+	for id := 0; id < 20; id++ {
+		units = append(units, map[string]any{"id": id, "team": "pku", "siteId": 0, "x": 0, "z": 0, "tx": 0, "tz": 0, "hp": 100, "strength": 1, "supply": 100, "morale": 100})
+	}
+	seed["units"] = units
+	campaign := seed["campaign"].(map[string]any)
+	campaign["elapsedHours"], campaign["lastProductionCycle"], campaign["lastDiningCycle"] = 90, 15, 7
+	instance, err := runtime.create(seed, map[string]any{"aiTeams": []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moving := func(snapshot map[string]any) int {
+		count := 0
+		for _, raw := range snapshot["state"].(map[string]any)["units"].([]any) {
+			if raw.(map[string]any)["targetSiteId"] == float64(1) {
+				count++
+			}
+		}
+		return count
+	}
+	if err = instance.dispatch(map[string]any{"type": "configure_site", "team": "pku", "siteId": 0, "orderTarget": 1}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := instance.step(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moving(first) != 8 {
+		t.Fatal("initial dispatch ignored stance / ratio")
+	}
+	later, err := instance.run(100, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moving(later) != 8 {
+		t.Fatal("repeated ticks drained the garrison")
+	}
+	if err = instance.dispatch(map[string]any{"type": "mobilize", "team": "pku", "stance": "standby"}); err != nil {
+		t.Fatal(err)
+	}
+	mobilized, err := instance.step(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moving(mobilized) != 20 {
+		t.Fatal("stance change waited for production before releasing reserves")
+	}
 }
 
 func TestEmbeddedKernelCanAdvanceState(t *testing.T) {

@@ -2429,6 +2429,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return 0;
       if (target.team !== team && !gameRef.current.campaign.warUnlocked)
         return 0;
+      if (kernelOwnsSimulation && !isRemoteGuest()) {
+        source.orderTarget = target.id;
+        source.orderOwner = "player";
+        sharedKernel.dispatch({ type: "order_site", team, sourceId: source.id, targetId: target.id,
+          count: Number.isFinite(requested) ? requested : undefined });
+        return 0;
+      }
       source.dispatchRatio ??=
         source.stance === "defend"
           ? 0.45

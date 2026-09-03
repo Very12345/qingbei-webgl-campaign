@@ -31,7 +31,7 @@ function fixture() {
     name: ["A", "B", "C", "D", "E", "F"][id],
     team: id === 0 || id === 4 ? "pku" : "thu",
     type: "teaching",
-    stance: "defend",
+    stance: id === 0 || id === 4 ? "standby" : "defend",
     x,
     z,
     navX: x,

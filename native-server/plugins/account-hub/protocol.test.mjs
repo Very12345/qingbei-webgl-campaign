@@ -7,6 +7,16 @@ vm.runInThisContext(readFileSync(new URL('./static/protocol.js', import.meta.url
 vm.runInThisContext(readFileSync(new URL('./static/lifecycle-client.js', import.meta.url), 'utf8'));
 const relay = payload => JSON.stringify({type:'relay',peerId:'host',data:JSON.stringify(payload)});
 
+test('old client default ratio is acknowledged only at the authoritative stance limit', () => {
+  const bridge=QingbeiProtocol.createBridge({send:()=>{}});
+  const command={id:1,stance:'defend',dispatchRatio:.6,orderTarget:2,plannedOrderTarget:null};
+  bridge.outgoing(relay({type:'client_commands',intent:'player',revision:1,sites:[command],units:[]}));
+  bridge.incoming(relay({type:'state_delta',sites:[{id:1,team:'pku',stance:'defend',dispatchRatio:.1,orderTarget:2}],units:[]}));
+  assert.equal(bridge.pendingCommands.size,1);
+  bridge.incoming(relay({type:'state_delta',sites:[{id:1,team:'pku',stance:'defend',dispatchRatio:.45,orderTarget:2}],units:[]}));
+  assert.equal(bridge.pendingCommands.size,0);
+});
+
 test('large chunked orders become exactly one unchanged complete command', () => {
   const sent = [], bridge = QingbeiProtocol.createBridge({send:raw=>sent.push(raw)});
   const command = {type:'client_commands',intent:'player',revision:17,sites:[],units:Array.from({length:600},(_,id)=>({id,team:'pku',targetSiteId:4,tx:12,tz:9}))};
