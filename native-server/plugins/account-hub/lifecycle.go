@@ -87,6 +87,12 @@ func (s *hubServer) expireMatchLocked(m *matchRecord, now time.Time) bool {
 	if m.Completed {
 		return false
 	}
+	if m.PendingWinner != "" {
+		if s.completeMatchLocked(m, m.PendingWinner, m.PendingReason) {
+			s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+		}
+		return true
+	}
 	ensureMatchMaps(m)
 	if !m.JoinDeadline.IsZero() && !now.Before(m.JoinDeadline) {
 		missing := []string{}
@@ -101,7 +107,9 @@ func (s *hubServer) expireMatchLocked(m *matchRecord, now time.Time) bool {
 			} else {
 				s.completeMatchLocked(m, oppositeTeam(m.Participants[missing[0]]), missing[0]+" 未在入场期限内进入")
 			}
-			s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+			if m.Completed {
+				s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+			}
 			return true
 		}
 	}
@@ -126,7 +134,9 @@ func (s *hubServer) expireMatchLocked(m *matchRecord, now time.Time) bool {
 	} else {
 		s.completeMatchLocked(m, oppositeTeam(m.Participants[expired[0]]), expired[0]+" 断线超过60秒")
 	}
-	s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+	if m.Completed {
+		s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+	}
 	return true
 }
 
@@ -190,7 +200,7 @@ func (s *hubServer) matchPresence(w http.ResponseWriter, r *http.Request) {
 	// A separate stream generation prevents a closing old request from marking
 	// a newly reconnected EventSource (same page id) as disconnected.
 	generation := randomToken(12)
-	if !m.Completed {
+	if !m.Completed && m.PendingWinner == "" {
 		s.presence[key] = generation
 		m.Connections[u.ID] = connection
 		m.SeenPlayers[u.ID] = true

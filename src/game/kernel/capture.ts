@@ -68,6 +68,7 @@ export function captureSite(
     oldTeam = site.team,
     siteX = site.navX ?? site.x,
     siteZ = site.navZ ?? site.z;
+  if (newTeam === oldTeam) return { kind: "none" };
   if (
     site.type === "target" &&
     newTeam === "pku" &&
@@ -122,6 +123,7 @@ export function captureSite(
     plannedOwner = site.plannedOrderOwners?.[newTeam],
     plannedPath = site.plannedOrderPaths?.[newTeam];
   site.team = newTeam;
+  if (game.campaign.battleStats) game.campaign.battleStats.captures[newTeam]++;
   site.supply = 45;
   site.stance = "standby";
   site.dispatchRatio = 1;

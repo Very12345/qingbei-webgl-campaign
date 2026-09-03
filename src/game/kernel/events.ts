@@ -165,7 +165,7 @@ const deployExternalTeam = (
         Math.hypot(a.x - border.x, a.z - border.z) -
         Math.hypot(b.x - border.x, b.z - border.z),
     )[0];
-  if (target && context.issueOrder) {
+  if (target && context.issueOrder && border.orderOwner !== "player") {
     context.issueOrder(ally, border.id, target.id, people);
     border.orderTarget = undefined;
     border.orderPath = undefined;
@@ -543,7 +543,7 @@ const processScenarioEvents = (
             Math.hypot(a.x - border.x, a.z - border.z) -
             Math.hypot(b.x - border.x, b.z - border.z),
         )[0];
-      if (target && context.issueOrder) {
+      if (target && context.issueOrder && border.orderOwner !== "player") {
         context.issueOrder(ally, border.id, target.id, 14);
         border.orderTarget = undefined;
         border.orderPath = undefined;

@@ -165,7 +165,7 @@ export function runProductionCycles(
       for (const source of game.sites) {
         if (
           source.destroyed ||
-          source.type === "camp" ||
+          (source.type === "camp" && source.orderOwner !== "player") ||
           source.orderTarget == null
         )
           continue;

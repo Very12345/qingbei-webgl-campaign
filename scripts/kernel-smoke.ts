@@ -224,7 +224,9 @@ for (const team of ["pku", "thu"] as const) {
       .map((site) => site.stance),
   );
   assert.ok(
-    stances.has("guard") && stances.size >= 2,
+    // Under pressure the AI may choose the stronger defensive stance instead
+    // of guard; both must count, while still requiring mixed site postures.
+    (stances.has("guard") || stances.has("defend")) && stances.size >= 2,
     `${team} hard AI did not switch sites into defensive stances`,
   );
 }

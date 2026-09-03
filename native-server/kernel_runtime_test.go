@@ -29,6 +29,9 @@ func TestEmbeddedKernelHealthCheck(t *testing.T) {
 	if health["aiTacticsVersion"] != float64(1) {
 		t.Fatal("embedded kernel lacks route-aware camp tactics")
 	}
+	if health["serverScenariosVersion"] != float64(1) {
+		t.Fatal("embedded kernel lacks server scenarios and battle stats")
+	}
 }
 
 func TestEmbeddedKernelCanAdvanceState(t *testing.T) {

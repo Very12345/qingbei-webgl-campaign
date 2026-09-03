@@ -44,6 +44,21 @@ func registerInternalAPI(mux *http.ServeMux, manager *kernelManager, plugins *pl
 		}
 		remaining := strings.TrimPrefix(request.URL.Path, "/api/internal/battles/")
 		parts := strings.Split(strings.Trim(remaining, "/"), "/")
+		if len(parts) == 2 && parts[1] == "stats" && request.Method == http.MethodGet {
+			battle := manager.get(parts[0])
+			if battle == nil || battle.currentInstance() == nil {
+				http.NotFound(writer, request)
+				return
+			}
+			stats, err := battle.currentInstance().call("battleStats")
+			if err != nil {
+				http.Error(writer, "statistics unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(writer).Encode(stats)
+			return
+		}
 		if len(parts) == 1 && request.Method == http.MethodDelete {
 			if err := manager.remove(parts[0]); err != nil {
 				http.Error(writer, err.Error(), http.StatusNotFound)

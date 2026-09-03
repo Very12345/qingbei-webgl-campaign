@@ -31,6 +31,7 @@ import {
 import { processKernelEvents, recordKernelEvent } from "./events";
 import { EVENT_CARDS } from "../events/event-cards";
 import { cancelSiteMovement, migrateLegacyOrders, ORDER_RULES_VERSION } from "./orders";
+import { prepareServerDeployment } from "./deployment";
 export {
   KernelPathfinder,
   navIndex,
@@ -117,6 +118,7 @@ export type KernelAction =
   | ProgressionAction;
 
 export type KernelOptions = {
+  serverOpening?: "standard" | "blitz";
   navGrid?: KernelNavGrid;
   fixedStepMilliseconds?: number;
   aiTeams?: Team[];
@@ -131,6 +133,7 @@ export type KernelEnvelope = {
 };
 
 export type KernelInstance = {
+  battleStats(): { version: number; elapsedHours: number; kills: Record<Team, number>; captures: Record<Team, number> };
   dispatch(action: KernelAction): void;
   step(realMilliseconds: number): KernelEnvelope;
   run(iterations: number, realMilliseconds: number): KernelEnvelope;
@@ -230,6 +233,7 @@ export function createKernel(
   const campResourceReserve = (team: Team) => enabledAiTeams.has(team) ? state.campaign.ai.campResourceReserve?.[team] ?? 0 : 0;
   migrateLegacyOrders(state, enabledAiTeams);
   let networkRevision = 0,
+    networkBaselineInitialized = false,
     networkCampaignSignature = "";
   const networkUnitSignatures = new Map<number, string>(),
     networkSiteSignatures = new Map<number, string>();
@@ -243,6 +247,7 @@ export function createKernel(
       if (open < 0) continue;
       [site.navX, site.navZ] = navPoint(options.navGrid, open);
     }
+  if (options.serverOpening) prepareServerDeployment(state, options.navGrid, options.serverOpening);
 
   const randomFor = (team: Team) => () => {
     state.campaign.ai.seedByTeam ??= {
@@ -275,6 +280,7 @@ export function createKernel(
       target.destroyed
     )
       return 0;
+    if (owner === "ai" && source.orderOwner === "player") return 0;
     // Player intent persists even when no unit or path is currently available.
     if (owner === "player") {
       if (source.orderTarget !== targetId) source.orderIssuedAt = state.campaign.elapsedHours;
@@ -603,7 +609,11 @@ export function createKernel(
     }
     if (dead.size) {
       for (const unit of state.units)
-        if (dead.has(unit.id)) state.deaths[unit.team] += unit.strength;
+        if (dead.has(unit.id)) {
+          state.deaths[unit.team] += unit.strength;
+          if (state.campaign.battleStats)
+            state.campaign.battleStats.kills[unit.team === "pku" ? "thu" : "pku"] += unit.strength;
+        }
       state.units = state.units.filter((unit) => !dead.has(unit.id));
     }
     routeCollapsedUnits(state, fightingUnitIds, pathfinder);
@@ -814,7 +824,17 @@ export function createKernel(
     revision++;
   };
 
+  if (options.serverOpening) {
+    processKernelEvents(state, { fightingUnitIds, issueOrder });
+    prepareServerDeployment(state, options.navGrid, options.serverOpening);
+  }
+
   return {
+    battleStats() {
+      return { version: 1, elapsedHours: state.campaign.elapsedHours,
+        kills: clone(state.campaign.battleStats?.kills ?? { pku: 0, thu: 0 }),
+        captures: clone(state.campaign.battleStats?.captures ?? { pku: 0, thu: 0 }) };
+    },
     dispatch(action) {
       pending.push(clone(action));
     },
@@ -832,16 +852,20 @@ export function createKernel(
     },
     snapshot: envelope,
     networkFull() {
-      networkUnitSignatures.clear();
-      networkSiteSignatures.clear();
-      for (const unit of state.units)
-        networkUnitSignatures.set(unit.id, networkUnitSignature(unit));
-      for (const site of state.sites)
-        networkSiteSignatures.set(site.id, networkSiteSignature(site));
-      networkCampaignSignature = JSON.stringify(state.campaign);
+      // A snapshot for one joining peer cannot consume the next broadcast's
+      // changes for peers already connected to this kernel.
+      if (!networkBaselineInitialized) {
+        for (const unit of state.units)
+          networkUnitSignatures.set(unit.id, networkUnitSignature(unit));
+        for (const site of state.sites)
+          networkSiteSignatures.set(site.id, networkSiteSignature(site));
+        networkCampaignSignature = JSON.stringify(state.campaign);
+        networkBaselineInitialized = true;
+      }
       return { type: "state", game: clone(state), role: "host" };
     },
     networkDelta() {
+      networkBaselineInitialized = true;
       const currentIds = new Set<number>(),
         units: CompactUnitNetworkState[] = [],
         newUnits: UnitNetworkState[] = [];
@@ -1012,6 +1036,7 @@ export function healthCheck() {
     authoritative: true,
     orderRulesVersion: ORDER_RULES_VERSION,
     decisionCancellation: true,
+    serverScenariosVersion: 1,
     aiTacticsVersion: AI_TACTICS_VERSION,
     migrated: [
       "navigation",

@@ -93,6 +93,48 @@ func newKernelBattleWithSpec(runtime *jsKernelRuntime, hub *relayHub, plugins *p
 	return battle, nil
 }
 
+// Explicit human seats remain human while joining or disconnected. Legacy
+// open servers keep their existing automatic fill policy.
+func (battle *kernelBattle) aiTeams(players []consolePlayer) []string {
+	teams := []string{}
+	for _, team := range []string{"pku", "thu"} {
+		human := false
+		if battle.spec.HumanTeams != nil {
+			for _, seat := range battle.spec.HumanTeams {
+				if seat == team {
+					human = true
+				}
+			}
+		} else {
+			for _, player := range players {
+				if player.Team == team {
+					human = true
+				}
+			}
+		}
+		if !human {
+			teams = append(teams, team)
+		}
+	}
+	return teams
+}
+
+func (battle *kernelBattle) waitingForHumans() bool {
+	if battle.spec.HumanTeams == nil {
+		return false
+	}
+	ready := map[string]bool{}
+	for _, client := range battle.clients() {
+		ready[client.team] = true
+	}
+	for _, team := range battle.spec.HumanTeams {
+		if !ready[team] {
+			return true
+		}
+	}
+	return false
+}
+
 func (battle *kernelBattle) reset() error {
 	battle.mu.RLock()
 	timeScale := battle.timeScale
@@ -113,7 +155,8 @@ func (battle *kernelBattle) reset() error {
 		}
 	}
 	instance, err := battle.runtime.create(seed, map[string]any{
-		"aiTeams":               []string{"pku", "thu"},
+		"aiTeams":               battle.aiTeams(nil),
+		"serverOpening":         battle.spec.ServerOpening,
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
 		"randomSeed":            kernelRandomSeed(),
@@ -142,7 +185,6 @@ func (battle *kernelBattle) run() {
 	defer ticker.Stop()
 	last := time.Now()
 	lastAutoSave := time.Now()
-	lastTeams := map[string]bool{"pku": true, "thu": true}
 	for {
 		select {
 		case <-battle.stop:
@@ -163,18 +205,27 @@ func (battle *kernelBattle) run() {
 			if instance == nil {
 				continue
 			}
+			if battle.waitingForHumans() {
+				last = now
+				delta, err := instance.networkDelta()
+				if err == nil {
+					delta["pausedForPlayers"] = true
+					battle.mu.RLock()
+					delta["timeScale"] = battle.timeScale
+					battle.mu.RUnlock()
+					battle.broadcast(delta, "")
+				}
+				continue
+			}
+			aiTeams := battle.aiTeams(players)
 			for _, team := range []string{"pku", "thu"} {
-				enabled := true
-				for _, player := range players {
-					if player.Team == team {
-						enabled = false
-						break
+				enabled := false
+				for _, aiTeam := range aiTeams {
+					if aiTeam == team {
+						enabled = true
 					}
 				}
-				if lastTeams[team] != enabled {
-					_ = instance.dispatch(map[string]any{"type": "set_ai_enabled", "team": team, "enabled": enabled})
-					lastTeams[team] = enabled
-				}
+				_ = instance.dispatch(map[string]any{"type": "set_ai_enabled", "team": team, "enabled": enabled})
 			}
 			elapsed := math.Min(250, math.Max(1, float64(now.Sub(last).Milliseconds())))
 			last = now
@@ -270,7 +321,13 @@ func (battle *kernelBattle) reportOutcome(delta map[string]any) {
 		return
 	}
 	players := battle.playerSnapshot()
-	battle.plugins.notify(spec.AuthPlugin, "/hooks/battle/result", map[string]any{
+	stats, err := battle.currentInstance().call("battleStats")
+	if err != nil {
+		battle.setError(err)
+		return
+	}
+	payload := map[string]any{
+		"stats":        stats,
 		"roomCode":     battle.roomCode,
 		"winner":       winner,
 		"reason":       outcome["reason"],
@@ -280,7 +337,21 @@ func (battle *kernelBattle) reportOutcome(delta map[string]any) {
 		"difficulty":   spec.Difficulty,
 		"metadata":     spec.Metadata,
 		"players":      players,
-	})
+	}
+	// Settlement is idempotent in the plugin. Keep the authoritative final score
+	// until it acknowledges durable storage, including transient disk failures.
+	go func() {
+		for {
+			if err := battle.plugins.call(spec.AuthPlugin, "/hooks/battle/result", payload, nil); err == nil {
+				return
+			}
+			select {
+			case <-battle.stop:
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}()
 }
 
 func (battle *kernelBattle) playerSnapshot() []consolePlayer {
@@ -341,6 +412,9 @@ func (battle *kernelBattle) handleClientMessage(client *wsClient, data string) {
 		return
 	}
 	typeName, _ := envelope["type"].(string)
+	if battle.waitingForHumans() && (typeName == "client_commands" || typeName == "client_action" || typeName == "decision_vote_request" || typeName == "decision_vote_cast") {
+		return
+	}
 	switch typeName {
 	case "ping":
 		battle.sendApplication(client, map[string]any{"type": "pong", "id": envelope["id"], "sentAt": envelope["sentAt"]})
@@ -354,6 +428,7 @@ func (battle *kernelBattle) handleClientMessage(client *wsClient, data string) {
 			battle.setError(err)
 			return
 		}
+		full["pausedForPlayers"] = battle.waitingForHumans()
 		battle.sendApplication(client, full)
 		battle.hub.mu.Lock()
 		client.kernelReady = true
@@ -916,7 +991,7 @@ func (battle *kernelBattle) resume(name string) error {
 		return err
 	}
 	instance, err := battle.runtime.create(save.State, map[string]any{
-		"aiTeams":               []string{"pku", "thu"},
+		"aiTeams":               battle.aiTeams(battle.playerSnapshot()),
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
 	})

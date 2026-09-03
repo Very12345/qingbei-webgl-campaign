@@ -2361,7 +2361,7 @@ export default function Game3D() {
             identity = lanChannelIdentityRef.current.get(channel),
             allowedTeam = host ? identity?.team : undefined,
             unitsById = new Map(game.units.map((unit) => [unit.id, unit]));
-          networkHealthRef.current.state(Date.now(), payload.elapsedHours);
+          networkHealthRef.current.state(Date.now(), payload.elapsedHours, payload.pausedForPlayers);
           const applyExistingUnit = (_existing: UnitState, apply: () => void) => apply();
           const legacyUnits = payload.units.filter(
             (unit): unit is UnitNetworkState => !Array.isArray(unit),
@@ -2467,7 +2467,7 @@ export default function Game3D() {
           payload.role === "host"
         ) {
           gameRef.current = payload.game;
-          networkHealthRef.current.state(Date.now(), payload.game.campaign.elapsedHours);
+          networkHealthRef.current.state(Date.now(), payload.game.campaign.elapsedHours, payload.pausedForPlayers);
           guestHasAuthoritativeStateRef.current = true;
           if (lanConnectionTimeoutRef.current != null) {
             window.clearTimeout(lanConnectionTimeoutRef.current);
@@ -3724,8 +3724,8 @@ export default function Game3D() {
     <main className="game-shell">
       {screen === "game" && networkWarning && (
         <aside className="network-sync-warning" role="alert">
-          <strong>战局同步异常</strong><span>{networkWarning}</span>
-          <button onClick={() => window.location.reload()}>重新加载</button>
+          <strong>{networkWarning.startsWith("正在等待玩家") ? "等待玩家" : "战局同步异常"}</strong><span>{networkWarning}</span>
+          {!networkWarning.startsWith("正在等待玩家") && <button onClick={() => window.location.reload()}>重新加载</button>}
         </aside>
       )}
       {screen === "game" && <div ref={hostRef} className="webgl-stage" />}

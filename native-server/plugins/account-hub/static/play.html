@@ -775,6 +775,9 @@
           height: 20px;
         }
       }
+      html[data-duel-paused="true"] .network-sync-warning { display: none; }
+      html[data-duel-paused="true"] .webgl-stage { pointer-events: none; }
+      .plugin-lifecycle button[hidden] { display: none; }
     </style>
   </head>
   <body>
@@ -891,7 +894,7 @@
       <section class="plugin-card">
         <small>战局操作</small>
         <h2 id="surrender-title">确认投降？</h2>
-        <p>投降会立即判定对方获胜并结算经验。关闭窗口则有60秒返回宽限。</p>
+        <p>投降会判定对方获胜，按实际击杀与占点结算。零战绩不获得经验或校币。关闭窗口有60秒返回宽限。</p>
         <div class="actions">
           <button id="continue-battle">继续战斗</button
           ><button class="danger" id="confirm-surrender">确认投降</button>
@@ -909,6 +912,7 @@
         <div class="result-mark" id="result-mark">胜</div>
         <h2 id="result-title">战局结束</h2>
         <p id="result-detail"></p>
+        <p id="result-reward"></p>
         <div class="actions"><button id="return-lobby">返回指挥部</button></div>
       </section>
     </div>
@@ -967,11 +971,15 @@
         };
         let duelUI = null;
         let gameConnected = false,
+          serverPaused = false,
+          lastGameStateAt = 0,
           lifecycleState = null,
           lifecycleReceivedAt = 0,
           lifecycleFault = "",
           lastLifecycleAt = Date.now();
         const renderLifecycle = () => {
+          const paused = serverPaused && gameConnected && Date.now() - lastGameStateAt < 6000 && !completed;
+          document.documentElement.dataset.duelPaused = String(paused);
           const panel = $("lifecycle-notice");
           if (completed) {
             panel.hidden = true;
@@ -985,9 +993,10 @@
             (Date.now() - lastLifecycleAt > 20000
               ? "超过20秒未收到对局生命周期更新，正在等待服务器恢复。"
               : "");
-          const message = fault
+          let message = fault
             ? { title: "服务器连接异常", body: fault }
             : QingbeiLifecycle.message(lifecycleState, serverNow);
+          if (paused && !fault) message = {title:"等待玩家 · 对局暂停",body:(message?.body || "正在等待双方完成入场或重连。") + " 双方就绪后自动继续。"};
           panel.hidden = !message;
           if (!message) return;
           $("lifecycle-title").textContent = message.title;
@@ -1063,6 +1072,10 @@
             (state.reason || "战局已结算") +
             (state.winner ? "；经验已经计入个人主页。" : "");
           $("result-modal").classList.add("show");
+          const reward = state.reward;
+          $("result-reward").textContent = state.winner && reward
+            ? `击杀 ${reward.kills} · 占点 ${reward.captures} · 胜利加成 ${reward.victoryBonus}，按 ${Math.round(reward.multiplier * 100)}% 结算：+${reward.experience} EXP · +${reward.coins} 校币`
+            : "";
         };
         const reportGameDisconnect = async () => {
           gameConnected = false;
@@ -1131,6 +1144,18 @@
             });
             this.addEventListener("message", (event) => {
               if (typeof event.data === "string") {
+                try {
+                  const wire = JSON.parse(event.data);
+                  if (wire.type === "relay") {
+                    const payload = JSON.parse(wire.data);
+                    if (payload.type === "state" || payload.type === "state_delta") {
+                      const pauseChanged = serverPaused !== !!payload.pausedForPlayers;
+                      serverPaused = !!payload.pausedForPlayers;
+                      lastGameStateAt = Date.now();
+                      if (pauseChanged) renderLifecycle();
+                    }
+                  }
+                } catch {}
                 this.bridge.incoming(event.data);
                 duelUI?.incoming(event.data);
               }
@@ -1141,6 +1166,14 @@
           }
           send(data) {
             if (completed) return;
+            if (serverPaused) {
+              try {
+                const wire = JSON.parse(data), payload = wire.type === "relay" ? JSON.parse(wire.data) : null;
+                if (payload && ["client_commands","client_action","decision_vote_request","decision_vote_cast"].includes(payload.type)) {
+                  toast("正在等待玩家入场或重连，双方就绪后可继续操作"); return;
+                }
+              } catch {}
+            }
             return this.bridge.outgoing(
               duelUI ? duelUI.outgoing(data, this) : data,
             );

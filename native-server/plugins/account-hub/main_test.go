@@ -73,7 +73,7 @@ func TestRewardsAreAppliedOnce(t *testing.T) {
 	server, mux := newTestHub(t)
 	server.data.Users["winner"] = &userRecord{ID: "winner", Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, SelectedCosmetics: map[string]string{}}
 	server.data.Matches["MATCH1234"] = &matchRecord{RoomCode: "MATCH1234", Mode: "pvp", Participants: map[string]string{"winner": "pku"}}
-	payload := []byte(`{"roomCode":"MATCH1234","winner":"pku","mode":"pvp"}`)
+	payload := []byte(`{"roomCode":"MATCH1234","winner":"pku","mode":"pvp","stats":{"version":1,"kills":{"pku":18,"thu":0},"captures":{"pku":2,"thu":0}}}`)
 	for index := 0; index < 2; index++ {
 		request := httptest.NewRequest(http.MethodPost, "/hooks/battle/result", bytes.NewReader(payload))
 		request.Header.Set("X-Qingbei-Plugin-Secret", "test-secret")
@@ -116,6 +116,7 @@ func TestActiveMatchAndDisconnectForfeit(t *testing.T) {
 	server.data.Users["stayer"] = &userRecord{ID: "stayer", Experience: map[string]int{"pku": 0, "thu": 0}, SpeedCards: map[string]int{}, SelectedCosmetics: map[string]string{}}
 	match := &matchRecord{
 		RoomCode:     "ACTIVE1234",
+		Stats:        &battleStats{Version: 1, Kills: map[string]int{"pku": 58, "thu": 18}, Captures: map[string]int{"pku": 2, "thu": 2}},
 		Mode:         "pvp",
 		Participants: map[string]string{"leaver": "pku", "stayer": "thu"},
 		SeenPlayers:  map[string]bool{"leaver": true, "stayer": true},

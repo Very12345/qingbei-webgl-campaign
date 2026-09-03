@@ -18,6 +18,12 @@ assert.match(health.warning(12101)!,/断开/);
 assert.equal(health.warning(12101,true),null);
 health.reset();
 assert.equal(health.warning(99999),null);
+health.state(100000,84,true);
+health.state(120000,84,true);
+assert.match(health.warning(120001)!,/等待玩家/);
+assert.match(health.warning(126000)!,/6秒/);
+health.state(126001,84,false);
+assert.equal(health.warning(126002),null);
 
 const paint=createSportMarkings([{points:[[0,0],[1,0],[1,1]],closed:true}],3);
 assert.ok(paint.material.isMeshStandardMaterial);

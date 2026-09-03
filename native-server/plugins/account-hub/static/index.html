@@ -3189,6 +3189,18 @@
         background-repeat: no-repeat;
         background-position: center;
       }
+      .battle-command .reward-line {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        font-size: 12px;
+        line-height: 1.65;
+        text-align: left;
+      }
+      .supply-panel h3.shop-title { margin-top: 28px; margin-bottom: 12px; }
+      #schoolBalances { margin-bottom: 16px; font-size: 14px; }
+      #shopCards button { cursor: pointer; }
+      #shopCards button:disabled { opacity: .5; cursor: not-allowed; }
     </style>
   </head>
   <body>
@@ -3450,7 +3462,7 @@
                     ><strong>人机<br />训练</strong
                     ><small>TRAINING</small></span
                   ></button
-                ><button class="mode-tile supplies" data-open="supply">
+                ><button class="mode-tile supplies" data-enter="blitz-pvp">
                   <svg
                     class="symbol"
                     viewBox="0 0 64 64"
@@ -3464,8 +3476,8 @@
                       fill="#e5e1c9"
                     /></svg
                   ><span
-                    ><strong>整备<br />军需</strong
-                    ><small>SUPPLIES</small></span
+                    ><strong>极速<br />对局</strong
+                    ><small>4× · AUG 19</small></span
                   >
                 </button>
               </div>
@@ -3545,6 +3557,8 @@
                 ><button data-battle-mode="ai" aria-pressed="false">
                   人机训练
                 </button>
+                <button data-battle-mode="blitz-pvp" aria-pressed="false">极速玩家</button>
+                <button data-battle-mode="blitz-ai" aria-pressed="false">极速人机</button>
               </nav>
               <div class="deck-grid">
                 <button
@@ -3630,7 +3644,7 @@
               </section>
             </div>
             <p class="battle-note">
-              联机匹配按阵营偏好分配双方；人机训练可自由选择阵营、难度与倍速卡。
+              极速对局从 8 月 19 日 20:00 开战，固定 4 倍速，经验按 50% 结算；极速 AI 固定为标准难度。
             </p>
           </section>
           <section
@@ -3897,6 +3911,11 @@
                 </h3>
                 <div class="inventory" id="cards"></div>
                 <p class="muted">创建人机战局时使用，让战役以对应倍率推进。</p>
+                <h3 class="shop-title">校币商店</h3>
+                <p class="muted" id="schoolBalances"></p>
+                <label class="field">支付学校<select id="shopTeam"><option value="pku">北京大学校币</option><option value="thu">清华大学校币</option></select></label>
+                <div class="inventory" id="shopCards"></div>
+                <p class="muted">每获得 5 点对局经验，同时获得 1 枚本方校币。两校余额分别保存；购买的倍速卡加入账号库存。</p>
               </article>
             </div>
           </section>
@@ -4289,8 +4308,8 @@
         poll = null,
         queueBusy = false,
         toastTimer;
-      const thresholds = [0, 100, 250, 500, 900, 1400],
-        rewards = { casual: [30, 15], standard: [60, 30], hard: [100, 50] };
+      const thresholds = [0, 100, 250, 500, 900, 1400];
+      const purchaseAttempts = new Map();
       function toast(text) {
         $("notice").textContent = text;
         $("notice").classList.add("show");
@@ -4364,12 +4383,12 @@
             String(button.dataset.battleMode === next),
           );
         });
-        const ai = next === "ai";
-        $("aiOptions").classList.toggle("hidden", !ai);
+        const ai = next.endsWith("ai"), blitz = next.startsWith("blitz-");
+        $("aiOptions").classList.toggle("hidden", !ai || blitz);
         $("autoTeam").classList.toggle("hidden", ai);
         $("modeMark").textContent = ai ? "AI" : "VS";
-        $("modeTitle").textContent = ai ? "人机训练" : "联机对战";
-        $("modeDetail").textContent = ai
+        $("modeTitle").textContent = blitz ? (ai ? "极速 · 标准 AI" : "极速 · 玩家对战") : ai ? "人机训练" : "联机对战";
+        $("modeDetail").textContent = blitz ? "8 月 19 日 20:00 直接开战 · 固定 4 倍速 · 不消耗倍速卡。" : ai
           ? "选择你的阵营与对手难度，在校园战场磨炼指挥。"
           : "匹配另一名在线玩家。你可以选择阵营偏好，也可以随机分配。";
         $("battleAction").textContent = ai ? "开始训练" : "开始匹配";
@@ -4388,9 +4407,35 @@
         updateReward();
       }
       function updateReward() {
-        const reward = battleMode === "pvp" ? [120, 60] : rewards[difficulty];
-        $("winReward").textContent = "胜方 +" + reward[0] + " EXP";
-        $("lossReward").textContent = "负方 +" + reward[1] + " EXP";
+        $("winReward").textContent = "经验 = 击杀人数 + 占点次数 + 胜利 100";
+        $("lossReward").textContent = (battleMode.startsWith("blitz-") ? "极速按 50% 结算；" : "") + "零战绩无奖励，胜利加成需有实际战绩";
+      }
+      function renderShop(profile) {
+        const coins = profile.schoolCoins || {}, prices = profile.shop || {};
+        $("schoolBalances").textContent = `北京大学 ${coins.pku || 0} 校币 · 清华大学 ${coins.thu || 0} 校币`;
+        const team = $("shopTeam").value;
+        $("shopCards").replaceChildren();
+        for (const item of ["2x", "4x"]) {
+          const button = document.createElement("button"), price = prices[item];
+          button.className = "supply-ticket";
+          button.textContent = `${item.replace("x", "×")} 倍速卡 · ${price || "—"} 校币`;
+          button.disabled = !price || (coins[team] || 0) < price;
+          button.onclick = async () => {
+            button.disabled = true;
+            const key = team + ":" + item;
+            if (!purchaseAttempts.has(key)) purchaseAttempts.set(key, crypto.randomUUID());
+            try {
+              const result = await api("api/shop/buy", {method:"POST", body:JSON.stringify({purchaseId:purchaseAttempts.get(key),team,item,quantity:1})});
+              purchaseAttempts.delete(key);
+              render(result.profile);
+              toast("购买成功，倍速卡已加入库存");
+            } catch (error) {
+              toast(error.message);
+              button.disabled = false;
+            }
+          };
+          $("shopCards").append(button);
+        }
       }
       function render(profile) {
         careerProfile = profile;
@@ -4419,6 +4464,7 @@
         }
         renderCareer();
         const cards = profile.speedCards || {};
+        renderShop(profile);
         $("topCards2").textContent = cards["2x"] || 0;
         $("topCards4").textContent = cards["4x"] || 0;
         $("homeCardCount").textContent =
@@ -4497,13 +4543,14 @@
         setQueueBusy(true);
         $("queueState").textContent = "";
         try {
-          if (battleMode === "ai") {
+          if (battleMode.endsWith("ai")) {
             const result = await api("api/lobby/ai", {
               method: "POST",
               body: JSON.stringify({
-                difficulty,
+                difficulty: battleMode.startsWith("blitz-") ? "standard" : difficulty,
+                pace: battleMode.startsWith("blitz-") ? "blitz" : "standard",
                 team: selectedTeam,
-                card: $("speedCard").value,
+                card: battleMode.startsWith("blitz-") ? "" : $("speedCard").value,
               }),
             });
             location.href = result.joinUrl;
@@ -4511,7 +4558,7 @@
           }
           const result = await api("api/lobby/pvp", {
             method: "POST",
-            body: JSON.stringify({ preferredTeam: selectedTeam }),
+            body: JSON.stringify({ preferredTeam: selectedTeam, pace: battleMode.startsWith("blitz-") ? "blitz" : "standard" }),
           });
           if (result.joinUrl) {
             location.href = result.joinUrl;
@@ -4600,6 +4647,7 @@
             (button.onclick = () => setDifficulty(button.dataset.difficulty)),
         );
       $("autoTeam").onclick = () => selectTeam("any");
+      $("shopTeam").onchange = () => { if (careerProfile) renderShop(careerProfile); };
       $("battleAction").onclick = beginBattle;
       setBattleMode("pvp");
       refresh();

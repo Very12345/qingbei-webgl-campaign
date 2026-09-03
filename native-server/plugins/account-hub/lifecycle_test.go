@@ -14,7 +14,7 @@ import (
 func lifecycleFixture(t *testing.T) (*hubServer, *http.ServeMux, *matchRecord, string) {
 	s, mux := newTestHub(t)
 	s.data.Users["player"] = &userRecord{ID: "player", Experience: map[string]int{}, SpeedCards: map[string]int{}}
-	m := &matchRecord{RoomCode: "ACTIVE1234", Mode: "ai", Difficulty: "hard", Participants: map[string]string{"player": "pku"}, CreatedAt: time.Now().Add(-time.Hour)}
+	m := &matchRecord{RoomCode: "ACTIVE1234", Stats: &battleStats{Version: 1, Kills: map[string]int{}, Captures: map[string]int{}}, Mode: "ai", Difficulty: "hard", Participants: map[string]string{"player": "pku"}, CreatedAt: time.Now().Add(-time.Hour)}
 	ensureMatchMaps(m)
 	s.data.Matches[m.RoomCode] = m
 	return s, mux, m, s.newSessionLocked("player")
@@ -29,7 +29,7 @@ func TestLateHeartbeatCannotEscapeForfeit(t *testing.T) {
 		t.Fatal(res.Body.String())
 	}
 	requestJSON(t, mux, "POST", "/api/match/surrender", map[string]string{"roomCode": m.RoomCode}, token)
-	if s.data.Users["player"].Experience["pku"] != 50 {
+	if s.data.Users["player"].Experience["pku"] != 0 {
 		t.Fatal("duplicate reward")
 	}
 }

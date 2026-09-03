@@ -87,7 +87,7 @@ globalThis.QingbeiProtocol = {
         else if (now() - p.at > 8000) { pendingCommands.delete(key); timedOut++; }
       }
       if (timedOut) notify('部分调兵命令尚未确认，请检查目标或重新下达', true);
-      else if (confirmed) notify('服务器已确认调兵命令');
+      else if (confirmed) notify('服务器已确认命令；据点连线为持续兵线，每6游戏小时继续派兵');
     }
     return { outgoing, incoming, pendingCommands };
   }

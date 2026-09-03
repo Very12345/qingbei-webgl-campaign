@@ -8,6 +8,8 @@ import (
 )
 
 type battleSpec struct {
+	HumanTeams       []string          `json:"humanTeams,omitempty"`
+	ServerOpening    string            `json:"serverOpening,omitempty"`
 	Name             string            `json:"name,omitempty"`
 	Mode             string            `json:"mode,omitempty"`
 	Difficulty       string            `json:"difficulty,omitempty"`

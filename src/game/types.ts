@@ -207,6 +207,7 @@ export type DecisionVote = {
 };
 
 export type CampaignState = {
+  battleStats?: { kills: Record<Team, number>; captures: Record<Team, number> };
   rulesVersion: number;
   orderRulesVersion?: number;
   startDateISO: string;
@@ -340,9 +341,10 @@ export type MultiplayerEnvelope =
       total: number;
       data: string;
     }
-  | { type: "state"; game: GameData; role: "host" | "guest" }
+  | { type: "state"; game: GameData; role: "host" | "guest"; pausedForPlayers?: boolean }
   | {
       type: "state_delta";
+      pausedForPlayers?: boolean;
       revision: number;
       role: "host" | "guest";
       units: Array<CompactUnitNetworkState | UnitNetworkState>;
