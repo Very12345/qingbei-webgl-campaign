@@ -25,12 +25,19 @@ export const decisionAvailable = (
 
 const decisionEffectCache = new WeakMap<
   CampaignState,
-  { key: string; values: Record<Team, DecisionEffect> }
+  { key: string; completed: string[]; values: Record<Team, DecisionEffect> }
 >();
 
 export const decisionEffectsFor = (campaign: CampaignState, team: Team) => {
-  const key = campaign.decisions.completed.join("|");
+  const completed = campaign.decisions.completed;
   let cached = decisionEffectCache.get(campaign);
+  if (cached && cached.completed.length === completed.length) {
+    let unchanged = true;
+    for (let index = 0; index < completed.length; index++)
+      if (cached.completed[index] !== completed[index]) { unchanged = false; break; }
+    if (unchanged) return cached.values[team];
+  }
+  const key = completed.join("|");
   if (!cached || cached.key !== key) {
     const values: Record<Team, DecisionEffect> = { pku: {}, thu: {} };
     for (const decision of DECISIONS) {
@@ -44,9 +51,9 @@ export const decisionEffectsFor = (campaign: CampaignState, team: Team) => {
         result[effectKey] = (result[effectKey] ?? 1) * value;
       }
     }
-    cached = { key, values };
+    cached = { key, completed: completed.slice(), values };
     decisionEffectCache.set(campaign, cached);
-  }
+  } else cached.completed = completed.slice();
   return cached.values[team];
 };
 

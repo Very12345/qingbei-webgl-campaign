@@ -13,6 +13,58 @@ export function playerDispatchPolicy(game: GameData, site: SiteState) {
 }
 
 const people = (unit: UnitState) => Math.max(0, unit.strength);
+const isIdle = (unit: UnitState) => unit.targetSiteId == null && !unit.movementOrder && !unit.retreating;
+type DispatchLedger = NonNullable<SiteState["playerDispatch"]>;
+type SettledLedger = {
+  ledger: Pick<DispatchLedger, "team" | "targetId" | "ratio" | "minimum" | "credit" | "retryAt">;
+  units: Float64Array;
+  observed: Float64Array;
+  committed: number[];
+};
+const settledLedgers = new WeakMap<DispatchLedger, SettledLedger>();
+
+function settledUnchanged(ledger: DispatchLedger, units: UnitState[]) {
+  const previous = settledLedgers.get(ledger);
+  if (!previous || !ledger.observedUnits || !ledger.committedUnitIds || previous.units.length !== units.length * 3) return false;
+  const saved = previous.ledger;
+  if (saved.team !== ledger.team || saved.targetId !== ledger.targetId ||
+      !Object.is(saved.ratio, ledger.ratio) || saved.minimum !== ledger.minimum ||
+      !Object.is(saved.credit, ledger.credit) || !Object.is(saved.retryAt, ledger.retryAt) ||
+      previous.observed.length !== ledger.observedUnits.length * 2 ||
+      previous.committed.length !== ledger.committedUnitIds.length) return false;
+  // Compare values, not just identity/length: external commands and restored
+  // state may edit arrays in place, including replacements of the same length.
+  for (let i = 0; i < units.length; i++) {
+    const offset = i * 3, unit = units[i];
+    if (previous.units[offset] !== unit.id || !Object.is(previous.units[offset + 1], people(unit)) || previous.units[offset + 2] !== (isIdle(unit) ? 1 : 0)) return false;
+  }
+  for (let i = 0; i < ledger.observedUnits.length; i++) {
+    const b = ledger.observedUnits[i];
+    if (previous.observed[i * 2] !== b[0] || !Object.is(previous.observed[i * 2 + 1], b[1])) return false;
+  }
+  for (let i = 0; i < ledger.committedUnitIds.length; i++)
+    if (previous.committed[i] !== ledger.committedUnitIds[i]) return false;
+  return true;
+}
+
+function rememberSettled(ledger: DispatchLedger, units: UnitState[]) {
+  const unitValues = new Float64Array(units.length * 3);
+  for (let i = 0; i < units.length; i++) {
+    unitValues[i * 3] = units[i].id;
+    unitValues[i * 3 + 1] = people(units[i]);
+    unitValues[i * 3 + 2] = isIdle(units[i]) ? 1 : 0;
+  }
+  const observed = new Float64Array(ledger.observedUnits.length * 2);
+  for (let i = 0; i < ledger.observedUnits.length; i++) {
+    observed[i * 2] = ledger.observedUnits[i][0];
+    observed[i * 2 + 1] = ledger.observedUnits[i][1];
+  }
+  const {team, targetId, ratio, minimum, credit, retryAt} = ledger;
+  settledLedgers.set(ledger, {
+    ledger: {team, targetId, ratio, minimum, credit, retryAt},
+    units: unitValues, observed, committed: ledger.committedUnitIds.slice(),
+  });
+}
 
 // Persist the arrival budget with the site. Rendering, elapsed time, retries
 // and save/load do not create fresh authorization to empty its garrison.
@@ -49,7 +101,10 @@ export function dispatchPlayerRoutes(
     const policy = playerDispatchPolicy(game, source);
     let ledger = source.playerDispatch;
     const units = present.get(source.id) ?? [];
-    const idle = units.filter(unit => unit.targetSiteId == null && !unit.movementOrder && !unit.retreating);
+    if (ledger && ledger.team === source.team && ledger.targetId === target.id &&
+        ledger.ratio === policy.ratio && ledger.minimum === policy.minimum && settledUnchanged(ledger, units)) continue;
+    if (ledger) settledLedgers.delete(ledger);
+    const idle = units.filter(isIdle);
     if (!ledger || ledger.team !== source.team) {
       ledger = source.playerDispatch = { ...policy, team: source.team, observedUnits: [], committedUnitIds: [], credit: 0, targetId: target.id };
     } else if (ledger.ratio !== policy.ratio || ledger.minimum !== policy.minimum) {
@@ -81,7 +136,8 @@ export function dispatchPlayerRoutes(
     // forces still available. Keep fractions so one-at-a-time arrivals work.
     ledger.credit = Math.max(0, Math.min(ledger.credit, idlePeople));
     let budget = Math.min(Math.floor(ledger.credit + 1e-8), Math.max(0, idlePeople - policy.minimum));
-    if (budget <= 0 || (ledger.retryAt ?? 0) > game.campaign.elapsedHours) continue;
+    if (budget <= 0) { rememberSettled(ledger, units); continue; }
+    if ((ledger.retryAt ?? 0) > game.campaign.elapsedHours) continue;
     const selected: UnitState[] = [], handled = new Set<number>();
     const idleIds = new Set(idle.map(unit => unit.id));
     for (const unit of idle) {

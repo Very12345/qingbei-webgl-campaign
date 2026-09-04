@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import { DECISIONS } from "../src/campaign-content";
 import { makeFreshGame } from "../src/game/create-game";
-import { decisionAvailable } from "../src/game/decisions";
+import { decisionAvailable, decisionEffectsFor } from "../src/game/decisions";
 import { createKernel } from "../src/game/kernel";
 import { applyProgressionAction } from "../src/game/kernel/progression";
 
 const game = makeFreshGame();
+{
+  const campaign=makeFreshGame().campaign;
+  campaign.decisions.completed=['pku_garden_defense'];
+  assert.equal(decisionEffectsFor(campaign,'pku').dispatch,1.1);
+  campaign.decisions.completed[0]='pku_haidian_routes';
+  assert.equal(decisionEffectsFor(campaign,'pku').dispatch,1.05);
+  delete campaign.decisions.completed[0];
+  assert.equal(decisionEffectsFor(campaign,'pku').dispatch,undefined);
+  campaign.decisions.completed[0]='pku_garden_defense';
+  assert.equal(decisionEffectsFor(campaign,'pku').dispatch,1.1,"filling a sparse decision list kept stale modifiers");
+}
 game.resources.pku = 1000;
 const decision = DECISIONS.find(
   (d) => d.team === "pku" && decisionAvailable(d, game.campaign),

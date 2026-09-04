@@ -22,6 +22,22 @@ function route(kernel: ReturnType<typeof createKernel>, team:Team, siteId=0,targ
 }
 
 {
+  const {game,kernel,team}=fixture();
+  game.campaign.freezeUntil.pku=1e9;
+  route(kernel,team);kernel.step(1);kernel.step(1);
+  const ledger=game.sites[0].playerDispatch!;
+  const observed=ledger.observedUnits.map(([id])=>id), committed=ledger.committedUnitIds.slice();
+  ledger.observedUnits.reverse();ledger.committedUnitIds.reverse();
+  kernel.step(1);
+  assert.deepEqual(ledger.observedUnits.map(([id])=>id),observed,"same-length in-place ledger edit bypassed canonicalization");
+  assert.deepEqual(ledger.committedUnitIds,committed);
+  const before=stationed(game).length;
+  ledger.credit=3;
+  kernel.step(1);
+  assert.equal(stationed(game).length,before-3,"settled cache hid newly available dispatch credit");
+}
+
+{
   const {game,kernel,team}=fixture("pku",20,"defend",1);
   route(kernel,team);
   assert.equal(game.sites[0].dispatchRatio,.45,"displayed dispatch ratio exceeded the stance limit");

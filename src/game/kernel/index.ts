@@ -899,9 +899,9 @@ export function createKernel(
         newUnits: UnitNetworkState[] = [];
       for (const unit of state.units) {
         currentIds.add(unit.id);
-        const compact = encodeCompactUnit(unit),
-          previous = networkUnitSignatures.get(unit.id);
-        if (previous && equalCompactUnit(previous,compact)) continue;
+        const previous = networkUnitSignatures.get(unit.id);
+        if (previous && compactUnitUnchanged(unit, previous)) continue;
+        const compact = encodeCompactUnit(unit);
         networkUnitSignatures.set(unit.id, compact);
         if (previous == null) {
           const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
@@ -991,10 +991,33 @@ const encodeCompactUnit = (unit: UnitState): CompactUnitNetworkState => [
   unit.movementOrder ? Math.round(unit.movementOrder.goalZ*100) : null,
 ];
 
-const equalCompactUnit = (a:CompactUnitNetworkState,b:CompactUnitNetworkState) => {
-  for(let index=0;index<b.length;index++) if(a[index]!==b[index]) return false;
-  return true;
-};
+// Compare directly against the previous wire view, allocating a new tuple only
+// when needed. Keep all wire fields and rounding identical to encodeCompactUnit.
+// A future tuple length change fails closed and sends a full update.
+const compactUnitUnchanged = (unit: UnitState, previous: CompactUnitNetworkState) =>
+  previous.length === 22 &&
+  previous[0] === (unit.id) &&
+  previous[1] === (unit.team === "pku" ? 0 : 1) &&
+  previous[2] === (Math.round(unit.x * 100)) &&
+  previous[3] === (Math.round(unit.z * 100)) &&
+  previous[4] === (Math.round(unit.tx * 100)) &&
+  previous[5] === (Math.round(unit.tz * 100)) &&
+  previous[6] === (Math.round(unit.hp * 10)) &&
+  previous[7] === (Math.round(unit.supply * 10)) &&
+  previous[8] === (unit.strength) &&
+  previous[9] === (unit.siteId) &&
+  previous[10] === (unit.targetSiteId ?? -1) &&
+  previous[11] === (unit.attackModifier == null ? null : Math.round(unit.attackModifier * 100)) &&
+  previous[12] === (unit.moveModifier == null ? null : Math.round(unit.moveModifier * 100)) &&
+  previous[13] === (unit.morale == null ? -1 : Math.round(unit.morale * 10)) &&
+  previous[14] === ((unit.retreating ? 1 : 0) | (unit.transportOutsidePenalty ? 2 : 0)) &&
+  previous[15] === (Math.max(0, NETWORK_SKINS.indexOf(unit.skin))) &&
+  previous[16] === (unit.transport === "bus" ? 1 : unit.transport === "bike" ? 2 : 0) &&
+  previous[17] === (unit.transportGroupId ?? "") &&
+  previous[18] === (unit.transportModel ?? "") &&
+  previous[19] === (unit.movementOrder?.goalSiteId ?? -1) &&
+  previous[20] === (unit.movementOrder ? Math.round(unit.movementOrder.goalX*100) : null) &&
+  previous[21] === (unit.movementOrder ? Math.round(unit.movementOrder.goalZ*100) : null);
 
 const networkSiteSignature = (site: SiteState) =>
   JSON.stringify({

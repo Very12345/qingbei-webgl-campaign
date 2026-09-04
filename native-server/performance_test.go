@@ -30,11 +30,19 @@ func BenchmarkHostFrame(b *testing.B) {
 	}
 	defer rt.close()
 	legacy := os.Getenv("QINGBEI_PERF_LEGACY_BUNDLE")
-	if legacy != "" {
+	reference := os.Getenv("QINGBEI_PERF_REFERENCE_BUNDLE")
+	if legacy != "" && reference != "" {
+		b.Fatal("choose a legacy path or an equivalent reference, not both")
+	}
+	bundlePath := legacy
+	if reference != "" {
+		bundlePath = reference
+	}
+	if bundlePath != "" {
 		if rt.node != nil {
-			b.Fatal("legacy benchmark requires Goja")
+			b.Fatal("reference bundle benchmark requires Goja")
 		}
-		code, err := os.ReadFile(legacy)
+		code, err := os.ReadFile(bundlePath)
 		if err != nil {
 			b.Fatal(err)
 		}

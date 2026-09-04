@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.10"
+const pluginVersion = "0.3.11"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
