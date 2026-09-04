@@ -325,6 +325,9 @@ export type CompactUnitNetworkState = [
   transport: number,
   transportGroupId: string,
   transportModel: string,
+  goalSiteId?: number,
+  goalX100?: number | null,
+  goalZ100?: number | null,
 ];
 export type ClientUnitCommand = {
   id: number;
@@ -351,9 +354,10 @@ export type MultiplayerEnvelope =
       total: number;
       data: string;
     }
-  | { type: "state"; game: GameData; role: "host" | "guest"; pausedForPlayers?: boolean }
+  | { type: "state"; game: GameData; role: "host" | "guest"; pausedForPlayers?: boolean; revision?: number; networkEpoch?: number }
   | {
       type: "state_delta";
+      networkEpoch?: number;
       pausedForPlayers?: boolean;
       revision: number;
       role: "host" | "guest";

@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.7"
+const pluginVersion = "0.3.8"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -159,6 +159,12 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/match/presence", server.matchPresence)
 	mux.HandleFunc("/protocol.js", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := staticFiles.ReadFile("static/protocol.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("/performance-ui.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/performance-ui.js")
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)

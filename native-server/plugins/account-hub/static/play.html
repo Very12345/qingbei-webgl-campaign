@@ -919,6 +919,7 @@
     <script src="../protocol.js"></script>
     <script src="../lifecycle-client.js"></script>
     <script src="../duel-ui.js"></script>
+    <script src="../performance-ui.js"></script>
     <script>
       (() => {
         const params = new URLSearchParams(location.search),
@@ -1129,14 +1130,22 @@
         $("return-lobby").onclick = () => location.replace(pluginBase + "/");
 
         const NativeWebSocket = window.WebSocket;
+        const commandStatus=(message)=>{
+          const event=new CustomEvent('qingbei-command-status',{detail:{message},cancelable:true});
+          window.dispatchEvent(event);
+          if(!event.defaultPrevented){const notice=document.querySelector('.command-notice');if(notice)notice.textContent=message;}
+        };
+        const performanceUI=QingbeiPerformance.mount({room});
         class PluginWebSocket extends NativeWebSocket {
           constructor(url, protocols) {
             super(url, protocols);
             this.bridge = QingbeiProtocol.createBridge({
               team,
               send: (raw) => NativeWebSocket.prototype.send.call(this, raw),
-              notify: toast,
+              notify: (message,error)=>{toast(message,error);commandStatus(message);},
+              status: commandStatus,
             });
+            performanceUI.attach(this.bridge,this);
             this.addEventListener("open", () => {
               gameConnected = true;
               duelUI?.connected(true);
@@ -1144,10 +1153,12 @@
             });
             this.addEventListener("message", (event) => {
               if (typeof event.data === "string") {
+                let decoded=null;
                 try {
                   const wire = JSON.parse(event.data);
                   if (wire.type === "relay") {
                     const payload = JSON.parse(wire.data);
+                    decoded=payload;
                     if (payload.type === "state" || payload.type === "state_delta") {
                       const pauseChanged = serverPaused !== !!payload.pausedForPlayers;
                       serverPaused = !!payload.pausedForPlayers;
@@ -1156,8 +1167,8 @@
                     }
                   }
                 } catch {}
-                this.bridge.incoming(event.data);
-                duelUI?.incoming(event.data);
+                this.bridge.incoming(event.data,decoded);
+                duelUI?.incoming(event.data,decoded);
               }
             });
             this.addEventListener("close", () => {

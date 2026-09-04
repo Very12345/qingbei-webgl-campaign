@@ -157,18 +157,28 @@ func (s *hubServer) reconcileBattles(started time.Time) bool {
 	var result struct {
 		Battles *[]struct {
 			RoomCode string `json:"roomCode"`
+			Status   string `json:"status"`
 		} `json:"battles"`
 	}
 	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&result) != nil || result.Battles == nil {
 		return false
 	}
 	live := map[string]bool{}
+	failed := map[string]bool{}
 	for _, b := range *result.Battles {
 		live[normalizeRoom(b.RoomCode)] = true
+		if b.Status == "内核已停止" {
+			failed[normalizeRoom(b.RoomCode)] = true
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, m := range s.data.Matches {
+		if !m.Completed && failed[m.RoomCode] {
+			s.interruptMatchLocked(m, "服务器模拟进程已停止，本局中断，不计胜负和经验")
+			s.scheduleBattleDeletion(m.RoomCode, 20*time.Second)
+			continue
+		}
 		if !m.Completed && m.CreatedAt.Before(started) && !live[m.RoomCode] {
 			s.interruptMatchLocked(m, "服务器重启或战局已停止，本局中断，不计胜负和经验")
 		}

@@ -90,11 +90,11 @@
       }
       return raw;
     }
-    function receive(raw) {
+    function receive(raw, decoded) {
       try {
-        const wire = JSON.parse(raw);
-        if (wire.type !== "relay") return;
-        const payload = JSON.parse(wire.data);
+        const wire = decoded ? null : JSON.parse(raw);
+        if (!decoded && wire.type !== "relay") return;
+        const payload = decoded || JSON.parse(wire.data);
         if (payload.type === "state" && payload.game?.campaign)
           onCampaign(payload.game.campaign);
         if (payload.type === "state_delta" && payload.campaign)
@@ -358,7 +358,7 @@
         } else notify("连接尚未就绪，取消请求未发送", true);
       },
       outgoing: (raw, socket) => model.observeOutgoing(raw, socket),
-      incoming: (raw) => model.receive(raw),
+      incoming: (raw, decoded) => model.receive(raw, decoded),
       state(value) {
         matchState = value;
         stateReceivedAt = Date.now();

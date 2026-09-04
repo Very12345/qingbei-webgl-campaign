@@ -35,6 +35,7 @@ jobs:
       - run: npm run test:ai-camps
       - run: npm run test:server-modes
       - run: npm run test:realtime-dispatch
+      - run: npm run test:network-performance
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build
@@ -46,6 +47,9 @@ jobs:
       - uses: crazy-max/ghaction-upx@v4
         with:
           install-only: true
+      - name: Test native server and optional Node backend
+        working-directory: native-server
+        run: go test ./...
       - name: Build CDN server mirrors
         run: |
           version=$(tr -d '\r\n' < VERSION)

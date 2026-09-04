@@ -62,6 +62,7 @@ func (manager *kernelManager) createWithRuntime(spec battleSpec, runtime *jsKern
 	}
 	battle, err := newKernelBattleWithSpec(runtime, manager.hub, manager.plugins, spec)
 	if err != nil {
+		runtime.close()
 		manager.mu.Lock()
 		manager.creating--
 		manager.mu.Unlock()

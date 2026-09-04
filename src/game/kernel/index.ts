@@ -33,6 +33,7 @@ import { EVENT_CARDS } from "../events/event-cards";
 import { cancelSiteMovement, migrateLegacyOrders, ORDER_RULES_VERSION } from "./orders";
 import { prepareServerDeployment } from "./deployment";
 import { dispatchPlayerRoutes, PLAYER_DISPATCH_VERSION } from "./player-dispatch";
+import { withModifierCache } from "./modifiers";
 export {
   KernelPathfinder,
   navIndex,
@@ -119,6 +120,8 @@ export type KernelAction =
   | ProgressionAction;
 
 export type KernelOptions = {
+  profile?: boolean;
+  networkEpoch?: number;
   serverOpening?: "standard" | "blitz";
   navGrid?: KernelNavGrid;
   fixedStepMilliseconds?: number;
@@ -134,6 +137,10 @@ export type KernelEnvelope = {
 };
 
 export type KernelInstance = {
+  performanceProfile(): {stages:Record<string,number>;frames:number};
+  dispatchMany(actions: KernelAction[], token?: string): void;
+  drainCommandReceipts(): { tokens: string[] };
+  networkDeltaJSON(): string;
   battleStats(): { version: number; elapsedHours: number; kills: Record<Team, number>; captures: Record<Team, number> };
   dispatch(action: KernelAction): void;
   step(realMilliseconds: number): KernelEnvelope;
@@ -159,6 +166,7 @@ export type KernelInstance = {
 };
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const copyPath = (path: [number,number][]) => path.map(point=>[point[0],point[1]] as [number,number]);
 
 const normalizeKernelState = (state: GameData) => {
   state.timeOfDay ??= 8;
@@ -229,7 +237,13 @@ export function createKernel(
   let combatPulse = 0;
   let lastEventHour = Number.NEGATIVE_INFINITY;
   let fightingUnitIds = new Set<number>();
-  const pending: KernelAction[] = [];
+  const pending: Array<KernelAction | {type:"_command_receipt";token:string}> = [];
+  const stageTimes:Record<string,number>={};let profiledFrames=0;
+  const stage=(key:string,from:number)=>{
+    if(!options.profile)return 0;
+    const now=Date.now();stageTimes[key]=(stageTimes[key]??0)+now-from;return now;
+  };
+  const commandReceipts: string[] = [];
   const playerBatchLimits = new Map<number, number>();
   const enabledAiTeams = new Set(options.aiTeams ?? []);
   const campResourceReserve = (team: Team) => enabledAiTeams.has(team) ? state.campaign.ai.campResourceReserve?.[team] ?? 0 : 0;
@@ -237,7 +251,7 @@ export function createKernel(
   let networkRevision = 0,
     networkBaselineInitialized = false,
     networkCampaignSignature = "";
-  const networkUnitSignatures = new Map<number, string>(),
+  const networkUnitSignatures = new Map<number, CompactUnitNetworkState>(),
     networkSiteSignatures = new Map<number, string>();
   const pathfinder = options.navGrid
       ? new KernelPathfinder(options.navGrid, 12_000)
@@ -309,6 +323,8 @@ export function createKernel(
       if (owner === "player") source.orderPath = undefined;
       return 0;
     }
+    if (owner === "player") source.orderPath = copyPath(path);
+    if (owner === "player" && !selectedUnits) return 0;
     const blocker =
         purpose !== "logistics"
           ? firstEnemyControlSite(state, team, path, targetId)
@@ -327,9 +343,7 @@ export function createKernel(
               number,
             ][])
         : path;
-    if (owner === "player") source.orderPath = clone(path);
     if (!effectivePath.length) return 0;
-    if (owner === "player" && !selectedUnits) return 0;
     const idle = state.units.filter(
       (unit) =>
         unit.team === team &&
@@ -345,14 +359,14 @@ export function createKernel(
         purpose, effectiveSiteId: effectiveTarget.id,
       };
       unit.targetSiteId = effectiveTarget.id;
-      unit.path = clone(effectivePath);
+      unit.path = copyPath(effectivePath);
       unit.pathIndex = 0;
       [unit.tx, unit.tz] = effectivePath.at(-1)!;
     }
     const orderChanged =
       source.orderTarget !== targetId || source.orderPurpose !== purpose;
     source.orderTarget = targetId;
-    source.orderPath = clone(path);
+    source.orderPath = copyPath(path);
     if (orderChanged)
       source.orderIssuedAt = state.campaign.elapsedHours;
     source.orderPurpose = purpose;
@@ -632,6 +646,7 @@ export function createKernel(
   };
 
   const fixedTick = () => {
+    let stamp=options.profile?Date.now():0;
     simulateKernelMovement(
       state,
       fixedStep / 1000,
@@ -639,11 +654,13 @@ export function createKernel(
       pathfinder,
       options.navGrid,
     );
+    stamp=stage('movement',stamp);
     combatAccumulator += fixedStep;
     while (combatAccumulator >= 120) {
       simulateCombatAndCapture();
       combatAccumulator -= 120;
     }
+    stage('combat',stamp);
   };
 
   const runAi = (elapsedMilliseconds: number) => {
@@ -779,8 +796,14 @@ export function createKernel(
     state: clone(state),
   });
   const advance = (realMilliseconds: number) => {
-    while (pending.length) applyAction(pending.shift()!);
+    let stamp=options.profile?Date.now():0;
+    while (pending.length) {
+      const action=pending.shift()!;
+      if(action.type==="_command_receipt") commandReceipts.push(action.token);
+      else applyAction(action);
+    }
     const elapsed = Math.max(0, Math.min(250, realMilliseconds));
+    stamp=stage('commands',stamp);
     state.campaign.elapsedHours += elapsed * 0.00018 * timeScale;
     state.timeOfDay = (8 + state.campaign.elapsedHours) % 24;
     if (state.campaign.elapsedHours >= 84) state.campaign.warUnlocked = true;
@@ -797,6 +820,7 @@ export function createKernel(
         ),
     );
     progressResearchAndProduction(state, randomFor("pku"), options.navGrid, campResourceReserve);
+    stamp=stage('production',stamp);
     progressDecisions(state);
     const campSupply = 1.2 * (elapsed / 1_000);
     if (campSupply > 0)
@@ -810,20 +834,26 @@ export function createKernel(
             unit.supply = Math.min(100, unit.supply + campSupply);
       }
     runAi(elapsed);
+    stamp=stage('ai',stamp);
     accumulator += elapsed;
-    while (accumulator >= fixedStep) {
-      fixedTick();
-      accumulator -= fixedStep;
-    }
+    withModifierCache(state,()=>{
+      while (accumulator >= fixedStep) {
+        fixedTick();
+        accumulator -= fixedStep;
+      }
+    });
+    stamp=stage('movement-combat',stamp);
     if (state.campaign.elapsedHours - lastEventHour >= 0.5) {
       processKernelEvents(state, { fightingUnitIds, issueOrder });
       lastEventHour = state.campaign.elapsedHours;
     }
+    stamp=stage('events',stamp);
     dispatchPlayerRoutes(state, (source, units) => issueOrder(
       source.team, source.id, source.orderTarget!, units.length,
       source.orderPurpose ?? "combat", "player", new Set(units.map(unit => unit.id)),
     ), playerBatchLimits);
     playerBatchLimits.clear();
+    stamp=stage('player-dispatch',stamp);
     if (!state.campaign.outcome) {
       const pkuAlive = state.sites.some(
           (site) => site.team === "pku" && !site.destroyed,
@@ -839,6 +869,7 @@ export function createKernel(
         };
     }
     revision++;
+    if(options.profile)profiledFrames++;
   };
 
   if (options.serverOpening) {
@@ -847,6 +878,7 @@ export function createKernel(
   }
 
   return {
+    performanceProfile(){return {stages:{...stageTimes},frames:profiledFrames};},
     battleStats() {
       return { version: 1, elapsedHours: state.campaign.elapsedHours,
         kills: clone(state.campaign.battleStats?.kills ?? { pku: 0, thu: 0 }),
@@ -855,6 +887,12 @@ export function createKernel(
     dispatch(action) {
       pending.push(clone(action));
     },
+    dispatchMany(actions, token) {
+      if(pending.length+actions.length>4096) throw new Error("command queue full");
+      pending.push(...clone(actions));
+      if(token) pending.push({type:"_command_receipt",token});
+    },
+    drainCommandReceipts() { return {tokens:commandReceipts.splice(0)}; },
     step(realMilliseconds) {
       advance(realMilliseconds);
       return envelope();
@@ -873,13 +911,13 @@ export function createKernel(
       // changes for peers already connected to this kernel.
       if (!networkBaselineInitialized) {
         for (const unit of state.units)
-          networkUnitSignatures.set(unit.id, networkUnitSignature(unit));
+          networkUnitSignatures.set(unit.id, encodeCompactUnit(unit));
         for (const site of state.sites)
           networkSiteSignatures.set(site.id, networkSiteSignature(site));
-        networkCampaignSignature = JSON.stringify(state.campaign);
+        networkCampaignSignature = campaignNetworkSignature(state.campaign);
         networkBaselineInitialized = true;
       }
-      return { type: "state", game: clone(state), role: "host" };
+      return { type: "state", game: clone({...state, sites: state.sites.map(networkSiteView)}), role: "host", revision: networkRevision, networkEpoch: options.networkEpoch };
     },
     networkDelta() {
       networkBaselineInitialized = true;
@@ -888,14 +926,14 @@ export function createKernel(
         newUnits: UnitNetworkState[] = [];
       for (const unit of state.units) {
         currentIds.add(unit.id);
-        const signature = networkUnitSignature(unit),
+        const compact = encodeCompactUnit(unit),
           previous = networkUnitSignatures.get(unit.id);
-        if (previous === signature) continue;
-        networkUnitSignatures.set(unit.id, signature);
+        if (previous && equalCompactUnit(previous,compact)) continue;
+        networkUnitSignatures.set(unit.id, compact);
         if (previous == null) {
           const { path: _path, pathIndex: _pathIndex, ...networkUnit } = unit;
           newUnits.push(clone(networkUnit));
-        } else units.push(encodeCompactUnit(unit));
+        } else units.push(compact);
       }
       const removedUnitIds: number[] = [];
       for (const id of networkUnitSignatures.keys())
@@ -908,13 +946,14 @@ export function createKernel(
         const signature = networkSiteSignature(site);
         if (networkSiteSignatures.get(site.id) === signature) continue;
         networkSiteSignatures.set(site.id, signature);
-        sites.push(clone(site));
+        sites.push(clone(networkSiteView(site)));
       }
-      const campaignSignature = JSON.stringify(state.campaign),
+      const campaignSignature = campaignNetworkSignature(state.campaign),
         campaignChanged = campaignSignature !== networkCampaignSignature;
       if (campaignChanged) networkCampaignSignature = campaignSignature;
       return {
         type: "state_delta" as const,
+        networkEpoch: options.networkEpoch,
         revision: ++networkRevision,
         role: "host" as const,
         units,
@@ -929,8 +968,21 @@ export function createKernel(
         deaths: clone(state.deaths),
       };
     },
+    networkDeltaJSON() { return JSON.stringify(this.networkDelta()); },
   };
 }
+
+const networkSiteView = (site: SiteState) => {
+  const { playerDispatch: _dispatch, ...view } = site;
+  return view;
+};
+
+// Time is already a top-level delta field. PRNG state cannot affect UI and
+// must not force resending the entire event/research history on every tick.
+const campaignNetworkSignature = (campaign: GameData["campaign"]) => JSON.stringify({
+  ...campaign, elapsedHours: 0,
+  ai: {...campaign.ai, seed: 0, seedByTeam: undefined},
+});
 
 const NETWORK_SKINS: Array<UnitState["skin"]> = [
   undefined,
@@ -961,25 +1013,15 @@ const encodeCompactUnit = (unit: UnitState): CompactUnitNetworkState => [
   unit.transport === "bus" ? 1 : unit.transport === "bike" ? 2 : 0,
   unit.transportGroupId ?? "",
   unit.transportModel ?? "",
+  unit.movementOrder?.goalSiteId ?? -1,
+  unit.movementOrder ? Math.round(unit.movementOrder.goalX*100) : null,
+  unit.movementOrder ? Math.round(unit.movementOrder.goalZ*100) : null,
 ];
 
-const networkUnitSignature = (unit: UnitState) =>
-  [
-    unit.team,
-    unit.x.toFixed(2),
-    unit.z.toFixed(2),
-    unit.tx.toFixed(2),
-    unit.tz.toFixed(2),
-    unit.hp.toFixed(1),
-    unit.supply.toFixed(1),
-    unit.morale?.toFixed(1) ?? "",
-    unit.siteId,
-    unit.targetSiteId ?? "",
-    unit.retreating ? 1 : 0,
-    unit.skin ?? "",
-    unit.transport ?? "",
-    unit.transportModel ?? "",
-  ].join("/");
+const equalCompactUnit = (a:CompactUnitNetworkState,b:CompactUnitNetworkState) => {
+  for(let index=0;index<b.length;index++) if(a[index]!==b[index]) return false;
+  return true;
+};
 
 const networkSiteSignature = (site: SiteState) =>
   JSON.stringify({
@@ -1055,6 +1097,7 @@ export function healthCheck() {
     decisionCancellation: true,
     serverScenariosVersion: 1,
     playerDispatchVersion: PLAYER_DISPATCH_VERSION,
+    networkPerformanceVersion: 1,
     aiTacticsVersion: AI_TACTICS_VERSION,
     migrated: [
       "navigation",

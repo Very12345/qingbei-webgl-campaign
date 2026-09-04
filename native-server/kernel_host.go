@@ -11,28 +11,32 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type kernelBattle struct {
-	runtime        *jsKernelRuntime
-	hub            *relayHub
-	plugins        *pluginManager
-	roomCode       string
-	mu             sync.RWMutex
-	instance       *jsKernelInstance
-	status         string
-	lastError      string
-	name           string
-	maxPlayers     int
-	allowSameTeam  bool
-	timeScale      float64
-	stop           chan struct{}
-	stopped        chan struct{}
-	chat           []map[string]any
-	vote           *kernelDecisionVote
-	spec           battleSpec
-	resultReported bool
+	networkEpoch    atomic.Uint64
+	pendingReceipts map[string]commandReceipt
+	performance     battlePerformance
+	runtime         *jsKernelRuntime
+	hub             *relayHub
+	plugins         *pluginManager
+	roomCode        string
+	mu              sync.RWMutex
+	instance        *jsKernelInstance
+	status          string
+	lastError       string
+	name            string
+	maxPlayers      int
+	allowSameTeam   bool
+	timeScale       float64
+	stop            chan struct{}
+	stopped         chan struct{}
+	chat            []map[string]any
+	vote            *kernelDecisionVote
+	spec            battleSpec
+	resultReported  bool
 }
 
 type simulationHostSnapshot struct {
@@ -157,6 +161,7 @@ func (battle *kernelBattle) reset() error {
 	instance, err := battle.runtime.create(seed, map[string]any{
 		"aiTeams":               battle.aiTeams(nil),
 		"serverOpening":         battle.spec.ServerOpening,
+		"networkEpoch":          battle.networkEpoch.Add(1),
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
 		"randomSeed":            kernelRandomSeed(),
@@ -168,10 +173,12 @@ func (battle *kernelBattle) reset() error {
 		return err
 	}
 	battle.mu.Lock()
+	previous := battle.instance
 	battle.instance = instance
 	battle.lastError = ""
 	battle.resultReported = false
 	battle.mu.Unlock()
+	previous.dispose()
 	return nil
 }
 
@@ -185,11 +192,13 @@ func (battle *kernelBattle) run() {
 	defer ticker.Stop()
 	last := time.Now()
 	lastAutoSave := time.Now()
+	lastNetwork := time.Time{}
 	for {
 		select {
 		case <-battle.stop:
 			return
 		case now := <-ticker.C:
+			frameStarted := time.Now()
 			if now.Sub(lastAutoSave) >= 60*time.Second {
 				if _, err := battle.save("autosave"); err != nil {
 					battle.setError(fmt.Errorf("自动保存失败: %w", err))
@@ -207,6 +216,10 @@ func (battle *kernelBattle) run() {
 			}
 			if battle.waitingForHumans() {
 				last = now
+				if time.Since(lastNetwork) < time.Second {
+					continue
+				}
+				lastNetwork = time.Now()
 				delta, err := instance.networkDelta()
 				if err == nil {
 					delta["pausedForPlayers"] = true
@@ -215,6 +228,7 @@ func (battle *kernelBattle) run() {
 					battle.mu.RUnlock()
 					battle.broadcast(delta, "")
 				}
+				battle.recordTick(frameStarted, 0, time.Since(frameStarted), 0, true)
 				continue
 			}
 			aiTeams := battle.aiTeams(players)
@@ -229,22 +243,37 @@ func (battle *kernelBattle) run() {
 			}
 			elapsed := math.Min(250, math.Max(1, float64(now.Sub(last).Milliseconds())))
 			last = now
-			if _, err := instance.step(elapsed); err != nil {
+			if err := instance.advanceOnly(elapsed); err != nil {
+				if instance != battle.currentInstance() {
+					continue
+				}
 				battle.setError(err)
 				continue
 			}
-			delta, err := instance.networkDelta()
+			battle.flushCommandReceipts(instance)
+			simulatedAt := time.Now()
+			if time.Since(lastNetwork) < 200*time.Millisecond {
+				battle.recordTick(frameStarted, simulatedAt.Sub(frameStarted), 0, 0, false)
+				continue
+			}
+			lastNetwork = simulatedAt
+			delta, err := instance.networkDeltaJSON()
 			if err != nil {
+				if instance != battle.currentInstance() {
+					continue
+				}
 				battle.setError(err)
 				continue
 			}
-			battle.broadcast(delta, "")
-			battle.reportOutcome(delta)
+			battle.broadcastDelta(delta)
+			battle.reportOutcomeJSON(delta)
+			battle.recordTick(frameStarted, simulatedAt.Sub(frameStarted), time.Since(simulatedAt), len(delta), false)
 		}
 	}
 }
 
 func (battle *kernelBattle) shutdown() {
+	defer battle.runtime.close()
 	_, _ = battle.save("autosave")
 	select {
 	case <-battle.stop:
@@ -267,6 +296,15 @@ func (battle *kernelBattle) setError(err error) {
 	battle.mu.Lock()
 	battle.lastError = err.Error()
 	battle.status = "内核运行异常"
+	if battle.runtime != nil && battle.runtime.node != nil {
+		select {
+		case <-battle.runtime.node.done:
+			battle.status = "内核已停止"
+		case <-battle.runtime.node.closed:
+			battle.status = "内核已停止"
+		default:
+		}
+	}
 	battle.mu.Unlock()
 	log.Printf("共享内核运行异常：%v\n", err)
 }
@@ -413,6 +451,9 @@ func (battle *kernelBattle) handleClientMessage(client *wsClient, data string) {
 	}
 	typeName, _ := envelope["type"].(string)
 	if battle.waitingForHumans() && (typeName == "client_commands" || typeName == "client_action" || typeName == "decision_vote_request" || typeName == "decision_vote_cast") {
+		if typeName == "client_commands" {
+			battle.sendApplication(client, map[string]any{"type": "command_rejected", "revision": envelope["revision"], "reason": "正在等待玩家入场或重连"})
+		}
 		return
 	}
 	switch typeName {
@@ -463,6 +504,11 @@ func (battle *kernelBattle) handleCommands(client *wsClient, envelope map[string
 	}
 	client.lastRevision = revision
 	client.rateMu.Unlock()
+	if !allowCommandRate(client) {
+		battle.sendApplication(client, map[string]any{"type": "command_rejected", "revision": revision, "reason": "操作过于频繁，请稍候"})
+		return
+	}
+	actions := []any{}
 	if rawUnits, ok := envelope["units"].([]any); ok {
 		if len(rawUnits) > 3_500 {
 			rawUnits = rawUnits[:3_500]
@@ -477,6 +523,9 @@ func (battle *kernelBattle) handleCommands(client *wsClient, envelope map[string
 			tx, _ := command["tx"].(float64)
 			tz, _ := command["tz"].(float64)
 			key := fmt.Sprintf("%d/%.2f/%.2f", target, tx, tz)
+			if target >= 0 {
+				key = fmt.Sprintf("site/%d", target)
+			}
 			group := groups[key]
 			if group == nil {
 				group = map[string]any{"type": "order_units", "team": client.team, "unitIds": []any{}, "tx": tx, "tz": tz}
@@ -488,7 +537,7 @@ func (battle *kernelBattle) handleCommands(client *wsClient, envelope map[string
 			group["unitIds"] = append(group["unitIds"].([]any), command["id"])
 		}
 		for _, action := range groups {
-			_ = instance.dispatch(action)
+			actions = append(actions, action)
 		}
 	}
 	if rawSites, ok := envelope["sites"].([]any); ok {
@@ -522,9 +571,27 @@ func (battle *kernelBattle) handleCommands(client *wsClient, envelope map[string
 					action["plannedOrderTarget"] = nil
 				}
 			}
-			_ = instance.dispatch(action)
+			actions = append(actions, action)
 		}
 	}
+	token := fmt.Sprintf("%s/%d", client.peerID, revision)
+	battle.mu.Lock()
+	if battle.pendingReceipts == nil {
+		battle.pendingReceipts = map[string]commandReceipt{}
+	}
+	battle.pendingReceipts[token] = commandReceipt{client: client, revision: revision, queuedAt: time.Now()}
+	battle.mu.Unlock()
+	if _, err := instance.call("dispatchMany", actions, token); err != nil {
+		battle.mu.Lock()
+		delete(battle.pendingReceipts, token)
+		battle.mu.Unlock()
+		battle.sendApplication(client, map[string]any{"type": "command_rejected", "revision": revision, "reason": "服务器命令队列繁忙，请重试"})
+		return
+	}
+	battle.performance.mu.Lock()
+	battle.performance.commandsReceived++
+	battle.performance.mu.Unlock()
+	battle.sendApplication(client, map[string]any{"type": "command_received", "revision": revision})
 }
 
 func (battle *kernelBattle) handleAction(client *wsClient, raw any) {
@@ -991,6 +1058,7 @@ func (battle *kernelBattle) resume(name string) error {
 		return err
 	}
 	instance, err := battle.runtime.create(save.State, map[string]any{
+		"networkEpoch":          battle.networkEpoch.Add(1),
 		"aiTeams":               battle.aiTeams(battle.playerSnapshot()),
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
@@ -1005,6 +1073,7 @@ func (battle *kernelBattle) resume(name string) error {
 		return err
 	}
 	battle.mu.Lock()
+	previous := battle.instance
 	battle.instance = instance
 	if save.ServerName != "" {
 		battle.name = save.ServerName
@@ -1016,6 +1085,7 @@ func (battle *kernelBattle) resume(name string) error {
 	battle.status = "运行中"
 	battle.lastError = ""
 	battle.mu.Unlock()
+	previous.dispose()
 	return nil
 }
 

@@ -321,6 +321,7 @@ export default function Game3D() {
   const lastConnectionFailureRef = useRef<string | null>(null);
   const hostOperationQueueRef = useRef<Array<() => void>>([]);
   const hostOperationFlushTimerRef = useRef<number | null>(null);
+  const networkReceivedEpochRef = useRef(new WeakMap<NetworkChannel,number>());
   const networkReceivedRevisionRef = useRef(
     new WeakMap<NetworkChannel, number>(),
   );
@@ -788,6 +789,15 @@ export default function Game3D() {
     const timer = window.setInterval(check, 1000);
     return () => window.clearInterval(timer);
   }, [screen]);
+  useEffect(()=>{
+    const receive=(event:Event)=>{
+      const message=(event as CustomEvent<{message?:unknown}>).detail?.message;
+      if(typeof message!=="string")return;
+      event.preventDefault();setNotice(message.slice(0,180));
+    };
+    window.addEventListener("qingbei-command-status",receive);
+    return ()=>window.removeEventListener("qingbei-command-status",receive);
+  },[]);
   useBattlefieldEngine({
     playerCommandSenderRef,
     canIssuePlayerCommandRef,
@@ -2353,6 +2363,8 @@ export default function Game3D() {
           !host &&
           payload.role === "host"
         ) {
+          const epoch=networkReceivedEpochRef.current.get(channel);
+          if(payload.networkEpoch!=null && epoch!=null && payload.networkEpoch!==epoch) return;
           const lastRevision =
             networkReceivedRevisionRef.current.get(channel) ?? -1;
           if (payload.revision <= lastRevision) return;
@@ -2466,7 +2478,11 @@ export default function Game3D() {
           !host &&
           payload.role === "host"
         ) {
+          const epoch=networkReceivedEpochRef.current.get(channel);
+          if(payload.networkEpoch!=null && epoch!=null && (payload.networkEpoch<epoch || (payload.networkEpoch===epoch && payload.revision!=null && payload.revision<(networkReceivedRevisionRef.current.get(channel)??-1)))) return;
+          if(payload.networkEpoch!=null) networkReceivedEpochRef.current.set(channel,payload.networkEpoch);
           gameRef.current = payload.game;
+          if (payload.revision != null) networkReceivedRevisionRef.current.set(channel,payload.revision);
           networkHealthRef.current.state(Date.now(), payload.game.campaign.elapsedHours, payload.pausedForPlayers);
           guestHasAuthoritativeStateRef.current = true;
           if (lanConnectionTimeoutRef.current != null) {

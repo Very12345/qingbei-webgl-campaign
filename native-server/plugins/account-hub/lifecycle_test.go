@@ -20,6 +20,18 @@ func lifecycleFixture(t *testing.T) (*hubServer, *http.ServeMux, *matchRecord, s
 	return s, mux, m, s.newSessionLocked("player")
 }
 
+func TestStoppedWorkerInterruptsWithoutAwardingForfeit(t *testing.T) {
+	s, _, m, _ := lifecycleFixture(t)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"battles":[{"roomCode":"ACTIVE1234","status":"内核已停止"}]}`))
+	}))
+	defer host.Close()
+	s.serverOrigin = host.URL
+	if !s.reconcileBattles(time.Now()) || !m.Completed || m.Winner != "" || s.data.Users["player"].Experience["pku"] != 0 {
+		t.Fatal("worker failure became a player loss")
+	}
+}
+
 func TestLateHeartbeatCannotEscapeForfeit(t *testing.T) {
 	s, mux, m, token := lifecycleFixture(t)
 	m.SeenPlayers["player"] = true

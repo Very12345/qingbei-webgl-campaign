@@ -7,6 +7,23 @@ vm.runInThisContext(readFileSync(new URL('./static/protocol.js', import.meta.url
 vm.runInThisContext(readFileSync(new URL('./static/lifecycle-client.js', import.meta.url), 'utf8'));
 const relay = payload => JSON.stringify({type:'relay',peerId:'host',data:JSON.stringify(payload)});
 
+test('receipt stages do not falsely confirm state; logical intercepted goals do confirm',()=>{
+  let now=1000;const bridge=QingbeiProtocol.createBridge({send:()=>{},now:()=>now});
+  bridge.outgoing(relay({type:'client_commands',intent:'player',revision:7,sites:[],units:[{id:1,team:'pku',targetSiteId:9,tx:20,tz:20}]}));
+  now=1010;bridge.incoming(relay({type:'command_received',revision:7}));
+  now=1020;bridge.incoming(relay({type:'command_processed',revision:7,queueMs:10}));
+  assert.equal(bridge.pendingCommands.size,1);assert.equal(bridge.diagnostics().processed,1);
+  now=1030;bridge.incoming(relay({type:'state_delta',sites:[],units:[[1,0,0,0,1000,1000,1000,1000,1,0,3,null,null,1000,0,0,0,'','',9,2000,2000]]}));
+  assert.equal(bridge.pendingCommands.size,0);assert.equal(bridge.diagnostics().lastConfirmMs,30);
+});
+
+test('an old rejected revision does not cancel a newer command',()=>{
+  const bridge=QingbeiProtocol.createBridge({send:()=>{}});
+  for(const revision of [1,2])bridge.outgoing(relay({type:'client_commands',intent:'player',revision,sites:[],units:[{id:2,team:'pku',targetSiteId:8,tx:1,tz:2}]}));
+  bridge.incoming(relay({type:'command_rejected',revision:1,reason:'old'}));assert.equal(bridge.pendingCommands.size,1);
+  bridge.incoming(relay({type:'command_rejected',revision:2,reason:'busy'}));assert.equal(bridge.pendingCommands.size,0);
+});
+
 test('old client default ratio is acknowledged only at the authoritative stance limit', () => {
   const bridge=QingbeiProtocol.createBridge({send:()=>{}});
   const command={id:1,stance:'defend',dispatchRatio:.6,orderTarget:2,plannedOrderTarget:null};

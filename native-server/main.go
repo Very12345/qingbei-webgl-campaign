@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,31 +47,35 @@ type wireMessage struct {
 }
 
 type wsClient struct {
-	conn          net.Conn
-	reader        *bufio.Reader
-	mu            sync.Mutex
-	queueMu       sync.Mutex
-	rateMu        sync.Mutex
-	outbound      chan wireMessage
-	stateSignal   chan struct{}
-	latestState   *wireMessage
-	done          chan struct{}
-	doneOnce      sync.Once
-	room          string
-	role          string
-	team          string
-	nickname      string
-	playerID      string
-	accountID     string
-	pluginProfile map[string]any
-	lastRevision  int
-	actionWindow  time.Time
-	actionCount   int
-	chatWindow    time.Time
-	chatCount     int
-	peerID        string
-	kernelReady   bool
-	hub           *relayHub
+	conn            net.Conn
+	reader          *bufio.Reader
+	mu              sync.Mutex
+	queueMu         sync.Mutex
+	rateMu          sync.Mutex
+	outbound        chan wireMessage
+	stateSignal     chan struct{}
+	latestState     *wireMessage
+	mergedDeltas    atomic.Uint64
+	lastWriteMicros atomic.Int64
+	done            chan struct{}
+	doneOnce        sync.Once
+	room            string
+	role            string
+	team            string
+	nickname        string
+	playerID        string
+	accountID       string
+	pluginProfile   map[string]any
+	lastRevision    int
+	actionWindow    time.Time
+	actionCount     int
+	commandWindow   time.Time
+	commandCount    int
+	chatWindow      time.Time
+	chatCount       int
+	peerID          string
+	kernelReady     bool
+	hub             *relayHub
 }
 
 func (c *wsClient) sendJSON(message wireMessage) error {
@@ -82,6 +87,16 @@ func (c *wsClient) sendJSON(message wireMessage) error {
 	if message.Type == "relay" && applicationMessageType(message.Data) == "state_delta" {
 		c.queueMu.Lock()
 		copy := message
+		if c.latestState != nil {
+			merged, err := mergeStateDeltas(*c.latestState, message)
+			if err != nil {
+				c.queueMu.Unlock()
+				c.shutdown()
+				return err
+			}
+			copy = merged
+			c.mergedDeltas.Add(1)
+		}
 		c.latestState = &copy
 		c.queueMu.Unlock()
 		select {
@@ -89,6 +104,21 @@ func (c *wsClient) sendJSON(message wireMessage) error {
 		default:
 		}
 		return nil
+	}
+	if message.Type == "relay" && applicationMessageType(message.Data) == "state" {
+		c.queueMu.Lock()
+		var full, queued struct {
+			Revision int `json:"revision"`
+			Epoch    int `json:"networkEpoch"`
+		}
+		_ = json.Unmarshal([]byte(message.Data), &full)
+		if c.latestState != nil {
+			_ = json.Unmarshal([]byte(c.latestState.Data), &queued)
+			if queued.Epoch < full.Epoch || (queued.Epoch == full.Epoch && queued.Revision <= full.Revision) {
+				c.latestState = nil
+			}
+		}
+		c.queueMu.Unlock()
 	}
 	select {
 	case <-c.done:
@@ -108,7 +138,7 @@ func (c *wsClient) writerLoop() {
 		case <-c.done:
 			return
 		case message := <-c.outbound:
-			if err := c.writeJSON(message); err != nil {
+			if err := c.writeMeasured(message); err != nil {
 				select {
 				case <-c.done:
 					return
@@ -123,7 +153,7 @@ func (c *wsClient) writerLoop() {
 			case <-c.done:
 				return
 			case message := <-c.outbound:
-				if err := c.writeJSON(message); err != nil {
+				if err := c.writeMeasured(message); err != nil {
 					select {
 					case <-c.done:
 						return
@@ -134,12 +164,32 @@ func (c *wsClient) writerLoop() {
 					return
 				}
 			case <-c.stateSignal:
+				// A full snapshot/control packet must precede any delta based on it,
+				// even when both channels become ready during this select.
+				select {
+				case control := <-c.outbound:
+					if err := c.writeMeasured(control); err != nil {
+						c.shutdown()
+						return
+					}
+					c.queueMu.Lock()
+					waiting := c.latestState != nil
+					c.queueMu.Unlock()
+					if waiting {
+						select {
+						case c.stateSignal <- struct{}{}:
+						default:
+						}
+					}
+					continue
+				default:
+				}
 				c.queueMu.Lock()
 				message := c.latestState
 				c.latestState = nil
 				c.queueMu.Unlock()
 				if message != nil {
-					if err := c.writeJSON(*message); err == nil {
+					if err := c.writeMeasured(*message); err == nil {
 						continue
 					} else {
 						select {
@@ -957,6 +1007,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化共享JS内核失败: %v", err)
 	}
+	defer kernelRuntime.close()
 	kernelHealth, err := kernelRuntime.healthCheck()
 	if err != nil {
 		log.Fatalf("共享JS内核自检失败: %v", err)
@@ -991,6 +1042,9 @@ func main() {
 		}
 	}
 	defer manager.shutdown()
+	if configuration.InitialKernels == 0 {
+		kernelRuntime.close()
+	}
 	webRoot, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -1028,6 +1082,9 @@ func main() {
 		websocketHandler(hub, plugins, writer, request)
 	})
 	registerInternalAPI(mux, manager, plugins)
+	monitor := newPerformanceMonitor()
+	defer close(monitor.stop)
+	registerPerformanceAPI(mux, manager, monitor)
 	plugins.registerRoutes(mux)
 	fileServer := embeddedWebServer(webRoot)
 	mux.Handle("/qingbei-webgl-campaign/", http.StripPrefix("/qingbei-webgl-campaign/", fileServer))
