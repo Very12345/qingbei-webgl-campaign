@@ -45,10 +45,18 @@ export function firstEnemyControlSite(
 export function interceptRoute(
   game: GameData, team: Team, path: [number, number][],
   pathfinder: KernelPathfinder | null, goalId?: number,
+  origin: [number, number] = path[0],
 ) {
   const blocker = firstEnemyControlSite(game, team, path, goalId);
   if (!blocker) return { path, blocker, continuationPath: undefined };
   const x = blocker.navX ?? blocker.x, z = blocker.navZ ?? blocker.z;
+  // Custom-server routing is opt-in. Keep the published base game's calibrated
+  // AI routes unchanged; both human and AI marches on this server use corridors.
+  if (!game.campaign.serverOpening) return {
+    blocker,
+    path: pathfinder ? pathfinder.find(origin[0], origin[1], x, z) : [[x, z] as [number, number]],
+    continuationPath: undefined,
+  };
   // Approach on the intended corridor. Only the short final approach to the
   // blocker is replanned, never the whole journey from the original source.
   const entry = path.findIndex(p => Math.hypot(p[0] - x, p[1] - z) <= siteControlRadius(blocker));

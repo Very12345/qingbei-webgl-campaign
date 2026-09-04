@@ -98,7 +98,7 @@ function routeUnit(
     : [];
   const route = order.purpose === "logistics"
     ? { path, blocker: undefined, continuationPath: undefined }
-    : interceptRoute(game, unit.team, path, pathfinder, goal?.id);
+    : interceptRoute(game, unit.team, path, pathfinder, goal?.id, [unit.x, unit.z]);
   const target = route.blocker ?? goal;
   const effectivePath = route.path.length && (!corridor?.length || connector.length)
     ? [...connector, ...route.path] : [];

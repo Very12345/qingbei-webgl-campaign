@@ -327,7 +327,7 @@ export function createKernel(
     if (owner === "player" && !selectedUnits) return 0;
     const route = purpose === "logistics"
       ? { path, blocker: undefined, continuationPath: undefined }
-      : interceptRoute(state, team, path, pathfinder, targetId);
+      : interceptRoute(state, team, path, pathfinder, targetId, [source.navX ?? source.x, source.navZ ?? source.z]);
     const effectiveTarget = route.blocker ?? target, effectivePath = route.path;
     if (!effectivePath.length) return 0;
     const idle = state.units.filter(
@@ -415,7 +415,7 @@ export function createKernel(
           ? pathfinder.find(unit.x, unit.z, tx, tz)
           : ([[tx, tz]] as [number, number][]);
         if (!path.length) continue;
-        const route = interceptRoute(state, action.team, path, pathfinder, target?.id);
+        const route = interceptRoute(state, action.team, path, pathfinder, target?.id, [unit.x, unit.z]);
         const blocker = route.blocker, effectivePath = route.path;
         if (!effectivePath.length) continue;
         unit.movementOrder = {

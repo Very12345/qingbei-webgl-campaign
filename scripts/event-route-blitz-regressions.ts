@@ -22,6 +22,7 @@ import { osmRegions } from "../src/osm-map-data";
 }
 {
   const game = makeFreshGame(), template = game.sites[0];
+  game.campaign.serverOpening = "standard";
   const points = [[0,10],[20,10],[10,8],[5,3]];
   game.sites = points.map(([x,z],id)=>({...template,id,team:id===0?"pku":"thu",type:"teaching",stance:"guard",x,z,navX:x,navZ:z}));
   const unit = {...game.units[0],team:"pku" as const,siteId:0,x:0,z:10,tx:0,tz:10};
