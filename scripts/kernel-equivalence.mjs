@@ -32,10 +32,17 @@ function pair(initial,options) {
     {team:'pku',purpose:'combat',goalSiteId:3,goalX:1.239,goalZ:-2.345},
     {team:'pku',purpose:'combat',goalSiteId:3,goalX:1.239,goalZ:-2.8},undefined],
  };
- for(const [field,values] of Object.entries(fields))for(const value of values) {
-  games.forEach(g=>{g.units[0][field]=structuredClone(value);});
-  same(kernels[0].networkDelta(),kernels[1].networkDelta(),`wire field ${field}`);
-  same(kernels[0].networkDelta(),kernels[1].networkDelta(),`repeated wire field ${field}`);
+ for(const [field,values] of Object.entries(fields)) {
+  const original=games.map(g=>structuredClone(g.units[0][field]));
+  for(const value of values) {
+   games.forEach(g=>{g.units[0][field]=structuredClone(value);});
+   same(kernels[0].networkDelta(),kernels[1].networkDelta(),`wire field ${field}`);
+   same(kernels[0].networkDelta(),kernels[1].networkDelta(),`repeated wire field ${field}`);
+  }
+  // A prior NaN must not force every later field to emit an update and mask a
+  // missing comparison. Start each field from a clean wire baseline.
+  games.forEach((g,i)=>{g.units[0][field]=original[i];});
+  same(kernels[0].networkDelta(),kernels[1].networkDelta(),`reset wire field ${field}`);
  }
  games.forEach(g=>g.units.push({...g.units[1],id:888888}));
  same(kernels[0].networkDelta(),kernels[1].networkDelta(),'new unit');
