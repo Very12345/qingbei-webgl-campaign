@@ -16,12 +16,41 @@ type battleStats struct {
 }
 
 type matchReward struct {
-	Kills        int     `json:"kills"`
-	Captures     int     `json:"captures"`
-	VictoryBonus int     `json:"victoryBonus"`
-	Multiplier   float64 `json:"multiplier"`
-	Experience   int     `json:"experience"`
-	Coins        int     `json:"coins"`
+	Kills        int               `json:"kills"`
+	Captures     int               `json:"captures"`
+	VictoryBonus int               `json:"victoryBonus"`
+	Multiplier   float64           `json:"multiplier"`
+	Experience   int               `json:"experience"`
+	Coins        int               `json:"coins"`
+	Progression  *matchProgression `json:"progression,omitempty"`
+}
+
+type levelProgress struct {
+	Level int   `json:"level"`
+	Start int64 `json:"start"`
+	Next  int64 `json:"next"`
+}
+type matchProgression struct {
+	Before int             `json:"before"`
+	After  int             `json:"after"`
+	Levels []levelProgress `json:"levels"`
+}
+
+func rewardProgression(before, after int) *matchProgression {
+	p := &matchProgression{Before: before, After: after}
+	first, last := levelFor(before), levelFor(after)
+	for level := first; level <= last; level++ {
+		// Bound very large settlements, keeping both endpoint levels authoritative.
+		if level > first+8 && level < last {
+			continue
+		}
+		next := experienceForLevel(level + 1)
+		if level == careerLevelLimit {
+			next = experienceForLevel(level)
+		}
+		p.Levels = append(p.Levels, levelProgress{level, experienceForLevel(level), next})
+	}
+	return p
 }
 
 func scoreReward(stats *battleStats, team, winner, pace string) matchReward {

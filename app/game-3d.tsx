@@ -1,4 +1,5 @@
 "use client";
+import { createNetworkEventFeed } from "../src/game/network-events";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -415,6 +416,7 @@ export default function Game3D() {
     teamUnit: {},
   });
   const [activeEvents, setActiveEvents] = useState<EventCard[]>([]);
+  const networkEventFeedRef = useRef(createNetworkEventFeed());
   const [eventToast, setEventToast] = useState<EventCard | null>(null);
   const eventToastQueueRef = useRef<EventCard[]>([]);
   const eventToastTimerRef = useRef<number | null>(null);
@@ -2469,6 +2471,8 @@ export default function Game3D() {
             game.deaths = payload.deaths;
             if (payload.campaign)
               game.campaign = structuredClone(payload.campaign);
+            for (const event of networkEventFeedRef.current(game.campaign, lastAutomaticRoomCodeRef.current ?? "lan"))
+              pushEvent(event);
           }
           if (sitesChanged) sceneApi.current?.sync(!siteStructureChanged);
           return;
@@ -2482,6 +2486,8 @@ export default function Game3D() {
           if(payload.networkEpoch!=null && epoch!=null && (payload.networkEpoch<epoch || (payload.networkEpoch===epoch && payload.revision!=null && payload.revision<(networkReceivedRevisionRef.current.get(channel)??-1)))) return;
           if(payload.networkEpoch!=null) networkReceivedEpochRef.current.set(channel,payload.networkEpoch);
           gameRef.current = payload.game;
+          for (const event of networkEventFeedRef.current(payload.game.campaign, lastAutomaticRoomCodeRef.current ?? "lan"))
+            pushEvent(event);
           if (payload.revision != null) networkReceivedRevisionRef.current.set(channel,payload.revision);
           networkHealthRef.current.state(Date.now(), payload.game.campaign.elapsedHours, payload.pausedForPlayers);
           guestHasAuthoritativeStateRef.current = true;

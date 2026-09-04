@@ -1,4 +1,5 @@
 import type { GameData, SiteState, Team } from "../types";
+import type { KernelPathfinder } from "./navigation";
 
 export const siteControlRadius = (site: SiteState) => {
   if (site.type === "camp") return 3.8;
@@ -39,4 +40,28 @@ export function firstEnemyControlSite(
     }
   }
   return selected?.site;
+}
+
+export function interceptRoute(
+  game: GameData, team: Team, path: [number, number][],
+  pathfinder: KernelPathfinder | null, goalId?: number,
+) {
+  const blocker = firstEnemyControlSite(game, team, path, goalId);
+  if (!blocker) return { path, blocker, continuationPath: undefined };
+  const x = blocker.navX ?? blocker.x, z = blocker.navZ ?? blocker.z;
+  // Approach on the intended corridor. Only the short final approach to the
+  // blocker is replanned, never the whole journey from the original source.
+  const entry = path.findIndex(p => Math.hypot(p[0] - x, p[1] - z) <= siteControlRadius(blocker));
+  let closest = entry;
+  for (let i = entry + 1; i < path.length; i++) {
+    if (Math.hypot(path[i][0] - x, path[i][1] - z) > siteControlRadius(blocker)) break;
+    if (Math.hypot(path[i][0] - x, path[i][1] - z) < Math.hypot(path[closest][0] - x, path[closest][1] - z)) closest = i;
+  }
+  const approach = path[closest];
+  const tail = pathfinder ? pathfinder.find(approach[0], approach[1], x, z) : [[x, z] as [number, number]];
+  return {
+    blocker,
+    path: tail.length ? [...path.slice(0, closest + 1), ...tail] : [],
+    continuationPath: path.slice(closest),
+  };
 }

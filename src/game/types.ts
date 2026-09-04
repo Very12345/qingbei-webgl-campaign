@@ -67,6 +67,8 @@ export type UnitMovementOrder = {
   effectiveSiteId?: number;
   retryAt?: number;
   awaitingContinuation?: boolean;
+  /** Original route after an interception; auxiliary approaches never replace it. */
+  continuationPath?: [number, number][];
 };
 
 export type UnitState = {
@@ -220,6 +222,7 @@ export type CampaignState = {
   battleStats?: { kills: Record<Team, number>; captures: Record<Team, number> };
   rulesVersion: number;
   orderRulesVersion?: number;
+  serverOpening?: "standard" | "blitz";
   startDateISO: string;
   elapsedHours: number;
   firedEvents: string[];

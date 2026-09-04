@@ -19,7 +19,8 @@
     "verify:ai": "tsx scripts/verify-ai-matrix.ts",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:events-routes-blitz": "tsx scripts/event-route-blitz-regressions.ts"
   },
   "dependencies": {
     "react": "19.2.6",

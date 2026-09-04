@@ -27,7 +27,7 @@ jobs:
         working-directory: native-server
         run: |
           go test -race ./plugins/account-hub
-          node --test plugins/account-hub/protocol.test.mjs
+          node --test plugins/account-hub/protocol.test.mjs plugins/account-hub/result-progression.test.mjs
           node --test plugins/account-hub/performance-ui.test.mjs plugins/account-hub/duel-ui.test.mjs
       - name: Build plugin only
         working-directory: native-server

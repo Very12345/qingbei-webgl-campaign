@@ -1,5 +1,5 @@
 import type { GameData, Team, UnitMovementOrder, UnitState } from "../types";
-import { firstEnemyControlSite } from "./control";
+import { interceptRoute } from "./control";
 import type { KernelPathfinder } from "./navigation";
 
 export const ORDER_RULES_VERSION = 1;
@@ -89,29 +89,20 @@ function routeUnit(
     order.goalSiteId == null ? undefined : game.sites[order.goalSiteId];
   const x = goal?.navX ?? goal?.x ?? order.goalX;
   const z = goal?.navZ ?? goal?.z ?? order.goalZ;
-  const path = pathfinder
+  const corridor = order.continuationPath;
+  const path = corridor?.length ? corridor : pathfinder
     ? pathfinder.find(unit.x, unit.z, x, z)
     : [[x, z] as [number, number]];
-  const blocker =
-    order.purpose === "logistics"
-      ? undefined
-      : firstEnemyControlSite(game, unit.team, path, goal?.id);
-  const target = blocker ?? goal;
-  const effectivePath = blocker
-    ? pathfinder
-      ? pathfinder.find(
-          unit.x,
-          unit.z,
-          blocker.navX ?? blocker.x,
-          blocker.navZ ?? blocker.z,
-        )
-      : [
-          [blocker.navX ?? blocker.x, blocker.navZ ?? blocker.z] as [
-            number,
-            number,
-          ],
-        ]
-    : path;
+  const connector = corridor?.length
+    ? pathfinder ? pathfinder.find(unit.x, unit.z, path[0][0], path[0][1]) : [path[0]]
+    : [];
+  const route = order.purpose === "logistics"
+    ? { path, blocker: undefined, continuationPath: undefined }
+    : interceptRoute(game, unit.team, path, pathfinder, goal?.id);
+  const target = route.blocker ?? goal;
+  const effectivePath = route.path.length && (!corridor?.length || connector.length)
+    ? [...connector, ...route.path] : [];
+  if (effectivePath.length) order.continuationPath = route.continuationPath;
   order.goalX = x;
   order.goalZ = z;
   order.effectiveSiteId = target?.id;
@@ -204,6 +195,7 @@ export function prepareUnitMovement(
     if (source.orderTarget !== order.goalSiteId) {
       order.goalSiteId = source.orderTarget;
       order.purpose = source.orderPurpose ?? "combat";
+      order.continuationPath = undefined;
       changed = true;
     }
   }

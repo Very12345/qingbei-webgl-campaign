@@ -778,6 +778,15 @@
       html[data-duel-paused="true"] .network-sync-warning { display: none; }
       html[data-duel-paused="true"] .webgl-stage { pointer-events: none; }
       .plugin-lifecycle button[hidden] { display: none; }
+      .result-progression { margin: 24px 0; padding: 18px; border: 1px solid #9e8d55; background: #18231f; text-align: left; }
+      .result-progression[hidden] { display: none; }
+      .progression-heading, .progression-caption { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .progression-heading strong { font: 700 28px Georgia, serif; color: #efe6c5; }
+      .progression-heading span { color: #dcc77e; font-weight: 700; }
+      .progression-track { height: 15px; margin: 16px 0 10px; padding: 2px; border: 1px solid #8b805c; background: #080f0d; overflow: hidden; }
+      .progression-track i { display: block; height: 100%; width: 0; background: repeating-linear-gradient(90deg, transparent 0 29px, #19241e55 29px 31px), linear-gradient(90deg,#8d7843,#e7d38e); box-shadow: 0 0 14px #dbc68044; }
+      .progression-caption { color: #b9bba5; font-size: 12px; }
+      .progression-caption strong { color: #e5d18c; }
     </style>
   </head>
   <body>
@@ -913,6 +922,11 @@
         <h2 id="result-title">战局结束</h2>
         <p id="result-detail"></p>
         <p id="result-reward"></p>
+        <section id="result-progression" class="result-progression" hidden aria-label="阵营生涯经验">
+          <div class="progression-heading"><strong data-level></strong><span data-earned></span></div>
+          <div class="progression-track" role="progressbar" aria-label="等级进度" aria-valuemin="0"><i data-fill></i></div>
+          <div class="progression-caption"><span data-value></span><strong data-status role="status"></strong></div>
+        </section>
         <div class="actions"><button id="return-lobby">返回指挥部</button></div>
       </section>
     </div>
@@ -920,6 +934,7 @@
     <script src="../lifecycle-client.js"></script>
     <script src="../duel-ui.js"></script>
     <script src="../performance-ui.js"></script>
+    <script src="../result-progression.js"></script>
     <script>
       (() => {
         const params = new URLSearchParams(location.search),
@@ -1074,6 +1089,9 @@
             (state.winner ? "；经验已经计入个人主页。" : "");
           $("result-modal").classList.add("show");
           const reward = state.reward;
+          window.QingbeiResultProgression.show($("result-progression"), reward?.progression, {
+            animate: won, reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+          });
           $("result-reward").textContent = state.winner && reward
             ? `击杀 ${reward.kills} · 占点 ${reward.captures} · 胜利加成 ${reward.victoryBonus}，按 ${Math.round(reward.multiplier * 100)}% 结算：+${reward.experience} EXP · +${reward.coins} 校币`
             : "";

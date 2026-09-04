@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.8"
+const pluginVersion = "0.3.9"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -152,6 +152,7 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lobby/ai", server.createAILobby)
 	mux.HandleFunc("/api/lobby/pvp", server.joinPVPQueue)
 	mux.HandleFunc("/api/lobby/status", server.lobbyStatus)
+	mux.HandleFunc("/api/lobby/cancel", server.cancelPVPQueue)
 	mux.HandleFunc("/api/match/status", server.matchStatus)
 	mux.HandleFunc("/api/match/heartbeat", server.matchHeartbeat)
 	mux.HandleFunc("/api/match/disconnect", server.matchDisconnect)
@@ -165,6 +166,12 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/performance-ui.js", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := staticFiles.ReadFile("static/performance-ui.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("/result-progression.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/result-progression.js")
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
@@ -648,7 +655,9 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	room, err := server.createBattle(map[string]any{"name": name, "mode": "pvp", "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "humanTeams": []string{"pku", "thu"}, "serverOpening": input.Pace})
 	if err != nil {
 		server.mu.Lock()
-		*queue = first
+		if *queue == nil {
+			*queue = first
+		}
 		server.mu.Unlock()
 		writeError(writer, http.StatusServiceUnavailable, err.Error())
 		return
@@ -661,7 +670,9 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		delete(server.data.Matches, room)
 		delete(server.ready, first.UserID)
 		delete(server.ready, secondID)
-		*queue = first
+		if *queue == nil {
+			*queue = first
+		}
 		server.mu.Unlock()
 		server.deleteBattle(room)
 		writeError(writer, http.StatusServiceUnavailable, "战局未保存，请重试")
@@ -688,8 +699,7 @@ func (server *hubServer) lobbyStatus(writer http.ResponseWriter, request *http.R
 		writeJSON(writer, http.StatusOK, ready)
 		return
 	}
-	queued := (server.waiting != nil && server.waiting.UserID == user.ID) || (server.waitingBlitz != nil && server.waitingBlitz.UserID == user.ID)
-	writeJSON(writer, http.StatusOK, map[string]any{"queued": queued})
+	writeJSON(writer, http.StatusOK, server.queueStatusLocked(user.ID))
 }
 
 func (server *hubServer) matchForUserLocked(userID, roomCode string) *matchRecord {
@@ -833,6 +843,7 @@ func (server *hubServer) completeMatchLocked(match *matchRecord, winner, reason 
 			user.SpeedCards = map[string]int{}
 		}
 		user.Experience[team] += reward.Experience
+		reward.Progression = rewardProgression(beforeUsers[userID].Experience[team], user.Experience[team])
 		user.SchoolCoins[team] += reward.Coins
 		match.Rewards[userID] = reward
 		if reward.Experience > 0 {

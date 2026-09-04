@@ -3635,12 +3635,14 @@
                 <button class="battle-action" id="battleAction">
                   开始匹配
                 </button>
+                <button id="cancelQueue" class="battle-action hidden" type="button">取消匹配</button>
                 <p
                   class="queue-state"
                   id="queueState"
                   role="status"
                   aria-live="polite"
                 ></p>
+                <button id="queueAI" class="hidden" type="button">等待较久，改玩人机</button>
               </section>
             </div>
             <p class="battle-note">
@@ -4518,6 +4520,7 @@
       async function refresh() {
         try {
           render((await api("api/me")).profile);
+          await resumeQueue();
         } catch (error) {
           $("authPanel").classList.remove("hidden");
           $("dashboard").classList.add("hidden");
@@ -4535,6 +4538,77 @@
             "[data-battle-mode],[data-team],[data-difficulty],#autoTeam,#speedCard",
           )
           .forEach((control) => (control.disabled = busy));
+      }
+      let queueGeneration = 0;
+      function stopQueue(message = "") {
+        queueGeneration++;
+        clearInterval(poll);
+        poll = null;
+        setQueueBusy(false);
+        $("battleAction").disabled = false;
+        $("battleAction").classList.remove("hidden");
+        setBattleMode(battleMode);
+        $("cancelQueue").classList.add("hidden");
+        $("queueAI").classList.add("hidden");
+        $("queueState").textContent = message;
+      }
+      async function cancelQueue(forAI = false) {
+        const button = $("cancelQueue");
+        if (button.disabled) return;
+        button.disabled = true;
+        $("queueAI").disabled = true;
+        try {
+          const result = await api("api/lobby/cancel", {method: "POST", body: "{}"});
+          if (result.joinUrl) { location.href = result.joinUrl; return; }
+          if (!result.cancelled) throw new Error("取消尚未确认，请稍候");
+          stopQueue("已取消匹配");
+          if (forAI) {
+            setBattleMode(battleMode.startsWith("blitz-") ? "blitz-ai" : "ai");
+            $("queueState").textContent = "已取消匹配，点击开始训练进入人机对局。";
+          }
+        } catch(error) { $("queueState").textContent = error.message; }
+        finally { button.disabled = false; $("queueAI").disabled = false; }
+      }
+      $("cancelQueue").onclick = () => cancelQueue();
+      $("queueAI").onclick = () => cancelQueue(true);
+      function watchQueue() {
+        const action = $("battleAction");
+        action.disabled = true;
+        setQueueBusy(true);
+          $("queueState").textContent = "正在寻找另一名玩家…";
+          $("cancelQueue").classList.remove("hidden");
+          action.classList.add("hidden");
+          action.textContent = "匹配中";
+          clearInterval(poll);
+          const generation = ++queueGeneration;
+          let polling = false;
+          poll = setInterval(async () => {
+            if (polling) return;
+            polling = true;
+            try {
+              const state = await api("api/lobby/status");
+              if (generation !== queueGeneration) return;
+              if (state.joinUrl) { location.href = state.joinUrl; return; }
+              if (state.creating) { $("queueState").textContent = "已找到玩家，正在创建战局…"; return; }
+              if (!state.queued) { stopQueue("匹配已结束，可以重新匹配或选择人机。"); return; }
+              const seconds = state.waitedSeconds || 0;
+              $("queueState").textContent = seconds >= 45
+                ? `已等待 ${seconds} 秒，暂时没有合适的玩家。可继续等待，或取消后改玩人机。`
+                : `正在寻找另一名玩家… ${seconds} 秒`;
+              $("queueAI").classList.toggle("hidden", seconds < 45);
+            } catch(error) {
+              if (generation === queueGeneration) $("queueState").textContent = "匹配状态暂时无法获取，正在重试；你仍可尝试取消。";
+            } finally { polling = false; }
+          }, 1500);
+      }
+      async function resumeQueue() {
+        try {
+          const state = await api("api/lobby/status");
+          if (queueBusy || (!state.queued && !state.creating)) return;
+          setBattleMode(state.pace === "blitz" ? "blitz-pvp" : "pvp");
+          setView("deployment");
+          watchQueue();
+        } catch {} // Profile remains usable while lobby status is unavailable.
       }
       async function beginBattle() {
         const action = $("battleAction");
@@ -4564,15 +4638,7 @@
             location.href = result.joinUrl;
             return;
           }
-          $("queueState").textContent = "正在寻找另一名玩家…";
-          action.textContent = "匹配中";
-          clearInterval(poll);
-          poll = setInterval(async () => {
-            try {
-              const state = await api("api/lobby/status");
-              if (state.joinUrl) location.href = state.joinUrl;
-            } catch {}
-          }, 1500);
+          watchQueue();
         } catch (error) {
           if (error.data?.activeMatch?.joinUrl) {
             location.replace(error.data.activeMatch.joinUrl);
@@ -4600,6 +4666,7 @@
           });
           setView("home");
           render(result.profile);
+          await resumeQueue();
         } catch (error) {
           $("authError").textContent = error.message;
         } finally {

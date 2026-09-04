@@ -20,7 +20,7 @@ import { runProductionCycles } from "./production";
 import { AI_TACTICS_VERSION, planStrategicOrders } from "./ai";
 import { simulateKernelMovement } from "./movement";
 import { captureSite } from "./capture";
-import { firstEnemyControlSite } from "./control";
+import { interceptRoute } from "./control";
 import {
   applyProgressionAction,
   progressDecisions,
@@ -325,24 +325,10 @@ export function createKernel(
     }
     if (owner === "player") source.orderPath = copyPath(path);
     if (owner === "player" && !selectedUnits) return 0;
-    const blocker =
-        purpose !== "logistics"
-          ? firstEnemyControlSite(state, team, path, targetId)
-          : undefined,
-      effectiveTarget = blocker ?? target,
-      effectivePath = blocker
-        ? pathfinder
-          ? pathfinder.find(
-              source.navX ?? source.x,
-              source.navZ ?? source.z,
-              blocker.navX ?? blocker.x,
-              blocker.navZ ?? blocker.z,
-            )
-          : ([[blocker.navX ?? blocker.x, blocker.navZ ?? blocker.z]] as [
-              number,
-              number,
-            ][])
-        : path;
+    const route = purpose === "logistics"
+      ? { path, blocker: undefined, continuationPath: undefined }
+      : interceptRoute(state, team, path, pathfinder, targetId);
+    const effectiveTarget = route.blocker ?? target, effectivePath = route.path;
     if (!effectivePath.length) return 0;
     const idle = state.units.filter(
       (unit) =>
@@ -356,7 +342,7 @@ export function createKernel(
       unit.movementOrder = {
         team, goalSiteId: target.id, goalX: target.navX ?? target.x, goalZ: target.navZ ?? target.z,
         sourceSiteId: owner === "player" ? sourceId : undefined,
-        purpose, effectiveSiteId: effectiveTarget.id,
+        purpose, effectiveSiteId: effectiveTarget.id, continuationPath: route.continuationPath,
       };
       unit.targetSiteId = effectiveTarget.id;
       unit.path = copyPath(effectivePath);
@@ -429,29 +415,12 @@ export function createKernel(
           ? pathfinder.find(unit.x, unit.z, tx, tz)
           : ([[tx, tz]] as [number, number][]);
         if (!path.length) continue;
-        const blocker = firstEnemyControlSite(
-            state,
-            action.team,
-            path,
-            target?.id,
-          ),
-          effectivePath = blocker
-            ? pathfinder
-              ? pathfinder.find(
-                  unit.x,
-                  unit.z,
-                  blocker.navX ?? blocker.x,
-                  blocker.navZ ?? blocker.z,
-                )
-              : ([[blocker.navX ?? blocker.x, blocker.navZ ?? blocker.z]] as [
-                  number,
-                  number,
-                ][])
-            : path;
+        const route = interceptRoute(state, action.team, path, pathfinder, target?.id);
+        const blocker = route.blocker, effectivePath = route.path;
         if (!effectivePath.length) continue;
         unit.movementOrder = {
           team: action.team, goalSiteId: target?.id, goalX: tx, goalZ: tz,
-          purpose: "combat", effectiveSiteId: blocker?.id ?? target?.id,
+          purpose: "combat", effectiveSiteId: blocker?.id ?? target?.id, continuationPath: route.continuationPath,
         };
         unit.targetSiteId = blocker?.id ?? target?.id;
         unit.path = effectivePath;
@@ -682,7 +651,9 @@ export function createKernel(
           (site) => site.team === enemy && !site.destroyed,
         ).length,
         strategicHours =
-          difficulty === "standard"
+          difficulty === "standard" && state.campaign.serverOpening === "blitz"
+            ? 4
+            : difficulty === "standard"
             ? profile.strategicHours *
               (friendlySiteCount < enemySiteCount ? 1.5 : 1)
             : profile.strategicHours;

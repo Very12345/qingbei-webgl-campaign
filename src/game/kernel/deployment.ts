@@ -5,6 +5,7 @@ import { TACTICAL_EVENTS } from "../../tactical-events";
 
 // Opt-in server scenarios use the same initialization before the first snapshot.
 export function prepareServerDeployment(game: GameData, grid: KernelNavGrid | undefined, opening: "standard" | "blitz") {
+  game.campaign.serverOpening = opening;
   for (const unit of game.units) {
     if (unit.targetSiteId != null || unit.movementOrder) continue;
     if (grid) {
