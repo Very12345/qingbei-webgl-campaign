@@ -13,6 +13,20 @@ export type KernelNavGrid = {
   mainComponent: number;
 };
 
+// Native hosts send the grid through JSON. Restore its packed representation
+// once per room instead of retaining six boxed-number arrays for its lifetime.
+export function compactKernelNavGrid(grid: KernelNavGrid): KernelNavGrid {
+  return {
+    ...grid,
+    blocked: grid.blocked instanceof Uint8Array ? grid.blocked : new Uint8Array(grid.blocked),
+    building: grid.building instanceof Uint8Array ? grid.building : new Uint8Array(grid.building),
+    water: grid.water instanceof Uint8Array ? grid.water : new Uint8Array(grid.water),
+    road: grid.road instanceof Uint8Array ? grid.road : new Uint8Array(grid.road),
+    elevation: grid.elevation instanceof Float32Array ? grid.elevation : new Float32Array(grid.elevation),
+    component: grid.component instanceof Int32Array ? grid.component : new Int32Array(grid.component),
+  };
+}
+
 export const navIndex = (grid: KernelNavGrid, x: number, z: number) => {
   const gx = Math.floor((x - grid.minX) / grid.cell),
     gz = Math.floor((z - grid.minZ) / grid.cell);
@@ -107,6 +121,11 @@ export const nearestRoadIndex = (
 const clonePath = (path: readonly [number, number][]) =>
   path.map(([x, z]) => [x, z] as [number, number]);
 
+// The grid's eight edge lengths are constant across every A* expansion.
+const NAV_DIRECTIONS = [
+  [-1,0], [1,0], [0,-1], [0,1], [-1,-1], [1,-1], [-1,1], [1,1],
+].map(([dx,dz]) => [dx,dz,Math.hypot(dx,dz)] as const);
+
 export class KernelPathfinder {
   private cache = new Map<string, [number, number][]>();
   private readonly cost: Float32Array;
@@ -137,6 +156,9 @@ export class KernelPathfinder {
       start = nearestOpenIndex(grid, fromX, fromZ),
       goal = nearestOpenIndex(grid, toX, toZ);
     if (start < 0 || goal < 0) return [];
+    // Arrived units ask for this same one-point path repeatedly. Do not churn
+    // the LRU (or evict useful long routes) for an answer requiring no search.
+    if (start === goal) return [navPoint(grid, goal)];
     const key = `${start}:${goal}:${allowBuildingFallback ? 1 : 0}`,
       cached = this.cache.get(key);
     if (cached) {
@@ -144,7 +166,6 @@ export class KernelPathfinder {
       this.cache.set(key, cached);
       return clonePath(cached);
     }
-    if (start === goal) return this.remember(key, [navPoint(grid, goal)]);
 
     this.searchId = (this.searchId + 1) >>> 0;
     if (this.searchId === 0) {
@@ -195,16 +216,6 @@ export class KernelPathfinder {
         }
         return first;
       },
-      directions = [
-        [-1, 0],
-        [1, 0],
-        [0, -1],
-        [0, 1],
-        [-1, -1],
-        [1, -1],
-        [-1, 1],
-        [1, 1],
-      ],
       pathBlocked = (index: number) =>
         !allowBuildingFallback && grid.building[index];
     push({ index: start, score: 0 });
@@ -215,7 +226,7 @@ export class KernelPathfinder {
       closed[current.index] = searchId;
       const currentX = current.index % grid.cols,
         currentZ = Math.floor(current.index / grid.cols);
-      for (const [dx, dz] of directions) {
+      for (const [dx, dz, distance] of NAV_DIRECTIONS) {
         const nextX = currentX + dx,
           nextZ = currentZ + dz;
         if (
@@ -236,13 +247,13 @@ export class KernelPathfinder {
           continue;
         const signedSlope =
             (grid.elevation[next] - grid.elevation[current.index]) /
-            (grid.cell * Math.hypot(dx, dz)),
+            (grid.cell * distance),
           slopeCost =
             signedSlope > 0
               ? 1 + signedSlope * 2.2
               : 1 + Math.abs(signedSlope) * 0.28,
           stepCost =
-            Math.hypot(dx, dz) *
+            distance *
             (grid.water[next]
               ? 7.2
               : grid.building[next]

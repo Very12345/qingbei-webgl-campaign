@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.9"
+const pluginVersion = "0.3.10"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -196,7 +196,7 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 			http.NotFound(writer, request)
 			return
 		}
-		data, _ := staticFiles.ReadFile("static/index.html")
+		data := hubPage("index.html")
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.Header().Set("Cache-Control", "no-cache")
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -227,13 +227,16 @@ func (server *hubServer) servePlay(writer http.ResponseWriter, request *http.Req
 		http.NotFound(writer, request)
 		return
 	}
-	data, _ := staticFiles.ReadFile("static/play.html")
+	data := hubPage("play.html")
 	securePageHeaders(writer, true)
 	_, _ = writer.Write(data)
 }
 
 func (server *hubServer) asset(writer http.ResponseWriter, request *http.Request) {
 	name := strings.TrimPrefix(request.URL.Path, "/assets/")
+	if serveResponsiveImage(writer, request, name) {
+		return
+	}
 	if renderServiceCosmetic(writer, name) {
 		return
 	}

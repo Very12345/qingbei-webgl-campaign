@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#282e2f" />
     <title>解放清华园 · 指挥部</title>
+    <script data-asset-base="assets/">/* ADAPTIVE_IMAGE_BOOTSTRAP */</script>
     <style>
       :root {
+        --campus-art: url("assets/campus-command-v1-480.webp");
+        --field-art: url("assets/field-table-v1-256.webp");
         color-scheme: dark;
         --cream: #e4e2d1;
         --muted: #b7b7a6;
@@ -17,7 +20,7 @@
           "Arial Narrow", "Roboto Condensed", "Microsoft YaHei", Arial,
           sans-serif;
         --metal:
-          linear-gradient(#24292de8, #252b2de8), url("assets/field-table.png");
+          linear-gradient(#24292de8, #252b2de8), var(--field-art);
       }
       * {
         box-sizing: border-box;
@@ -25,7 +28,7 @@
       body {
         margin: 0;
         min-width: 320px;
-        background: #777051 url("assets/field-table.png") center/cover fixed;
+        background: #777051 var(--field-art) center/cover fixed;
         color: var(--cream);
         font: 14px/1.5 var(--type);
       }
@@ -169,7 +172,7 @@
         height: 52px;
         background:
           linear-gradient(#545c38bb, #292e1acc),
-          url("assets/campus-command.png") 50% 50% / auto 120px;
+          var(--campus-art) 50% 50% / auto 120px;
         border: 2px solid #a69865;
         box-shadow: inset 0 0 0 2px #d6d3b64a;
         font-size: 25px;
@@ -316,7 +319,7 @@
       .main-nav button.active {
         color: var(--orange);
         background:
-          linear-gradient(#1c2429e6, #24292ce6), url("assets/field-table.png");
+          linear-gradient(#1c2429e6, #24292ce6), var(--field-art);
         border-color: #c2b89180;
         box-shadow:
           inset 0 0 15px #0a111b,
@@ -352,7 +355,7 @@
         padding: 0;
         border: 2px solid #b3b3a57c;
         text-align: left;
-        background: url("assets/campus-command.png") center 58% / cover;
+        background: var(--campus-art) center 58% / cover;
         box-shadow:
           0 4px 8px #151711c9,
           inset 0 0 0 2px #c4c7b644;
@@ -425,7 +428,7 @@
         border: 2px solid #a4ada277;
         background:
           linear-gradient(90deg, #24382ede, #35413388),
-          url("assets/campus-command.png") 25% 60% / auto 250px;
+          var(--campus-art) 25% 60% / auto 250px;
         box-shadow:
           1px 3px 7px #1119,
           inset 0 0 0 1px #d0d2b944;
@@ -433,12 +436,12 @@
       .mode-tile.training {
         background:
           linear-gradient(90deg, #23343ddb, #22354675),
-          url("assets/campus-command.png") 85% 60% / auto 250px;
+          var(--campus-art) 85% 60% / auto 250px;
       }
       .mode-tile.supplies {
         background:
           linear-gradient(#46522dec, #3f492ce0),
-          url("assets/field-table.png") center/cover;
+          var(--field-art) center/cover;
       }
       .mode-tile .symbol {
         width: 51px;
@@ -493,7 +496,7 @@
         gap: 16px;
         border: 1px solid #acac936e;
         background:
-          linear-gradient(#665c38dd, #655c36e8), url("assets/field-table.png");
+          linear-gradient(#665c38dd, #655c36e8), var(--field-art);
         padding: 17px 21px;
         box-shadow:
           inset 1px 1px #d1c59466,
@@ -616,7 +619,7 @@
         min-height: 240px;
         background:
           linear-gradient(145deg, #80372fd9, #4c2323ed),
-          url("assets/field-table.png");
+          var(--field-art);
         background-size: auto, 420px;
         border: 5px solid #d6cc99;
         border-radius: 6px;
@@ -652,7 +655,7 @@
       .thu .deck-back {
         background:
           linear-gradient(145deg, #4d5369e8, #273341eb),
-          url("assets/field-table.png");
+          var(--field-art);
       }
       .deck-emblem {
         display: flex;
@@ -837,7 +840,7 @@
         padding: 10px 16px;
         border: 1px solid #cbcdb5;
         background:
-          linear-gradient(#dfdfcdee, #babbaceb), url("assets/field-table.png");
+          linear-gradient(#dfdfcdee, #babbaceb), var(--field-art);
         color: #272b27;
         font-weight: 900;
         font-size: 22px;
@@ -850,7 +853,7 @@
       .battle-action:hover:not(:disabled),
       .primary:hover:not(:disabled) {
         background:
-          linear-gradient(#e1b65bee, #c28d37eb), url("assets/field-table.png");
+          linear-gradient(#e1b65bee, #c28d37eb), var(--field-art);
       }
       .queue-state {
         text-align: center;
@@ -965,7 +968,7 @@
         gap: 14px;
         padding: 12px 18px;
         background:
-          linear-gradient(#989061cf, #686847e6), url("assets/field-table.png");
+          linear-gradient(#989061cf, #686847e6), var(--field-art);
         border: 3px double #d2c89c;
         box-shadow: 2px 4px 5px #121b11c2;
         transform: rotate(-3deg);
@@ -1017,7 +1020,7 @@
         box-shadow: 4px 8px 16px #10180ea6;
         background:
           linear-gradient(0deg, #111d15ed, transparent 70%),
-          url("assets/campus-command.png") center/cover;
+          var(--campus-art) center/cover;
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
@@ -1989,7 +1992,7 @@
         padding: 0;
         background:
           linear-gradient(#24312bc9, #1b2a22dc),
-          url("assets/field-table.png") center/650px;
+          var(--field-art) center/650px;
       }
       .profile-bar[aria-current="page"] {
         color: var(--orange);
@@ -2001,7 +2004,7 @@
       }
       .nation-list {
         background:
-          linear-gradient(#242b2bed, #202828f2), url("assets/field-table.png");
+          linear-gradient(#242b2bed, #202828f2), var(--field-art);
         border-right: 2px solid #0a151580;
         padding: 75px 0 30px;
       }
@@ -2096,7 +2099,7 @@
         height: 169px;
         background:
           linear-gradient(0deg, #101c15b0, transparent 80%),
-          url("assets/campus-command.png") 17% 63% / auto 270px;
+          var(--campus-art) 17% 63% / auto 270px;
         border: 5px solid #a6955e;
         box-shadow:
           inset 0 0 0 2px #e5d4a791,
@@ -2529,7 +2532,7 @@
         border: 1px solid #8fa57455;
         background:
           linear-gradient(#637041c9, #4e603de0),
-          url("assets/field-table.png") center/600px;
+          var(--field-art) center/600px;
         padding: 23px 0 17px;
       }
       .reward-viewport:focus-visible {

@@ -11,6 +11,7 @@ import type {
 import { defaultResearchState } from "../research";
 import {
   KernelPathfinder,
+  compactKernelNavGrid,
   navPoint,
   nearestOpenIndex,
   type KernelNavGrid,
@@ -253,6 +254,7 @@ export function createKernel(
     networkCampaignSignature = "";
   const networkUnitSignatures = new Map<number, CompactUnitNetworkState>(),
     networkSiteSignatures = new Map<number, string>();
+  if (options.navGrid) options = {...options, navGrid: compactKernelNavGrid(options.navGrid)};
   const pathfinder = options.navGrid
       ? new KernelPathfinder(options.navGrid, 12_000)
       : null,

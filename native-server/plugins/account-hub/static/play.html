@@ -5,15 +5,18 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#171a12" />
     <title>解放清华园 · 战区行动</title>
+    <script data-asset-base="../assets/">/* ADAPTIVE_IMAGE_BOOTSTRAP */</script>
     <style>
       :root {
+        --campus-art: url("../assets/campus-command-v1-480.webp");
+        --field-art: url("../assets/field-table-v1-256.webp");
         --command-paper: #dedfca;
         --command-brass: #c0c3a5;
         --command-ink: #232c2c;
         --command-type: "Arial Narrow", "Microsoft YaHei", Arial, sans-serif;
         --command-metal:
           linear-gradient(#252c2eef, #202a2de8),
-          url("../assets/field-table.png");
+          var(--field-art);
       }
       * {
         box-sizing: border-box;
@@ -41,7 +44,7 @@
         place-items: center;
         background:
           linear-gradient(#18232144, #131e18d9),
-          url("../assets/campus-command.png") center/cover;
+          var(--campus-art) center/cover;
         color: var(--command-paper);
         font-family: var(--command-type);
         transition:
@@ -512,7 +515,7 @@
         width: 100%;
         background:
           linear-gradient(#26352ff5, #15291ff5),
-          url("../assets/field-table.png");
+          var(--field-art);
         border: 1px solid #9dad837d;
         box-shadow: 0 10px 30px #001e11a6;
         overflow: hidden;
