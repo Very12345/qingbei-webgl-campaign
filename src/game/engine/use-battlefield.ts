@@ -370,9 +370,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             )
           : 0.55,
         distance = Math.max(2.4, extent * 1.25 + 1.15),
-        ground = terrainHeight(regions.main, reviewSite.x, reviewSite.z);
+        ground = terrainHeight(regions.main, reviewSite.x, reviewSite.z),
+        reviewProfile = REAL_LANDMARK_BY_SITE.get(reviewSite.id),
+        bearing = reviewProfile?.entranceDirection == null ? null : reviewProfile.entranceDirection * Math.PI / 180,
+        viewX = bearing == null ? 0.52 : Math.sin(bearing),
+        viewZ = bearing == null ? 0.86 : -Math.cos(bearing);
       controls.target.set(reviewSite.x, ground + 0.12, reviewSite.z);
-      camera.position.set(reviewSite.x + distance * 0.52, ground + Math.max(1.8, extent * 0.72 + 1.2), reviewSite.z + distance * 0.86);
+      camera.position.set(reviewSite.x + distance * viewX, ground + Math.max(1.8, extent * 0.72 + 1.2), reviewSite.z + distance * viewZ);
       camera.lookAt(controls.target);
       controls.update();
     }
@@ -1537,7 +1541,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         texture?: THREE.Texture;
         roughness?: THREE.Texture;
       };
-      const roadBuckets: Record<"asphalt" | "path" | "dirt", RoadBucket> = {
+      const roadBuckets: Record<"asphalt" | "path" | "dirt" | "curb", RoadBucket> = {
           asphalt: {
             positions: [],
             indices: [],
@@ -1566,6 +1570,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             color: realCampus ? 0xeeeae2 : 0xb9ad91,
             lift: 0.048,
             renderOrder: 4,
+            texture: campusTextures?.paving,
+            roughness: campusTextures?.pavingRoughness,
+          },
+          curb: {
+            positions: [],
+            indices: [],
+            uvs: [],
+            vertexIndex: 0,
+            color: 0xd8d3c8,
+            lift: 0.03,
+            renderOrder: 1,
             texture: campusTextures?.paving,
             roughness: campusTextures?.pavingRoughness,
           },
@@ -1743,7 +1758,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           displayWidth = Math.max(road.width, realCampus ? pedestrianRoad ? 0.04 : 0.08 : pedestrianRoad ? 0.15 : 0.24);
         let chunk: [number, number][] = [];
         const flushChunk = () => {
-          if (chunk.length > 1) addRoadStrip(bucket, chunk, displayWidth);
+          if (chunk.length > 1) {
+            if (realCampus && !pedestrianRoad && (road.sidewalk && road.sidewalk !== "no" || ["primary","secondary","tertiary","residential","living_street"].includes(kind)))
+              addRoadStrip(roadBuckets.curb, chunk, displayWidth + 0.055);
+            addRoadStrip(bucket, chunk, displayWidth);
+          }
           chunk = [];
         };
         for (let k = 1; k < road.points.length; k++) {
@@ -2022,6 +2041,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               if (distance > longest) { longest = distance; angle = Math.atan2(dz, dx); }
             }
           }
+          if (landmark.entranceDirection != null) angle = landmark.entranceDirection * Math.PI / 180;
           const axisX = Math.cos(angle), axisZ = Math.sin(angle), sideX = -axisZ, sideZ = axisX,
             projections = points.length ? points.map(point => ({ along: (point[0] - centerX) * axisX + (point[1] - centerZ) * axisZ, side: (point[0] - centerX) * sideX + (point[1] - centerZ) * sideZ })) : [{ along: -0.3, side: -0.08 }, { along: 0.3, side: 0.08 }],
             length = Math.max(0.24, Math.max(...projections.map(value => value.along)) - Math.min(...projections.map(value => value.along))),
@@ -2029,7 +2049,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             base = Math.max(terrainHeight(r, centerX, centerZ), ...points.map(point => terrainHeight(r, point[0], point[1]))), height = landmark.heightMeters * buildingMeterScale,
             facade = landmark.facadeColor, trim = landmark.secondaryColor, roof = landmark.roofColor,
             rotation = -angle,
-            at = (along: number, side: number) => [centerX + axisX * along + sideX * side, centerZ + axisZ * along + sideZ * side] as const,
+            entranceRadians = landmark.entranceDirection == null ? null : landmark.entranceDirection * Math.PI / 180,
+            entranceX = entranceRadians == null ? sideX : Math.sin(entranceRadians),
+            entranceZ = entranceRadians == null ? sideZ : -Math.cos(entranceRadians),
+            frontSign = sideX * entranceX + sideZ * entranceZ >= 0 ? 1 : -1,
+            at = (along: number, side: number) => [centerX + axisX * along + sideX * side * frontSign, centerZ + axisZ * along + sideZ * side * frontSign] as const,
             boxAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = facade) => { const [x, z] = at(along, side); push("box", x, y, z, sx, sy, sz, color, rotation); },
             columnAt = (along: number, side: number, y: number, radius: number, sy: number, color = trim) => { const [x, z] = at(along, side); push("column", x, y, z, radius, sy, radius, color, rotation); },
             roofAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = roof) => { const [x, z] = at(along, side); push("roof", x, y, z, sx, sy, sz, color, rotation); };
@@ -2052,15 +2076,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               break;
             case "pku-library": {
               const top = base + height;
-              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, top + 0.04, length * 0.34, 0.08, depth * 0.96);
+              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, top + 0.025, length * 0.27, 0.05, depth * 0.58);
               boxAt(0, depth * 0.51, base + height * 0.32, length * 0.22, height * 0.42, 0.02, "#395d67");
               for (let step = 0; step < 4; step++) boxAt(0, depth * (0.53 + step * 0.025), base + 0.008 + step * 0.012, length * (0.28 + step * 0.06), 0.015, depth * 0.05, trim);
               break;
             }
             case "xuetang":
-              roofAt(0, 0, base + height + 0.035, length * 1.05, 0.07, depth * 1.08);
-              boxAt(0, depth * 0.52, base + height * 0.5, length * 0.28, height * 0.86, 0.02, trim);
+              roofAt(0, 0, base + height + 0.025, length * 0.92, 0.05, depth * 0.74);
+              boxAt(0, depth * 0.52, base + height * 0.32, length * 0.2, height * 0.48, 0.02, trim);
               for (const along of [-length * 0.09, length * 0.09]) columnAt(along, depth * 0.59, base + height * 0.48, 0.014, height * 0.75);
+              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.28, 0.025, 0.03, trim);
               break;
             case "domed-auditorium": {
               const body = height * 0.5, domeRadius = Math.min(length, depth) * 0.36;
@@ -2071,18 +2096,23 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               break;
             }
             case "central-main": {
-              const body = height * 0.46, towerWidth = Math.min(length * 0.28, 1.05);
-              boxAt(0, 0, base + body + (height - body) * 0.48, towerWidth, (height - body) * 0.96, Math.min(depth * 0.45, 0.86), facade);
-              boxAt(0, depth * 0.51, base + body * 0.56, length * 0.24, body * 0.8, 0.025, trim);
-              for (const along of [-length * 0.09, length * 0.09]) columnAt(along, depth * 0.59, base + body * 0.48, 0.014, body * 0.7);
-              roofAt(0, 0, base + height + 0.04, towerWidth * 1.12, 0.08, Math.min(depth * 0.5, 0.3));
+              const body = height * 0.46, lowerWidth = Math.min(length * 0.22, 0.5), lowerDepth = Math.min(depth * 0.34, 0.38), upperHeight = height - body;
+              boxAt(0, 0, base + body + upperHeight * 0.34, lowerWidth, upperHeight * 0.68, lowerDepth, facade);
+              boxAt(0, 0, base + body + upperHeight * 0.78, lowerWidth * 0.72, upperHeight * 0.26, lowerDepth * 0.72, trim);
+              boxAt(0, depth * 0.52, base + body * 0.22, length * 0.12, body * 0.24, 0.025, "#3e514f");
+              for (const along of [-length * 0.075, -length * 0.025, length * 0.025, length * 0.075]) columnAt(along, depth * 0.57, base + body * 0.45, 0.011, body * 0.66);
+              roofAt(0, 0, base + height + 0.025, lowerWidth * 0.72, 0.05, lowerDepth * 0.72);
               break;
             }
             case "historic-library":
-            case "historic-science":
-              roofAt(0, 0, base + height + 0.035, length * 1.04, 0.07, depth * 1.08);
-              boxAt(0, depth * 0.51, base + height * 0.52, length * 0.22, height * 0.82, 0.02, trim);
+              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, base + height + 0.022, length * 0.27, 0.045, depth * 0.56);
               for (const along of [-length * 0.075, length * 0.075]) columnAt(along, depth * 0.58, base + height * 0.48, 0.012, height * 0.68);
+              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.22, 0.025, 0.03, trim);
+              break;
+            case "historic-science":
+              roofAt(0, 0, base + height + 0.022, length * 0.9, 0.045, depth * 0.78);
+              for (const along of [-length * 0.075, length * 0.075]) columnAt(along, depth * 0.58, base + height * 0.48, 0.012, height * 0.68);
+              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.22, 0.025, 0.03, trim);
               break;
             case "modern-auditorium":
               for (let tier = 0; tier < 3; tier++) boxAt(0, depth * (0.12 + tier * 0.04), base + height + 0.025 + tier * 0.025, length * (0.9 - tier * 0.12), 0.04, depth * (0.72 - tier * 0.12), tier === 2 ? roof : trim);
@@ -2100,7 +2130,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             }
             case "dormitory":
               boxAt(0, 0, base + height + 0.015, length * 0.94, 0.03, depth * 0.92, roof);
-              boxAt(0, depth * 0.52, base + Math.min(0.1, height * 0.35), Math.min(0.16, length * 0.24), Math.min(0.18, height * 0.58), 0.02, trim);
+              boxAt(0, depth * 0.52, base + Math.min(0.055, height * 0.25), Math.min(0.12, length * 0.18), Math.min(0.09, height * 0.36), 0.018, trim);
               break;
             case "dining-hall":
               boxAt(0, depth * 0.56, base + Math.min(0.16, height * 0.45), Math.min(0.42, length * 0.52), 0.03, Math.min(0.14, depth * 0.3), trim);
@@ -2140,7 +2170,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const windowMatrices: THREE.Matrix4[] = [],
         doorMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
-        windowLimit = r === regions.main ? 18000 : 2600,
+        windowLimit = r === regions.main ? realCampus ? 48000 : 18000 : 2600,
         detailedBuildings = [...gameplayBuildings(r)].sort((a: any, b: any) => {
           const ap = REAL_BUILDING_BY_KEY.get(`${a.osmType}/${a.osmId}`), bp = REAL_BUILDING_BY_KEY.get(`${b.osmType}/${b.osmId}`);
           return Number(bp?.siteId != null) - Number(ap?.siteId != null) || Number(!!bp) - Number(!!ap);
@@ -4396,11 +4426,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         waterBounds=regions.main.waters.map((water:any)=>({minX:Math.min(...water.points.map((point:number[])=>point[0]))-.32,maxX:Math.max(...water.points.map((point:number[])=>point[0]))+.32,minZ:Math.min(...water.points.map((point:number[])=>point[1]))-.32,maxZ:Math.max(...water.points.map((point:number[])=>point[1]))+.32})),
         pushTree=(x:number,z:number,preferredVariant?:number)=>{
           const key=`${Math.round(x/.08)}/${Math.round(z/.08)}`;
-          if(treePositions.length>=3500||seen.has(key)||!insideCampus(x,z)||insideObstacle(x,z)||gameRef.current.sites.some(site=>Math.hypot(site.x-x,site.z-z)<.22))return;
+          if(treePositions.length>=2600||seen.has(key)||!insideCampus(x,z)||insideObstacle(x,z)||gameRef.current.sites.some(site=>Math.hypot(site.x-x,site.z-z)<.22))return;
           const besideWater=waterBounds.some((water:any)=>x>=water.minX&&x<=water.maxX&&z>=water.minZ&&z<=water.maxZ),hash=Math.abs(Math.round(x*100)*31+Math.round(z*100)*17),variant=besideWater?3:preferredVariant??hash%3;
           seen.add(key);treePositions.push({x,y:terrainHeight(regions.main,x,z),z,variant,scale:.82+(hash%7)*.05});
         };
-      for(const campus of ["pku","thu"] as const){const candidates=SATELLITE_TREE_POINTS[campus],target=campus==="pku"?900:1600,threshold=Math.min(1,target/candidates.length);for(const point of candidates){const x=Math.round(point[0]*1000),z=Math.round(point[1]*1000),hash=(Math.imul(x,73856093)^Math.imul(z,19349663))>>>0;if(hash/4294967296<threshold)pushTree(point[0],point[1]);}}
+      for(const campus of ["pku","thu"] as const){const candidates=SATELLITE_TREE_POINTS[campus],target=campus==="pku"?650:1100,threshold=Math.min(1,target/candidates.length);for(const point of candidates){const x=Math.round(point[0]*1000),z=Math.round(point[1]*1000),hash=(Math.imul(x,73856093)^Math.imul(z,19349663))>>>0;if(hash/4294967296<threshold)pushTree(point[0],point[1]);}}
       for(const [x,z] of regions.main.trees??[])pushTree(x,z);
       for(const [rowIndex,row] of (regions.main.treeRows??[]).entries())for(let segment=1;segment<row.length;segment++){
         const a=row[segment-1],b=row[segment],dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),count=Math.max(1,Math.floor(length/.26));
