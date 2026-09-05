@@ -1961,12 +1961,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             wallTone.r,
             wallTone.g,
             wallTone.b,
-            roofTone.r,
-            roofTone.g,
-            roofTone.b,
+            realCampus ? wallTone.r : roofTone.r,
+            realCampus ? wallTone.g : roofTone.g,
+            realCampus ? wallTone.b : roofTone.b,
           );
           bv += 2;
         }
+        const roofStart = bv;
+        if (realCampus) for (const point of pts) {
+          bp.push(point[0], base + h, point[1]);
+          bu.push(point[0] * 8, point[1] * 8);
+          bc.push(roofTone.r, roofTone.g, roofTone.b);
+          bv++;
+        }
+        const roofVertex = (index: number) => realCampus ? roofStart + index : start + index * 2 + 1;
         for (let i = 0; i < pts.length; i++) {
           const j = (i + 1) % pts.length,
             a = start + i * 2,
@@ -1978,19 +1986,19 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             const xs=pts.map((p:number[])=>p[0]),zs=pts.map((p:number[])=>p[1]),alongX=Math.max(...xs)-Math.min(...xs)>=Math.max(...zs)-Math.min(...zs),extent=(alongX?Math.max(...xs)-Math.min(...xs):Math.max(...zs)-Math.min(...zs))*.36,
               ridgeStart=bv,ridgeA=[x+(alongX?-extent:0),z+(alongX?0:-extent)],ridgeB=[x+(alongX?extent:0),z+(alongX?0:extent)];
             for(const ridge of [ridgeA,ridgeB]){bp.push(ridge[0],base+h+appearance.roofHeight,ridge[1]);bu.push(ridge[0]*8,ridge[1]*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;}
-            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,mid=(alongX?(pts[i][0]+pts[j][0])/2-x:(pts[i][1]+pts[j][1])/2-z);bi.push(start+i*2+1,start+j*2+1,ridgeStart+(mid>0?1:0));}
+            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,mid=(alongX?(pts[i][0]+pts[j][0])/2-x:(pts[i][1]+pts[j][1])/2-z);bi.push(roofVertex(i),roofVertex(j),ridgeStart+(mid>0?1:0));}
           } else {
             const apex=bv;bp.push(x,base+h+appearance.roofHeight,z);bu.push(x*8,z*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;
-            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;bi.push(start+i*2+1,start+j*2+1,apex);}
+            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;bi.push(roofVertex(i),roofVertex(j),apex);}
           }
         } else for (const face of THREE.ShapeUtils.triangulateShape(
             pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
             [],
           ))
             bi.push(
-              start + face[0] * 2 + 1,
-              start + face[1] * 2 + 1,
-              start + face[2] * 2 + 1,
+              roofVertex(face[0]),
+              roofVertex(face[1]),
+              roofVertex(face[2]),
             );
       }
       const bg = new THREE.BufferGeometry();
