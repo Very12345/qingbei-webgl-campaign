@@ -3,9 +3,10 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { makeFreshGame } from "../src/game/create-game";
 import { osmRegions } from "../src/osm-map-data";
+import { osmRegions as realCampusRegions } from "../src/osm-map-data-real";
 import { buildKernelNavGrid } from "../src/game/kernel/build-navigation";
 
-const state = makeFreshGame(),
+const state = makeFreshGame("classic"),
   deterministicSeed = 0x51a7c0de;
 state.campaign.ai.seed = deterministicSeed;
 state.campaign.ai.seedByTeam = {
@@ -17,8 +18,7 @@ state.campaign.ai.personality = {
   thu: "工程统筹",
 };
 
-const grid = buildKernelNavGrid(osmRegions.main),
-  serializableGrid = {
+const serializeGrid = (grid: ReturnType<typeof buildKernelNavGrid>) => ({
     ...grid,
     blocked: [...grid.blocked],
     building: [...grid.building],
@@ -26,8 +26,10 @@ const grid = buildKernelNavGrid(osmRegions.main),
     road: [...grid.road],
     elevation: [...grid.elevation],
     component: [...grid.component],
-  },
-  seed = JSON.stringify({ state, navGrid: serializableGrid });
+  }),
+  serializableGrid = serializeGrid(buildKernelNavGrid(osmRegions.main)),
+  serializableRealGrid = serializeGrid(buildKernelNavGrid(realCampusRegions.main)),
+  seed = JSON.stringify({ state, navGrid: serializableGrid, navGridReal: serializableRealGrid });
 writeFileSync(
   resolve("native-server/kernel_seed.json.gz"),
   gzipSync(Buffer.from(seed), { level: 9 }),

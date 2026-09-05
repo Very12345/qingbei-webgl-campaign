@@ -1,6 +1,7 @@
 import type { CampaignEventCardSpec } from "../event-api";
 
 export type Team = "pku" | "thu";
+export type MapProfile = import("./map-profile").MapProfile;
 export type Stance = "defend" | "guard" | "standby";
 export type RegionId = "main";
 export type MapViewMode = "sites" | "control";
@@ -220,6 +221,8 @@ export type DecisionVote = {
 };
 
 export type CampaignState = {
+  mapProfile?: MapProfile;
+  mapGeometryVersion?: number;
   fieldEncounters?: {
     version: 1;
     tick: number;

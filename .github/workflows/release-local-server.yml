@@ -52,6 +52,7 @@ jobs:
           npm ci
           npm run test:field-encounters
           npm run test:mobile-support
+          npm run test:real-campus
           npm run build:kernel
       - name: Build server
         working-directory: native-server

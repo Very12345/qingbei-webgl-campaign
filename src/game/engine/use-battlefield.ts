@@ -9,13 +9,14 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { osmRegions } from "../../osm-map-data";
 import { runCampaignEventHooks, type CampaignEventCardSpec } from "../../event-api";
 import { ACADEMIC_YEAR_END_ISO, CALENDAR_EVENTS, DECISIONS } from "../../campaign-content";
 import { TACTICAL_EVENTS, type TacticalEventDefinition } from "../../tactical-events";
 import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
 import { isMobileClient, mobileSiteHitRadius } from "../../mobile-support";
+import {REAL_BUILDING_BY_KEY,REAL_LANDMARK_BY_KEY,REAL_LANDMARK_BY_SITE,isRealCampus,mapRegionsFor} from "../map-profile";
+import {SATELLITE_TREE_POINTS} from "../real-campus-satellite-trees";
 import { EVENT_CARDS } from "../events/event-cards";
 import {
   classifyIntent as kernelClassifyIntent,
@@ -179,6 +180,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     }
     const host = hostRef.current;
     if (!host) return;
+    const realCampus = isRealCampus(gameRef.current.campaign.mapProfile),
+      buildingMeterScale = 0.023;
     const mobileClient = isMobileClient();
     const renderer = new THREE.WebGLRenderer({
       antialias: !mobileClient,
@@ -210,20 +213,26 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       0.1,
       300,
     );
+    const reviewSiteId = Number(new URLSearchParams(location.search).get("review-site")),
+      reviewSite = Number.isInteger(reviewSiteId)
+        ? gameRef.current.sites.find((site) => site.id === reviewSiteId)
+        : undefined,
+      initialTargetX = reviewSite?.x ?? -22,
+      initialTargetZ = reviewSite?.z ?? 14;
     camera.position.set(
-      -22,
-      portraitViewport ? 36 : 24,
-      portraitViewport ? 50 : 36,
+      initialTargetX + (reviewSite ? -1.5 : 0),
+      reviewSite ? 2.2 : portraitViewport ? 36 : 24,
+      initialTargetZ + (reviewSite ? 2.8 : portraitViewport ? 36 : 22),
     );
-    camera.lookAt(-22, 0, 14);
+    camera.lookAt(initialTargetX, 0, initialTargetZ);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(-22, 0, 14);
+    controls.target.set(initialTargetX, 0, initialTargetZ);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enableRotate = false;
     controls.enableZoom = true;
-    controls.minDistance = mobileClient ? 9 : 13;
-    controls.maxDistance = mobileClient ? 82 : 58;
+    controls.minDistance = reviewSite ? 1.4 : mobileClient ? 9 : 13;
+    controls.maxDistance = reviewSite ? 15 : mobileClient ? 82 : 58;
     controls.zoomSpeed = mobileClient ? 1.08 : 0.72;
     controls.enablePan = true;
     controls.screenSpacePanning = false;
@@ -268,7 +277,26 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(moon);
     const mapGroup = new THREE.Group();
     scene.add(mapGroup);
-    const regions = osmRegions as unknown as Record<string, any>;
+    const campusTextureLoader = new THREE.TextureLoader(),
+      loadCampusTexture = (name: string, color = false) => {
+        const texture = campusTextureLoader.load(`${import.meta.env.BASE_URL}materials/${name}`);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        if (color) texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+      },
+      campusTextures = realCampus ? {
+        grass: loadCampusTexture("campus-grass-albedo.webp", true),
+        grassRoughness: loadCampusTexture("campus-grass-roughness.webp"),
+        asphalt: loadCampusTexture("campus-asphalt-albedo.webp", true),
+        asphaltRoughness: loadCampusTexture("campus-asphalt-roughness.webp"),
+        paving: loadCampusTexture("campus-paving-albedo.webp", true),
+        pavingRoughness: loadCampusTexture("campus-paving-roughness.webp"),
+        facade: loadCampusTexture("campus-facade-detail.webp", true),
+        facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
+        waterNormal: loadCampusTexture("campus-water-normal.webp"),
+      } : null;
+    const regions = mapRegionsFor(gameRef.current.campaign.mapProfile) as unknown as Record<string, any>;
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
       windowDetailMeshes: THREE.InstancedMesh[] = [],
       sportMaterials: THREE.MeshStandardMaterial[] = [];
@@ -293,7 +321,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const filtered = r.buildings.filter((building: any) => {
         const smallAnonymous =
           !building.name && footprintArea(building.points) < 0.13;
-        return !smallAnonymous || Math.abs(building.osmId) % 4 !== 0;
+        if (!realCampus)
+          return !smallAnonymous || Math.abs(building.osmId) % 4 !== 0;
+        const x=building.points.reduce((sum:number,point:number[])=>sum+point[0],0)/building.points.length,
+          z=building.points.reduce((sum:number,point:number[])=>sum+point[1],0)/building.points.length,
+          insideCampus=r.campuses.some((campus:any)=>(campus.name==="北京大学"||campus.name==="清华大学")&&pointInPolygon(x,z,campus.points));
+        return insideCampus || !smallAnonymous;
       });
       gameplayBuildingCache.set(r, filtered);
       return filtered;
@@ -317,12 +350,32 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         at = (ii: number, jj: number) =>
           (heights[Math.min(rows - 1, jj) * cols + Math.min(cols - 1, ii)] ||
             0) * terrainVerticalScale;
-      return THREE.MathUtils.lerp(
-        THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
-        THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
-        fv,
-      );
+      if (!realCampus)
+        return THREE.MathUtils.lerp(
+          THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
+          THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
+          fv,
+        );
+      const a = at(i, j), b = at(i + 1, j), c = at(i, j + 1), d = at(i + 1, j + 1);
+      return fu + fv <= 1
+        ? a + fu * (b - a) + fv * (c - a)
+        : d + (1 - fv) * (b - d) + (1 - fu) * (c - d);
     };
+    if (reviewSite) {
+      const reviewBuilding = regions.main.buildings.find((building: any) => `${building.osmType}/${building.osmId}` === reviewSite.osmKey),
+        extent = reviewBuilding
+          ? Math.max(
+              Math.max(...reviewBuilding.points.map((point: number[]) => point[0])) - Math.min(...reviewBuilding.points.map((point: number[]) => point[0])),
+              Math.max(...reviewBuilding.points.map((point: number[]) => point[1])) - Math.min(...reviewBuilding.points.map((point: number[]) => point[1])),
+            )
+          : 0.55,
+        distance = Math.max(2.4, extent * 1.25 + 1.15),
+        ground = terrainHeight(regions.main, reviewSite.x, reviewSite.z);
+      controls.target.set(reviewSite.x, ground + 0.12, reviewSite.z);
+      camera.position.set(reviewSite.x + distance * 0.52, ground + Math.max(1.8, extent * 0.72 + 1.2), reviewSite.z + distance * 0.86);
+      camera.lookAt(controls.target);
+      controls.update();
+    }
     type NavGrid = {
       cell: number;
       cols: number;
@@ -763,6 +816,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       })),
     ].map((area: any) => ({
       points: area.points,
+      name: area.name as string,
+      osmKey: area.osmType && area.osmId ? `${area.osmType}/${area.osmId}` : undefined,
       kind: area.obstacleKind as "building" | "water",
       minX: Math.min(...area.points.map((point: number[]) => point[0])),
       maxX: Math.max(...area.points.map((point: number[]) => point[0])),
@@ -956,16 +1011,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           needsPortal &&
           Math.hypot(anchorPoint[0] - site.x, anchorPoint[1] - site.z) > 0.6;
       });
-      gameRef.current.units.forEach((unit, index) => {
+      gameRef.current.units.forEach((unit) => {
         const current = navIndex(navGrid, unit.x, unit.z);
         if (current >= 0 && !navGrid.blocked[current]) return;
-        const home = gameRef.current.sites[unit.siteId];
-        if (!home) return;
-        const angle = ((index % 9) / 9) * Math.PI * 2;
-        unit.x = (home.navX ?? home.x) + Math.cos(angle) * 0.45;
-        unit.z = (home.navZ ?? home.z) + Math.sin(angle) * 0.45;
-        unit.tx = home.navX ?? home.x;
-        unit.tz = home.navZ ?? home.z;
+        const open = nearestClearIndex(unit.x, unit.z);
+        if (open < 0) return;
+        const [safeX,safeZ]=navPoint(navGrid,open),target=unit.targetSiteId==null?undefined:gameRef.current.sites[unit.targetSiteId];
+        unit.x=safeX;unit.z=safeZ;
+        if(target&&!target.destroyed){const path=findPath(safeX,safeZ,target.navX??target.x,target.navZ??target.z);unit.path=path;unit.pathIndex=0;const destination=path.at(-1);unit.tx=destination?.[0]??safeX;unit.tz=destination?.[1]??safeZ;}
+        else {unit.tx=safeX;unit.tz=safeZ;unit.path=undefined;unit.pathIndex=undefined;}
       });
     };
     refreshNavAnchors();
@@ -1002,6 +1056,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           3,
         ),
       );
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(clean.flatMap((point) => [point[0] * 8, point[1] * 8]), 2));
       g.setIndex(faces.flat());
       g.computeVertexNormals();
       return g;
@@ -1042,19 +1097,48 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         points: [[30.86, -5.91], [31.02, -2.48], [32.68, -2.5], [33.15, -2.53], [33, -6.03]],
       },
     ];
+    const namedRoadCell=3,
+      namedRoadIndex=new Map<string,{name:string;kind:string;x1:number;z1:number;x2:number;z2:number;width:number}[]>(),
+      registerNamedRoad=(road:any)=>{
+        if(!realCampus||!road.name)return;
+        for(let index=1;index<road.points.length;index++){
+          const [x1,z1]=road.points[index-1],[x2,z2]=road.points[index],segment={name:road.name,kind:road.kind,x1,z1,x2,z2,width:road.width};
+          for(let gx=Math.floor((Math.min(x1,x2)-road.width)/namedRoadCell);gx<=Math.floor((Math.max(x1,x2)+road.width)/namedRoadCell);gx++)for(let gz=Math.floor((Math.min(z1,z2)-road.width)/namedRoadCell);gz<=Math.floor((Math.max(z1,z2)+road.width)/namedRoadCell);gz++){
+            const key=`${gx}/${gz}`,bucket=namedRoadIndex.get(key);if(bucket)bucket.push(segment);else namedRoadIndex.set(key,[segment]);
+          }
+        }
+      },
+      namedRoadAt=(x:number,z:number)=>{
+        let best:{name:string;kind:string;distance:number}|undefined;
+        for(const segment of namedRoadIndex.get(`${Math.floor(x/namedRoadCell)}/${Math.floor(z/namedRoadCell)}`)??[]){
+          const dx=segment.x2-segment.x1,dz=segment.z2-segment.z1,length=dx*dx+dz*dz,t=length?THREE.MathUtils.clamp(((x-segment.x1)*dx+(z-segment.z1)*dz)/length,0,1):0,distance=Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t));
+          if(distance<=Math.max(.28,segment.width/2+.12)&&(!best||distance<best.distance))best={name:segment.name,kind:segment.kind,distance};
+        }
+        return best;
+      };
     const addRegion = (r: any) => {
       const { cols, rows, heights } = r.terrain,
         pos: number[] = [],
+        terrainUvs: number[] = [],
         terrainColors: number[] = [],
         idx: number[] = [];
       const scaledHeights = heights.map(
           (height: number) => height * terrainVerticalScale,
         ),
+        waterVisualAreas = r.waters.map((water: any) => ({
+          points: water.points,
+          minX: Math.min(...water.points.map((point: number[]) => point[0])),
+          maxX: Math.max(...water.points.map((point: number[]) => point[0])),
+          minZ: Math.min(...water.points.map((point: number[]) => point[1])),
+          maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
+          level: Math.min(...water.points.map((point: number[]) => terrainHeight(r, point[0], point[1]))) - 0.025,
+        })),
+        waterAt = (x: number, z: number) => waterVisualAreas.find((water: any) => x >= water.minX && x <= water.maxX && z >= water.minZ && z <= water.maxZ && pointInPolygon(x, z, water.points)),
         minimumHeight = Math.min(...scaledHeights),
         maximumHeight = Math.max(...scaledHeights),
         heightRange = Math.max(0.001, maximumHeight - minimumHeight),
-        lowlandColor = new THREE.Color(0x587d49),
-        highlandColor = new THREE.Color(0x9a9866),
+        lowlandColor = new THREE.Color(realCampus ? 0xd0d8bd : 0x587d49),
+        highlandColor = new THREE.Color(realCampus ? 0xd8cfb1 : 0x9a9866),
         terrainTone = new THREE.Color(),
         heightAt = (i: number, j: number) =>
           scaledHeights[
@@ -1065,7 +1149,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         for (let i = 0; i < cols; i++) {
           const x = r.offsetX - r.width / 2 + (i / (cols - 1)) * r.width,
             z = r.depth / 2 - (j / (rows - 1)) * r.depth,
-            height = heightAt(i, j),
+            rawHeight = heightAt(i, j),
+            water = waterAt(x, z),
+            height = realCampus && water ? Math.min(rawHeight, water.level - 0.08) : rawHeight,
             normalizedHeight = (height - minimumHeight) / heightRange,
             gradient = Math.hypot(
               heightAt(i + 1, j) - heightAt(i - 1, j),
@@ -1073,6 +1159,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             ),
             slopeShade = THREE.MathUtils.clamp(1 - gradient * 0.13, 0.72, 1);
           pos.push(x, height, z);
+          terrainUvs.push(x * 1.5, z * 1.5);
           terrainTone
             .copy(lowlandColor)
             .lerp(highlandColor, normalizedHeight * 0.82)
@@ -1089,6 +1176,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(terrainUvs, 2));
       geo.setAttribute(
         "color",
         new THREE.Float32BufferAttribute(terrainColors, 3),
@@ -1099,6 +1187,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         geo,
         new THREE.MeshStandardMaterial({
           vertexColors: true,
+          map: campusTextures?.grass ?? null,
+          roughnessMap: campusTextures?.grassRoughness ?? null,
           roughness: 0.98,
           side: THREE.FrontSide,
         }),
@@ -1107,6 +1197,94 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       terrain.castShadow = true;
       mapGroup.add(terrain);
       terrainMeshes.push(terrain);
+      if (realCampus && r.landcovers?.length) {
+        type LandcoverBucket = {
+          positions: number[];
+          indices: number[];
+          uvs: number[];
+          color: number;
+        };
+        const landcoverBuckets: Record<"lawn" | "garden" | "forest" | "pitch", LandcoverBucket> = {
+          lawn: { positions: [], indices: [], uvs: [], color: 0xd6dec9 },
+          garden: { positions: [], indices: [], uvs: [], color: 0xcbd8c1 },
+          forest: { positions: [], indices: [], uvs: [], color: 0xb9cbb7 },
+          pitch: { positions: [], indices: [], uvs: [], color: 0xc6dbc4 },
+        };
+        for (const cover of r.landcovers) {
+          const clean = cover.points.filter(
+            (point: number[], index: number, points: number[][]) =>
+              !index || Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1]) > 0.001,
+          );
+          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001)
+            clean.pop();
+          if (clean.length < 3) continue;
+          const bucket = cover.kind === "pitch"
+            ? landcoverBuckets.pitch
+            : cover.kind === "forest" || cover.kind === "wood"
+              ? landcoverBuckets.forest
+              : cover.kind === "garden"
+                ? landcoverBuckets.garden
+                : landcoverBuckets.lawn;
+          const base = bucket.positions.length / 3,
+            faces = THREE.ShapeUtils.triangulateShape(clean.map((point: number[]) => new THREE.Vector2(point[0], point[1])), []);
+          for (const point of clean) {
+            bucket.positions.push(point[0], terrainHeight(r, point[0], point[1]) + 0.018, point[1]);
+            bucket.uvs.push(point[0] * 1.5, point[1] * 1.5);
+          }
+          for (const face of faces) bucket.indices.push(base + face[0], base + face[1], base + face[2]);
+        }
+        for (const bucket of Object.values(landcoverBuckets)) {
+          if (!bucket.positions.length) continue;
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
+          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
+          geometry.setIndex(bucket.indices);
+          geometry.computeVertexNormals();
+          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+            color: bucket.color,
+            map: campusTextures?.grass ?? null,
+            roughnessMap: campusTextures?.grassRoughness ?? null,
+            roughness: 1,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+          }));
+          mesh.receiveShadow = false;
+          mesh.renderOrder = 1;
+          mapGroup.add(mesh);
+        }
+      }
+      if (realCampus && r.hardscapes?.length) {
+        const hardscapeBuckets = {
+          pedestrian: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xebe7df, texture: campusTextures?.paving, roughness: campusTextures?.pavingRoughness },
+          parking: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xd2d4d2, texture: campusTextures?.asphalt, roughness: campusTextures?.asphaltRoughness },
+        };
+        for (const area of r.hardscapes) {
+          const clean = area.points.filter(
+            (point: number[], index: number, points: number[][]) =>
+              !index || Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1]) > 0.001,
+          );
+          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001) clean.pop();
+          if (clean.length < 3) continue;
+          const bucket = area.kind === "parking" ? hardscapeBuckets.parking : hardscapeBuckets.pedestrian,
+            base = bucket.positions.length / 3,
+            faces = THREE.ShapeUtils.triangulateShape(clean.map((point: number[]) => new THREE.Vector2(point[0], point[1])), []);
+          for (const point of clean) { bucket.positions.push(point[0], terrainHeight(r, point[0], point[1]) + 0.026, point[1]); bucket.uvs.push(point[0] * 24, point[1] * 24); }
+          for (const face of faces) bucket.indices.push(base + face[0], base + face[1], base + face[2]);
+        }
+        for (const bucket of Object.values(hardscapeBuckets)) {
+          if (!bucket.positions.length) continue;
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
+          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
+          geometry.setIndex(bucket.indices);
+          geometry.computeVertexNormals();
+          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: bucket.color, map: bucket.texture ?? null, roughnessMap: bucket.roughness ?? null, roughness: 0.96, depthTest: false, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+          mesh.receiveShadow = false;
+          mesh.renderOrder = 8;
+          mapGroup.add(mesh);
+        }
+      }
       for (const campus of r.campuses ?? []) {
         const team: Team | null =
           campus.name === "北京大学"
@@ -1351,23 +1529,30 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       type RoadBucket = {
         positions: number[];
         indices: number[];
+        uvs: number[];
         vertexIndex: number;
         color: number;
         lift: number;
         renderOrder: number;
+        texture?: THREE.Texture;
+        roughness?: THREE.Texture;
       };
       const roadBuckets: Record<"asphalt" | "path" | "dirt", RoadBucket> = {
           asphalt: {
             positions: [],
             indices: [],
+            uvs: [],
             vertexIndex: 0,
-            color: 0x303840,
+            color: realCampus ? 0xd2d4d3 : 0x303840,
             lift: 0.035,
             renderOrder: 2,
+            texture: campusTextures?.asphalt,
+            roughness: campusTextures?.asphaltRoughness,
           },
           dirt: {
             positions: [],
             indices: [],
+            uvs: [],
             vertexIndex: 0,
             color: 0x9a805a,
             lift: 0.042,
@@ -1376,19 +1561,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           path: {
             positions: [],
             indices: [],
+            uvs: [],
             vertexIndex: 0,
-            color: 0xb9ad91,
+            color: realCampus ? 0xeeeae2 : 0xb9ad91,
             lift: 0.048,
             renderOrder: 4,
+            texture: campusTextures?.paving,
+            roughness: campusTextures?.pavingRoughness,
           },
         },
-        waterAreas = r.waters.map((water: any) => ({
-          points: water.points,
-          minX: Math.min(...water.points.map((point: number[]) => point[0])),
-          maxX: Math.max(...water.points.map((point: number[]) => point[0])),
-          minZ: Math.min(...water.points.map((point: number[]) => point[1])),
-          maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
-        })),
+        waterAreas = waterVisualAreas,
         inWater = (x: number, z: number) =>
           waterAreas.some(
             (water: any) =>
@@ -1421,9 +1603,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               0.004,
             centerIndex = bucket.vertexIndex;
           bucket.positions.push(x, flatY, z);
+          bucket.uvs.push(x * 8, z * 8);
           bucket.vertexIndex++;
           ring.forEach(([edgeX, edgeZ], step) => {
             bucket.positions.push(edgeX, flatY, edgeZ);
+            bucket.uvs.push(edgeX * 8, edgeZ * 8);
             bucket.vertexIndex++;
             if (step > 0)
               bucket.indices.push(
@@ -1500,6 +1684,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               terrainHeight(r, rightX, rightZ) + bucket.lift,
               rightZ,
             );
+            bucket.uvs.push(leftX * 8, leftZ * 8, rightX * 8, rightZ * 8);
             bucket.vertexIndex += 2;
             if (index > 0) {
               const previousLeft = firstVertex + (index - 1) * 2,
@@ -1527,65 +1712,26 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           "steps",
           "cycleway",
           "corridor",
-        ]),
-        vehicleCell = 3,
-        vehicleSegments: {
-          x1: number;
-          z1: number;
-          x2: number;
-          z2: number;
-          radius: number;
-        }[] = [],
-        vehicleIndex = new Map<string, number[]>();
-      for (const road of r.roads) {
+        ]);
+      for (const road of r.roads) registerNamedRoad(road);
+      const classicVehicleCell = 3,
+        classicVehicleSegments: {x1:number;z1:number;x2:number;z2:number;radius:number}[] = [],
+        classicVehicleIndex = new Map<string,number[]>();
+      if (!realCampus) for (const road of r.roads) {
         if (pedestrianKinds.has(road.kind)) continue;
         const radius = Math.max(road.width, 0.24) / 2;
         for (let index = 1; index < road.points.length; index++) {
-          const [x1, z1] = road.points[index - 1],
-            [x2, z2] = road.points[index],
-            segmentIndex = vehicleSegments.length;
-          vehicleSegments.push({ x1, z1, x2, z2, radius });
-          for (
-            let gx = Math.floor((Math.min(x1, x2) - radius) / vehicleCell);
-            gx <= Math.floor((Math.max(x1, x2) + radius) / vehicleCell);
-            gx++
-          )
-            for (
-              let gz = Math.floor((Math.min(z1, z2) - radius) / vehicleCell);
-              gz <= Math.floor((Math.max(z1, z2) + radius) / vehicleCell);
-              gz++
-            ) {
-              const key = `${gx}/${gz}`,
-                bucket = vehicleIndex.get(key);
-              if (bucket) bucket.push(segmentIndex);
-              else vehicleIndex.set(key, [segmentIndex]);
-            }
+          const [x1,z1]=road.points[index-1],[x2,z2]=road.points[index],segmentIndex=classicVehicleSegments.length;
+          classicVehicleSegments.push({x1,z1,x2,z2,radius});
+          for(let gx=Math.floor((Math.min(x1,x2)-radius)/classicVehicleCell);gx<=Math.floor((Math.max(x1,x2)+radius)/classicVehicleCell);gx++)for(let gz=Math.floor((Math.min(z1,z2)-radius)/classicVehicleCell);gz<=Math.floor((Math.max(z1,z2)+radius)/classicVehicleCell);gz++){
+            const key=`${gx}/${gz}`,bucket=classicVehicleIndex.get(key);if(bucket)bucket.push(segmentIndex);else classicVehicleIndex.set(key,[segmentIndex]);
+          }
         }
       }
-      const onVehicleSurface = (x: number, z: number) =>
-        (
-          vehicleIndex.get(
-            `${Math.floor(x / vehicleCell)}/${Math.floor(z / vehicleCell)}`,
-          ) ?? []
-        ).some((index) => {
-          const segment = vehicleSegments[index],
-            dx = segment.x2 - segment.x1,
-            dz = segment.z2 - segment.z1,
-            lengthSquared = dx * dx + dz * dz,
-            t = lengthSquared
-              ? THREE.MathUtils.clamp(
-                  ((x - segment.x1) * dx + (z - segment.z1) * dz) /
-                    lengthSquared,
-                  0,
-                  1,
-                )
-              : 0,
-            closestX = segment.x1 + dx * t,
-            closestZ = segment.z1 + dz * t;
-          return (
-            Math.hypot(x - closestX, z - closestZ) <= segment.radius + 0.055
-          );
-        });
+      const onClassicVehicleSurface=(x:number,z:number)=>(classicVehicleIndex.get(`${Math.floor(x/classicVehicleCell)}/${Math.floor(z/classicVehicleCell)}`)??[]).some(index=>{
+        const segment=classicVehicleSegments[index],dx=segment.x2-segment.x1,dz=segment.z2-segment.z1,length=dx*dx+dz*dz,t=length?THREE.MathUtils.clamp(((x-segment.x1)*dx+(z-segment.z1)*dz)/length,0,1):0;
+        return Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t))<=segment.radius+.055;
+      });
       for (const road of r.roads) {
         const kind = road.kind as string,
           pedestrianRoad = pedestrianKinds.has(kind),
@@ -1594,7 +1740,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             : kind === "track"
               ? roadBuckets.dirt
               : roadBuckets.asphalt,
-          displayWidth = Math.max(road.width, pedestrianRoad ? 0.15 : 0.24);
+          displayWidth = Math.max(road.width, realCampus ? pedestrianRoad ? 0.04 : 0.08 : pedestrianRoad ? 0.15 : 0.24);
         let chunk: [number, number][] = [];
         const flushChunk = () => {
           if (chunk.length > 1) addRoadStrip(bucket, chunk, displayWidth);
@@ -1613,8 +1759,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               sampleX = x1 + dx * t,
               sampleZ = z1 + dz * t;
             if (
-              inWater(sampleX, sampleZ) ||
-              (pedestrianRoad && onVehicleSurface(sampleX, sampleZ))
+              (!realCampus && inWater(sampleX, sampleZ)) ||
+              (!realCampus && pedestrianRoad && onClassicVehicleSurface(sampleX, sampleZ))
             ) {
               flushChunk();
               continue;
@@ -1640,6 +1786,38 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         flushChunk();
       }
+      if (realCampus) {
+        type RoadEndpoint = { x: number; z: number; width: number; pedestrian: boolean; bridge: boolean };
+        const endpointCell = 0.35,
+          endpointIndex = new Map<string, RoadEndpoint[]>(),
+          endpoints: RoadEndpoint[] = [];
+        for (const road of r.roads) {
+          if (road.points.length < 2) continue;
+          const pedestrian = pedestrianKinds.has(road.kind), width = Math.max(road.width, pedestrian ? 0.04 : 0.08);
+          for (const point of [road.points[0], road.points.at(-1)]) endpoints.push({ x: point[0], z: point[1], width, pedestrian, bridge: !!road.bridge });
+        }
+        for (const endpoint of endpoints) {
+          const key = `${Math.floor(endpoint.x / endpointCell)}/${Math.floor(endpoint.z / endpointCell)}`, bucket = endpointIndex.get(key);
+          if (bucket) bucket.push(endpoint); else endpointIndex.set(key, [endpoint]);
+        }
+        const stitched = new Set<string>();
+        for (const endpoint of endpoints) {
+          const gx = Math.floor(endpoint.x / endpointCell), gz = Math.floor(endpoint.z / endpointCell);
+          let closest: RoadEndpoint | undefined, distance = 0.32;
+          for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (const candidate of endpointIndex.get(`${gx + dx}/${gz + dz}`) ?? []) {
+            if (candidate.pedestrian !== endpoint.pedestrian) continue;
+            const gap = Math.hypot(endpoint.x - candidate.x, endpoint.z - candidate.z);
+            if (gap > 0.004 && gap < distance) { closest = candidate; distance = gap; }
+          }
+          if (!closest) continue;
+          const first = `${endpoint.x.toFixed(3)}/${endpoint.z.toFixed(3)}`, second = `${closest.x.toFixed(3)}/${closest.z.toFixed(3)}`, key = first < second ? `${first}|${second}` : `${second}|${first}`;
+          if (stitched.has(key)) continue;
+          const midpointX = (endpoint.x + closest.x) / 2, midpointZ = (endpoint.z + closest.z) / 2;
+          if (!endpoint.bridge && !closest.bridge && inWater(midpointX, midpointZ)) continue;
+          stitched.add(key);
+          addRoadStrip(endpoint.pedestrian || closest.pedestrian ? roadBuckets.path : roadBuckets.asphalt, [[endpoint.x, endpoint.z], [closest.x, closest.z]], Math.min(endpoint.width, closest.width));
+        }
+      }
       Object.values(roadBuckets).forEach((bucket) => {
         if (!bucket.positions.length) return;
         const geometry = new THREE.BufferGeometry();
@@ -1647,29 +1825,87 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           "position",
           new THREE.Float32BufferAttribute(bucket.positions, 3),
         );
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
         geometry.setIndex(bucket.indices);
         geometry.computeVertexNormals();
         const roads = new THREE.Mesh(
           geometry,
           new THREE.MeshStandardMaterial({
             color: bucket.color,
+            map: bucket.texture ?? null,
+            roughnessMap: bucket.roughness ?? null,
             roughness: 0.94,
             metalness: 0,
+            depthTest: true,
+            depthWrite: true,
             polygonOffset: true,
             polygonOffsetFactor: -bucket.renderOrder,
             polygonOffsetUnits: -bucket.renderOrder,
           }),
         );
         roads.receiveShadow = false;
-        roads.renderOrder = bucket.renderOrder;
+        roads.renderOrder = realCampus ? 8 + bucket.renderOrder : bucket.renderOrder;
         mapGroup.add(roads);
       });
       const bp: number[] = [],
         bi: number[] = [],
         bc: number[] = [],
+        bu: number[] = [],
         buildingPalette = [
           0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
-        ];
+        ],
+        appearanceFor = (b: any) => {
+          const profile = realCampus
+            ? REAL_BUILDING_BY_KEY.get(`${b.osmType}/${b.osmId}`) ?? REAL_LANDMARK_BY_KEY.get(`${b.osmType}/${b.osmId}`)
+            : undefined;
+          if (profile) {
+            const totalHeight = profile.heightMeters * buildingMeterScale,
+              customBodyRatio = profile.signature === "domed-auditorium"
+                ? 0.38
+                : profile.signature === "central-main"
+                  ? 0.46
+                  : profile.signature === "twin-towers"
+                    ? 0.28
+                    : 1,
+              roofHeight = customBodyRatio < 1 ? 0 : ("roofMeters" in profile ? profile.roofMeters : 0) * buildingMeterScale;
+            return {
+              totalHeight,
+              wallHeight: Math.max(0.09, totalHeight * customBodyRatio - roofHeight),
+              roofHeight,
+              roof: profile.roof as string,
+              wallTone: new THREE.Color(profile.facadeColor),
+              roofTone: new THREE.Color(profile.roofColor),
+              profile,
+            };
+          }
+          if (realCampus) {
+            const use = String(b.building || b.amenity || ""),
+              fallbackLevels = /apartments|residential|dormitory/.test(use) ? 6 : /commercial|office|retail/.test(use) ? 8 : /industrial|warehouse/.test(use) ? 3 : /house|detached/.test(use) ? 2 : 4,
+              metres = b.height || (b.levels || fallbackLevels) * 3.35,
+              totalHeight = THREE.MathUtils.clamp(metres * buildingMeterScale, 0.08, 2.6),
+              taggedColor = /^#?[0-9a-f]{6}$/i.test(b.colour || "") ? (b.colour.startsWith("#") ? b.colour : `#${b.colour}`) : null,
+              wallTone = new THREE.Color(taggedColor || (/industrial|warehouse/.test(use) ? "#9aa09d" : /commercial|office|retail/.test(use) ? "#91a0a4" : /house|detached/.test(use) ? "#a6907e" : "#a7a49b")),
+              roofTone = new THREE.Color(/^#?[0-9a-f]{6}$/i.test(b.roofColour || "") ? (b.roofColour.startsWith("#") ? b.roofColour : `#${b.roofColour}`) : /industrial|commercial|office/.test(use) ? "#727a79" : "#77736c"),
+              roof = ["gabled","hipped","pyramidal"].includes(b.roofShape) ? b.roofShape : "flat",
+              roofHeight = roof === "flat" ? 0 : Math.min(0.11, totalHeight * 0.18);
+            return { totalHeight, wallHeight: Math.max(0.07, totalHeight - roofHeight), roofHeight, roof, wallTone, roofTone, profile: undefined };
+          }
+          const totalHeight = b.levels
+              ? Math.min(7, b.levels * 0.58)
+              : 0.95 + (b.osmId % 6) * 0.17,
+            tone = new THREE.Color(
+              buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
+            );
+          return {
+            totalHeight,
+            wallHeight: totalHeight,
+            roofHeight: 0,
+            roof: "flat" as string,
+            wallTone: tone.clone().multiplyScalar(0.78),
+            roofTone: tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26),
+            profile: undefined,
+          };
+        };
       let bv = 0;
       for (const b of gameplayBuildings(r)) {
         const pts = b.points.filter(
@@ -1686,18 +1922,22 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          base = terrainHeight(r, x, z),
-          h = b.levels
-            ? Math.min(7, b.levels * 0.58)
-            : 0.95 + (b.osmId % 6) * 0.17,
+          centerBase = terrainHeight(r, x, z),
+          base = realCampus
+            ? Math.max(centerBase, ...pts.map((point: number[]) => terrainHeight(r, point[0], point[1])))
+            : centerBase,
+          appearance = appearanceFor(b),
+          h = appearance.wallHeight,
           start = bv,
-          tone = new THREE.Color(
-            buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
-          ),
-          wallTone = tone.clone().multiplyScalar(0.78),
-          roofTone = tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26);
-        for (const p of pts) {
-          bp.push(p[0], base, p[1], p[0], base + h, p[1]);
+          wallTone = appearance.wallTone,
+          roofTone = appearance.roofTone;
+        if (realCampus && (appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate")) continue;
+        let facadeDistance = 0;
+        for (let pointIndex = 0; pointIndex < pts.length; pointIndex++) {
+          const p = pts[pointIndex];
+          if (pointIndex) facadeDistance += Math.hypot(p[0] - pts[pointIndex - 1][0], p[1] - pts[pointIndex - 1][1]);
+          bp.push(p[0], realCampus ? terrainHeight(r, p[0], p[1]) : base, p[1], p[0], base + h, p[1]);
+          bu.push(facadeDistance * 12, 0, facadeDistance * 12, Math.max(1, h * 40));
           bc.push(
             wallTone.r,
             wallTone.g,
@@ -1714,25 +1954,38 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             c = start + j * 2;
           bi.push(a, c, a + 1, a + 1, c, c + 1);
         }
-        for (const face of THREE.ShapeUtils.triangulateShape(
-          pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
-          [],
-        ))
-          bi.push(
-            start + face[0] * 2 + 1,
-            start + face[1] * 2 + 1,
-            start + face[2] * 2 + 1,
-          );
+        if (appearance.roofHeight > 0) {
+          if (appearance.roof === "gabled") {
+            const xs=pts.map((p:number[])=>p[0]),zs=pts.map((p:number[])=>p[1]),alongX=Math.max(...xs)-Math.min(...xs)>=Math.max(...zs)-Math.min(...zs),extent=(alongX?Math.max(...xs)-Math.min(...xs):Math.max(...zs)-Math.min(...zs))*.36,
+              ridgeStart=bv,ridgeA=[x+(alongX?-extent:0),z+(alongX?0:-extent)],ridgeB=[x+(alongX?extent:0),z+(alongX?0:extent)];
+            for(const ridge of [ridgeA,ridgeB]){bp.push(ridge[0],base+h+appearance.roofHeight,ridge[1]);bu.push(ridge[0]*8,ridge[1]*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;}
+            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,mid=(alongX?(pts[i][0]+pts[j][0])/2-x:(pts[i][1]+pts[j][1])/2-z);bi.push(start+i*2+1,start+j*2+1,ridgeStart+(mid>0?1:0));}
+          } else {
+            const apex=bv;bp.push(x,base+h+appearance.roofHeight,z);bu.push(x*8,z*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;
+            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;bi.push(start+i*2+1,start+j*2+1,apex);}
+          }
+        } else for (const face of THREE.ShapeUtils.triangulateShape(
+            pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
+            [],
+          ))
+            bi.push(
+              start + face[0] * 2 + 1,
+              start + face[1] * 2 + 1,
+              start + face[2] * 2 + 1,
+            );
       }
       const bg = new THREE.BufferGeometry();
       bg.setAttribute("position", new THREE.Float32BufferAttribute(bp, 3));
       bg.setAttribute("color", new THREE.Float32BufferAttribute(bc, 3));
+      bg.setAttribute("uv", new THREE.Float32BufferAttribute(bu, 2));
       bg.setIndex(bi);
       bg.computeVertexNormals();
       const buildings = new THREE.Mesh(
         bg,
         new THREE.MeshStandardMaterial({
           vertexColors: true,
+          map: campusTextures?.facade ?? null,
+          roughnessMap: campusTextures?.facadeRoughness ?? null,
           roughness: 0.82,
           side: THREE.DoubleSide,
           flatShading: true,
@@ -1741,6 +1994,139 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       buildings.receiveShadow = false;
       buildings.castShadow = true;
       mapGroup.add(buildings);
+      if (realCampus) {
+        type AccentKind = "box" | "column" | "dome" | "roof";
+        type Accent = { matrix: THREE.Matrix4; color: THREE.Color };
+        const accents: Record<AccentKind, Accent[]> = { box: [], column: [], dome: [], roof: [] },
+          dummy = new THREE.Object3D(),
+          footprintByKey = new Map(gameplayBuildings(r).map((building: any) => [`${building.osmType}/${building.osmId}`, building])),
+          push = (kind: AccentKind, x: number, y: number, z: number, sx: number, sy: number, sz: number, color: string, rotation = 0) => {
+            dummy.position.set(x, y, z);
+            dummy.scale.set(sx, sy, sz);
+            dummy.rotation.set(0, rotation, 0);
+            dummy.updateMatrix();
+            accents[kind].push({ matrix: dummy.matrix.clone(), color: new THREE.Color(color) });
+          };
+        for (const landmark of REAL_LANDMARK_BY_SITE.values()) {
+          const site = gameRef.current.sites[landmark.siteId];
+          if (!site) continue;
+          const building: any = footprintByKey.get(landmark.key),
+            points: number[][] = building?.points ?? [],
+            centerX = points.length ? points.reduce((sum, point) => sum + point[0], 0) / points.length : site.x,
+            centerZ = points.length ? points.reduce((sum, point) => sum + point[1], 0) / points.length : site.z;
+          let angle = 0;
+          if (points.length > 1) {
+            let longest = 0;
+            for (let index = 0; index < points.length; index++) {
+              const next = points[(index + 1) % points.length], dx = next[0] - points[index][0], dz = next[1] - points[index][1], distance = Math.hypot(dx, dz);
+              if (distance > longest) { longest = distance; angle = Math.atan2(dz, dx); }
+            }
+          }
+          const axisX = Math.cos(angle), axisZ = Math.sin(angle), sideX = -axisZ, sideZ = axisX,
+            projections = points.length ? points.map(point => ({ along: (point[0] - centerX) * axisX + (point[1] - centerZ) * axisZ, side: (point[0] - centerX) * sideX + (point[1] - centerZ) * sideZ })) : [{ along: -0.3, side: -0.08 }, { along: 0.3, side: 0.08 }],
+            length = Math.max(0.24, Math.max(...projections.map(value => value.along)) - Math.min(...projections.map(value => value.along))),
+            depth = Math.max(0.12, Math.max(...projections.map(value => value.side)) - Math.min(...projections.map(value => value.side))),
+            base = Math.max(terrainHeight(r, centerX, centerZ), ...points.map(point => terrainHeight(r, point[0], point[1]))), height = landmark.heightMeters * buildingMeterScale,
+            facade = landmark.facadeColor, trim = landmark.secondaryColor, roof = landmark.roofColor,
+            rotation = -angle,
+            at = (along: number, side: number) => [centerX + axisX * along + sideX * side, centerZ + axisZ * along + sideZ * side] as const,
+            boxAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = facade) => { const [x, z] = at(along, side); push("box", x, y, z, sx, sy, sz, color, rotation); },
+            columnAt = (along: number, side: number, y: number, radius: number, sy: number, color = trim) => { const [x, z] = at(along, side); push("column", x, y, z, radius, sy, radius, color, rotation); },
+            roofAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = roof) => { const [x, z] = at(along, side); push("roof", x, y, z, sx, sy, sz, color, rotation); };
+          switch (landmark.signature) {
+            case "chinese-gate":
+              for (const along of [-0.31,-0.11,0.11,0.31]) boxAt(along, 0, base + height * 0.38, 0.075, height * 0.68, Math.max(0.1, depth), facade);
+              boxAt(0, 0, base + height * 0.78, Math.max(0.62, length * 1.08), height * 0.16, Math.max(0.11, depth * 1.06), trim);
+              roofAt(0, 0, base + height + 0.035, Math.max(0.7, length * 1.16), 0.07, Math.max(0.18, depth * 1.5));
+              break;
+            case "white-arch-gate":
+              for (const along of [-0.31,-0.11,0.11,0.31]) boxAt(along, 0, base + height * 0.4, 0.07, height * 0.72, Math.max(0.1, depth), facade);
+              for (const along of [-0.31, -0.11, 0.11, 0.31]) columnAt(along, depth * 0.54, base + height * 0.42, 0.018, height * 0.68);
+              boxAt(0, 0, base + height * 0.78, Math.max(0.62, length), height * 0.15, Math.max(0.1, depth), facade);
+              boxAt(0, 0, base + height * 0.88, Math.max(0.5, length * 0.8), 0.035, Math.max(0.08, depth * 0.85), trim);
+              break;
+            case "pagoda":
+              boxAt(0, 0, base + height * 0.48, Math.max(0.12, length * 0.56), height * 0.9, Math.max(0.12, depth * 0.56), facade);
+              for (let tier = 0; tier < 9; tier++) { const fraction = (tier + 1) / 10, scale = 1 - tier * 0.055; roofAt(0, 0, base + height * fraction, Math.max(0.24, length * 1.45 * scale), 0.035, Math.max(0.24, depth * 1.45 * scale)); }
+              roofAt(0, 0, base + height + 0.06, Math.max(0.16, length), 0.12, Math.max(0.16, depth));
+              break;
+            case "pku-library": {
+              const top = base + height;
+              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, top + 0.04, length * 0.34, 0.08, depth * 0.96);
+              boxAt(0, depth * 0.51, base + height * 0.32, length * 0.22, height * 0.42, 0.02, "#395d67");
+              for (let step = 0; step < 4; step++) boxAt(0, depth * (0.53 + step * 0.025), base + 0.008 + step * 0.012, length * (0.28 + step * 0.06), 0.015, depth * 0.05, trim);
+              break;
+            }
+            case "xuetang":
+              roofAt(0, 0, base + height + 0.035, length * 1.05, 0.07, depth * 1.08);
+              boxAt(0, depth * 0.52, base + height * 0.5, length * 0.28, height * 0.86, 0.02, trim);
+              for (const along of [-length * 0.09, length * 0.09]) columnAt(along, depth * 0.59, base + height * 0.48, 0.014, height * 0.75);
+              break;
+            case "domed-auditorium": {
+              const body = height * 0.5, domeRadius = Math.min(length, depth) * 0.36;
+              columnAt(0, 0, base + body + domeRadius * 0.12, domeRadius * 0.64, domeRadius * 0.24, roof);
+              push("dome", centerX, base + body + domeRadius * 0.08, centerZ, domeRadius * 1.7, Math.max(0.12, (height - body) * 0.58), domeRadius * 1.7, roof, rotation);
+              for (const along of [-length * 0.24, -length * 0.08, length * 0.08, length * 0.24]) columnAt(along, depth * 0.56, base + body * 0.52, 0.014, body * 0.9);
+              boxAt(0, depth * 0.55, base + body * 0.96, length * 0.7, 0.025, 0.03, trim);
+              break;
+            }
+            case "central-main": {
+              const body = height * 0.46, towerWidth = Math.min(length * 0.28, 1.05);
+              boxAt(0, 0, base + body + (height - body) * 0.48, towerWidth, (height - body) * 0.96, Math.min(depth * 0.45, 0.86), facade);
+              boxAt(0, depth * 0.51, base + body * 0.56, length * 0.24, body * 0.8, 0.025, trim);
+              for (const along of [-length * 0.09, length * 0.09]) columnAt(along, depth * 0.59, base + body * 0.48, 0.014, body * 0.7);
+              roofAt(0, 0, base + height + 0.04, towerWidth * 1.12, 0.08, Math.min(depth * 0.5, 0.3));
+              break;
+            }
+            case "historic-library":
+            case "historic-science":
+              roofAt(0, 0, base + height + 0.035, length * 1.04, 0.07, depth * 1.08);
+              boxAt(0, depth * 0.51, base + height * 0.52, length * 0.22, height * 0.82, 0.02, trim);
+              for (const along of [-length * 0.075, length * 0.075]) columnAt(along, depth * 0.58, base + height * 0.48, 0.012, height * 0.68);
+              break;
+            case "modern-auditorium":
+              for (let tier = 0; tier < 3; tier++) boxAt(0, depth * (0.12 + tier * 0.04), base + height + 0.025 + tier * 0.025, length * (0.9 - tier * 0.12), 0.04, depth * (0.72 - tier * 0.12), tier === 2 ? roof : trim);
+              boxAt(0, depth * 0.51, base + height * 0.4, length * 0.18, height * 0.52, 0.02, "#3d5963");
+              break;
+            case "museum":
+              for (const along of [-0.35, -0.21, -0.07, 0.07, 0.21, 0.35].map(value => value * length)) boxAt(along, depth * 0.51, base + height * 0.53, length * 0.018, height * 0.88, 0.015, "#765337");
+              boxAt(0, depth * 0.58, base + height * 0.18, length * 0.32, height * 0.24, 0.02, "#272a29");
+              break;
+            case "twin-towers": {
+              const podium = height * 0.28;
+              for (const along of [-length * 0.26, length * 0.26]) boxAt(along, 0, base + podium + (height - podium) * 0.46, length * 0.34, (height - podium) * 0.92, depth * 0.62, facade);
+              boxAt(0, depth * 0.51, base + podium * 0.46, length * 0.25, podium * 0.62, 0.02, "#355663");
+              break;
+            }
+            case "dormitory":
+              boxAt(0, 0, base + height + 0.015, length * 0.94, 0.03, depth * 0.92, roof);
+              boxAt(0, depth * 0.52, base + Math.min(0.1, height * 0.35), Math.min(0.16, length * 0.24), Math.min(0.18, height * 0.58), 0.02, trim);
+              break;
+            case "dining-hall":
+              boxAt(0, depth * 0.56, base + Math.min(0.16, height * 0.45), Math.min(0.42, length * 0.52), 0.03, Math.min(0.14, depth * 0.3), trim);
+              break;
+            default:
+              boxAt(0, depth * 0.52, base + Math.min(0.14, height * 0.38), Math.min(0.22, length * 0.3), Math.min(0.18, height * 0.54), 0.018, trim);
+          }
+        }
+        const geometries: Record<AccentKind, THREE.BufferGeometry> = {
+            box: new THREE.BoxGeometry(1, 1, 1),
+            column: new THREE.CylinderGeometry(0.5, 0.56, 1, 10),
+            dome: new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+            roof: new THREE.ConeGeometry(0.5, 1, 4),
+          },
+          accentMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.02 });
+        geometries.roof.rotateY(Math.PI / 4);
+        for (const [kind, instances] of Object.entries(accents) as [AccentKind, Accent[]][]) {
+          if (!instances.length) continue;
+          const mesh = new THREE.InstancedMesh(geometries[kind], accentMaterial, instances.length);
+          instances.forEach((instance, index) => { mesh.setMatrixAt(index, instance.matrix); mesh.setColorAt(index, instance.color); });
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          mesh.castShadow = true;
+          mapGroup.add(mesh);
+        }
+      }
       const outline = new THREE.LineSegments(
         new THREE.EdgesGeometry(bg, 32),
         new THREE.LineBasicMaterial({
@@ -1754,8 +2140,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const windowMatrices: THREE.Matrix4[] = [],
         doorMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
-        windowLimit = r === regions.main ? 13500 : 2600;
-      for (const b of gameplayBuildings(r)) {
+        windowLimit = r === regions.main ? 18000 : 2600,
+        detailedBuildings = [...gameplayBuildings(r)].sort((a: any, b: any) => {
+          const ap = REAL_BUILDING_BY_KEY.get(`${a.osmType}/${a.osmId}`), bp = REAL_BUILDING_BY_KEY.get(`${b.osmType}/${b.osmId}`);
+          return Number(bp?.siteId != null) - Number(ap?.siteId != null) || Number(!!bp) - Number(!!ap);
+        });
+      for (const b of detailedBuildings) {
         const pts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
@@ -1775,11 +2165,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          base = terrainHeight(r, x, z),
-          h = b.levels
-            ? Math.min(7, b.levels * 0.58)
-            : 0.95 + (b.osmId % 6) * 0.17,
-          rows = Math.min(4, Math.max(1, Math.floor(h / 0.48)));
+          centerBase = terrainHeight(r, x, z),
+          base = realCampus
+            ? Math.max(centerBase, ...pts.map((point: number[]) => terrainHeight(r, point[0], point[1])))
+            : centerBase,
+          appearance = appearanceFor(b),
+          h = appearance.wallHeight,
+          rows = Math.min(8, Math.max(1, appearance.profile && "levels" in appearance.profile ? appearance.profile.levels : Math.floor(h / 0.48))),
+          omitWindows = appearance.profile?.signature === "pagoda" || appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate";
+        if (appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate") continue;
         let longest: { a: number[]; c: number[]; len: number } | null = null;
         for (
           let i = 0;
@@ -1792,8 +2186,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             dz = c[1] - a[1],
             len = Math.hypot(dx, dz);
           if (!longest || len > longest.len) longest = { a, c, len };
-          if (len < 0.42) continue;
-          const cols = Math.min(5, Math.max(1, Math.floor(len / 0.42))),
+          if (len < (realCampus ? 0.12 : 0.42)) continue;
+          if (omitWindows) continue;
+          const cols = Math.min(8, Math.max(1, Math.floor(len / (realCampus ? 0.12 : 0.34)))),
             angle = Math.atan2(-dz, dx),
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
@@ -1809,33 +2204,33 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             ) {
               const t = (col + 1) / (cols + 1);
               detailDummy.position.set(
-                a[0] + dx * t + nx * 0.025,
+                a[0] + dx * t + nx * (realCampus ? 0.006 : 0.025),
                 base + (h * (row + 1)) / (rows + 1),
-                a[1] + dz * t + nz * 0.025,
+                a[1] + dz * t + nz * (realCampus ? 0.006 : 0.025),
               );
               detailDummy.rotation.set(0, angle, 0);
               detailDummy.scale.set(
-                Math.min(0.18, (len / (cols + 1)) * 0.5),
-                0.12,
+                Math.min(realCampus ? 0.045 : 0.18, (len / (cols + 1)) * 0.5),
+                realCampus ? 0.035 : 0.12,
                 1,
               );
               detailDummy.updateMatrix();
               windowMatrices.push(detailDummy.matrix.clone());
             }
         }
-        if (longest && longest.len > 0.45) {
+        if (longest && longest.len > (realCampus ? 0.12 : 0.45)) {
           const dx = longest.c[0] - longest.a[0],
             dz = longest.c[1] - longest.a[1],
             len = longest.len,
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           detailDummy.position.set(
-            (longest.a[0] + longest.c[0]) / 2 + nx * 0.03,
-            base + 0.17,
-            (longest.a[1] + longest.c[1]) / 2 + nz * 0.03,
+            (longest.a[0] + longest.c[0]) / 2 + nx * (realCampus ? 0.007 : 0.03),
+            base + (realCampus ? 0.055 : 0.17),
+            (longest.a[1] + longest.c[1]) / 2 + nz * (realCampus ? 0.007 : 0.03),
           );
           detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
-          detailDummy.scale.set(0.23, 0.34, 1);
+          detailDummy.scale.set(realCampus ? 0.07 : 0.23, realCampus ? 0.11 : 0.34, 1);
           detailDummy.updateMatrix();
           doorMatrices.push(detailDummy.matrix.clone());
         }
@@ -1880,20 +2275,39 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       mapGroup.add(doors);
       const waterMat = new THREE.MeshStandardMaterial({
         color: 0x478ca5,
+        normalMap: campusTextures?.waterNormal ?? null,
+        normalScale: new THREE.Vector2(0.22, 0.22),
         transparent: true,
         opacity: 0.83,
         roughness: 0.24,
         metalness: 0.1,
         side: THREE.DoubleSide,
       });
-      for (const water of r.waters) {
+      const bankPositions: number[] = [], bankIndices: number[] = [];
+      let bankVertex = 0;
+      for (const water of waterVisualAreas) {
         if (water.points.length < 3) continue;
         const wm = new THREE.Mesh(
-          surfaceGeometry(r, water.points, 0.15),
+          realCampus ? surfaceGeometry(r, water.points, 0, () => water.level) : surfaceGeometry(r, water.points, 0.15),
           waterMat,
         );
         wm.renderOrder = 4;
         mapGroup.add(wm);
+        if (realCampus) for (let index = 0; index < water.points.length; index++) {
+          const point = water.points[index], next = water.points[(index + 1) % water.points.length], topA = terrainHeight(r, point[0], point[1]), topB = terrainHeight(r, next[0], next[1]);
+          bankPositions.push(point[0], water.level - 0.08, point[1], point[0], topA, point[1], next[0], water.level - 0.08, next[1], next[0], topB, next[1]);
+          bankIndices.push(bankVertex, bankVertex + 2, bankVertex + 1, bankVertex + 1, bankVertex + 2, bankVertex + 3);
+          bankVertex += 4;
+        }
+      }
+      if (bankPositions.length) {
+        const bankGeometry = new THREE.BufferGeometry();
+        bankGeometry.setAttribute("position", new THREE.Float32BufferAttribute(bankPositions, 3));
+        bankGeometry.setIndex(bankIndices);
+        bankGeometry.computeVertexNormals();
+        const banks = new THREE.Mesh(bankGeometry, new THREE.MeshStandardMaterial({ color: 0x53634b, roughness: 1, side: THREE.DoubleSide }));
+        banks.receiveShadow = true;
+        mapGroup.add(banks);
       }
     };
     addRegion(regions.main);
@@ -1913,18 +2327,25 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       siteHitProxies: THREE.Mesh[] = [],
       siteHitGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
       siteHitMaterial = new THREE.MeshBasicMaterial({ visible: false });
+    buildingGroup.visible = !reviewSite;
     scene.add(buildingGroup);
     const siteNodeBatchGroup = new THREE.Group();
+    siteNodeBatchGroup.visible = !reviewSite;
     scene.add(siteNodeBatchGroup);
     const unitGroup = new THREE.Group();
+    unitGroup.visible = !reviewSite;
     scene.add(unitGroup);
     const commandGroup = new THREE.Group();
+    commandGroup.visible = !reviewSite;
     scene.add(commandGroup);
     const combatGroup = new THREE.Group();
+    combatGroup.visible = !reviewSite;
     scene.add(combatGroup);
     const battleAlertGroup = new THREE.Group();
+    battleAlertGroup.visible = !reviewSite;
     scene.add(battleAlertGroup);
     const territoryGroup = new THREE.Group();
+    territoryGroup.visible = !reviewSite;
     territoryGroup.visible = false;
     scene.add(territoryGroup);
     const siteObjects = new Map<number, THREE.Group>();
@@ -2868,7 +3289,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           batch.sites.forEach((site, index) => {
             siteNodeDummy.position.set(
               site.x,
-              terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
+              terrainHeight(regionForX(site.x), site.x, site.z) + (realCampus ? 0.35 : 1.75),
               site.z,
             );
             siteNodeDummy.quaternion.copy(camera.quaternion);
@@ -3960,14 +4381,32 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(treeGroup);
     let seed = 91723;
     const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-    const tg = new THREE.CylinderGeometry(0.07, 0.11, 0.86, 7),
+    const tg = new THREE.CylinderGeometry(realCampus ? 0.012 : 0.07, realCampus ? 0.018 : 0.11, realCampus ? 0.24 : 0.86, 7),
       tm = new THREE.MeshStandardMaterial({ color: 0x61412f, roughness: 1 }),
-      cg = new THREE.SphereGeometry(0.52, 10, 8),
-      cms = [0x315d36, 0x467648, 0x5b8a4e].map(
-        (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92 }),
+      crownGeometries = realCampus
+        ? [new THREE.DodecahedronGeometry(0.13, 1), new THREE.SphereGeometry(0.12, 9, 7), new THREE.ConeGeometry(0.14, 0.32, 9), new THREE.SphereGeometry(0.12, 10, 7)]
+        : [new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8)],
+      crownMaterials = (realCampus ? [0x47763f, 0x6d8b43, 0x315c3b, 0x4f7e50] : [0x315d36, 0x467648, 0x5b8a4e]).map(
+        (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94 }),
       ),
-      treePositions: { x: number; y: number; z: number }[] = [];
-    for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
+      treePositions: { x: number; y: number; z: number; variant: number; scale: number }[] = [];
+    if (realCampus) {
+      const campusPolygons=regions.main.campuses.filter((campus:any)=>campus.name==="北京大学"||campus.name==="清华大学"),seen=new Set<string>(),
+        insideCampus=(x:number,z:number)=>campusPolygons.some((campus:any)=>pointInPolygon(x,z,campus.points)),
+        waterBounds=regions.main.waters.map((water:any)=>({minX:Math.min(...water.points.map((point:number[])=>point[0]))-.32,maxX:Math.max(...water.points.map((point:number[])=>point[0]))+.32,minZ:Math.min(...water.points.map((point:number[])=>point[1]))-.32,maxZ:Math.max(...water.points.map((point:number[])=>point[1]))+.32})),
+        pushTree=(x:number,z:number,preferredVariant?:number)=>{
+          const key=`${Math.round(x/.08)}/${Math.round(z/.08)}`;
+          if(treePositions.length>=3500||seen.has(key)||!insideCampus(x,z)||insideObstacle(x,z)||gameRef.current.sites.some(site=>Math.hypot(site.x-x,site.z-z)<.22))return;
+          const besideWater=waterBounds.some((water:any)=>x>=water.minX&&x<=water.maxX&&z>=water.minZ&&z<=water.maxZ),hash=Math.abs(Math.round(x*100)*31+Math.round(z*100)*17),variant=besideWater?3:preferredVariant??hash%3;
+          seen.add(key);treePositions.push({x,y:terrainHeight(regions.main,x,z),z,variant,scale:.82+(hash%7)*.05});
+        };
+      for(const campus of ["pku","thu"] as const){const candidates=SATELLITE_TREE_POINTS[campus],target=campus==="pku"?900:1600,threshold=Math.min(1,target/candidates.length);for(const point of candidates){const x=Math.round(point[0]*1000),z=Math.round(point[1]*1000),hash=(Math.imul(x,73856093)^Math.imul(z,19349663))>>>0;if(hash/4294967296<threshold)pushTree(point[0],point[1]);}}
+      for(const [x,z] of regions.main.trees??[])pushTree(x,z);
+      for(const [rowIndex,row] of (regions.main.treeRows??[]).entries())for(let segment=1;segment<row.length;segment++){
+        const a=row[segment-1],b=row[segment],dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),count=Math.max(1,Math.floor(length/.26));
+        for(let index=0;index<=count;index++){const t=index/count;pushTree(a[0]+dx*t,a[1]+dz*t,rowIndex%2);}
+      }
+    } else for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
       for (let i = 0; i < count; i++) {
         const x = r.offsetX - r.width / 2 + rnd() * r.width,
           z = -r.depth / 2 + rnd() * r.depth;
@@ -3982,27 +4421,27 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           )
         )
           continue;
-        treePositions.push({ x, y: terrainHeight(r, x, z), z });
+        treePositions.push({ x, y: terrainHeight(r, x, z), z, variant: 0, scale: 1 });
       }
     }
     const treeTrunks = new THREE.InstancedMesh(tg, tm, treePositions.length),
-      treeCrowns = cms.map(
-        (material) =>
-          new THREE.InstancedMesh(cg, material, treePositions.length),
-      ),
+      variantPositions = crownGeometries.map((_,variant)=>realCampus?treePositions.filter(position=>position.variant===variant):treePositions),
+      treeCrowns = crownGeometries.map((geometry, variant) => new THREE.InstancedMesh(geometry, crownMaterials[variant], variantPositions[variant].length)),
       treeDummy = new THREE.Object3D();
     treePositions.forEach((position, index) => {
-      treeDummy.position.set(position.x, position.y + 0.43, position.z);
-      treeDummy.scale.set(1, 1, 1);
+      treeDummy.position.set(position.x, position.y + (realCampus ? 0.12 : 0.43), position.z);
+      treeDummy.scale.set(position.scale * .82, position.scale, position.scale * .82);
       treeDummy.updateMatrix();
       treeTrunks.setMatrixAt(index, treeDummy.matrix);
-      treeCrowns.forEach((mesh, layer) => {
-        treeDummy.position.y = position.y + 0.92 + layer * 0.32;
-        treeDummy.scale.set(1.1 - layer * 0.18, 0.65, 1.1 - layer * 0.18);
-        treeDummy.updateMatrix();
-        mesh.setMatrixAt(index, treeDummy.matrix);
-      });
     });
+    treeCrowns.forEach((mesh, variant) => variantPositions[variant].forEach((position, index) => {
+      treeDummy.position.set(position.x, position.y + (realCampus ? variant === 2 ? 0.27 : 0.24 : 0.92 + variant * 0.32), position.z);
+      const width = realCampus ? variant === 1 ? .72 : variant === 2 ? .88 : variant === 3 ? 1.08 : 1 : 1.1 - variant * .18,
+        height = realCampus ? variant === 0 ? .82 : variant === 1 ? 1.22 : variant === 2 ? 1.08 : 1.38 : .65;
+      treeDummy.scale.set(position.scale * width, position.scale * height, position.scale * width);
+      treeDummy.updateMatrix();
+      mesh.setMatrixAt(index, treeDummy.matrix);
+    }));
     treeTrunks.instanceMatrix.needsUpdate = true;
     treeCrowns.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
     treeTrunks.castShadow = true;
@@ -4023,6 +4462,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           lampPositions.push({ x, z, r });
         };
       for (const [x, z] of r.lamps ?? []) pushLamp(x, z);
+      if (realCampus) continue;
       for (const road of r.roads) {
         if (
           ["footway", "path", "steps", "corridor", "track"].includes(road.kind)
@@ -4049,12 +4489,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       }
     }
-    const poleGeometry = new THREE.CylinderGeometry(0.025, 0.038, 0.82, 6),
+    const poleGeometry = new THREE.CylinderGeometry(realCampus ? 0.006 : 0.025, realCampus ? 0.009 : 0.038, realCampus ? 0.14 : 0.82, 6),
       poleMaterial = new THREE.MeshStandardMaterial({
         color: 0x303735,
         roughness: 0.76,
       }),
-      bulbGeometry = new THREE.SphereGeometry(0.065, 8, 6),
+      bulbGeometry = new THREE.SphereGeometry(realCampus ? 0.016 : 0.065, 8, 6),
       lampBulbMaterial = new THREE.MeshStandardMaterial({
         color: 0xffe3a6,
         emissive: 0xffb23f,
@@ -4074,10 +4514,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       lampDummy = new THREE.Object3D();
     lampPositions.forEach((p, i) => {
       const base = terrainHeight(p.r, p.x, p.z);
-      lampDummy.position.set(p.x, base + 0.41, p.z);
+      lampDummy.position.set(p.x, base + (realCampus ? 0.07 : 0.41), p.z);
       lampDummy.updateMatrix();
       poles.setMatrixAt(i, lampDummy.matrix);
-      lampDummy.position.y = base + 0.86;
+      lampDummy.position.y = base + (realCampus ? 0.15 : 0.86);
       lampDummy.updateMatrix();
       bulbs.setMatrixAt(i, lampDummy.matrix);
     });
@@ -4089,8 +4529,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       .filter((_, i) => i % 41 === 0)
       .slice(0, 22)
       .forEach((p) => {
-        const l = new THREE.PointLight(0xffc66f, 0, 5, 2);
-        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.9, p.z);
+        const l = new THREE.PointLight(0xffc66f, 0, realCampus ? 0.6 : 5, 2);
+        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + (realCampus ? 0.17 : 0.9), p.z);
         scene.add(l);
         lights.push(l);
       });
@@ -4103,7 +4543,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
         target.set(
           site.x,
-          terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
+          terrainHeight(regionForX(site.x), site.x, site.z) + (realCampus ? 0.35 : 1.75),
           site.z,
         );
     let down: {
@@ -4799,6 +5239,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         setSelected(down.site);
         const site = gameRef.current.sites[down.site];
         setRenameDraft(site?.displayName ?? site?.name ?? "");
+      }
+      if (realCampus && !moved && down.site == null) {
+        const point = groundAt(e), feature = point ? obstaclesAt(point.x, point.z).find(area=>area.name) : undefined, road = point && !feature ? namedRoadAt(point.x, point.z) : undefined;
+        if (feature?.name)
+          setNotice(`${feature.name} · 2026真实校园 · ${feature.osmKey ?? "校园资料"}`);
+        else if(road) setNotice(`${road.name} · ${road.kind} · 2026真实校园`);
       }
       if (
         moved &&
@@ -6191,9 +6637,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             unit.transportModel = undefined;
           });
       };
-    const aiBenchmarkScenario = new URLSearchParams(window.location.search).get(
-        "ai-benchmark",
-      ),
+    const benchmarkParams = new URLSearchParams(window.location.search),
+      aiBenchmarkScenario = benchmarkParams.get("ai-benchmark"),
+      renderBenchmark = benchmarkParams.has("render-benchmark"),
       aiBenchmarkDifficulties = (() => {
         if (!aiBenchmarkScenario) return null;
         const result: Partial<Record<Team, AiDifficulty>> = {};
@@ -9641,7 +10087,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           }
         }
       }
-      if (!backgroundServerTick && !aiBenchmarkScenario)
+      if (!backgroundServerTick && (!aiBenchmarkScenario || renderBenchmark))
         renderer.render(scene, camera);
     };
     let serverClockWorker: Worker | null = null;
@@ -9752,9 +10198,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         refreshUnitSelection();
       },
       setLayers: (sites, control) => {
-        buildingGroup.visible = sites;
-        siteNodeBatchGroup.visible = sites;
-        territoryGroup.visible = control;
+        buildingGroup.visible = sites && !reviewSite;
+        siteNodeBatchGroup.visible = sites && !reviewSite;
+        territoryGroup.visible = control && !reviewSite;
       },
       setPerspective: (team) => {
         const target = controls.target.clone(),
@@ -9823,7 +10269,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       },
     };
     sceneApi.current.setLayers(showSites, showControl);
-    sceneApi.current.setPerspective(playerTeamRef.current);
+    if (!reviewSite) sceneApi.current.setPerspective(playerTeamRef.current);
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,

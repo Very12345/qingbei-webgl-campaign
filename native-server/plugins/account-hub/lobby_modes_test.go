@@ -59,7 +59,7 @@ func TestBlitzAIForcesStandardOnHost(t *testing.T) {
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["difficulty"] != "standard" || body["timeScale"] != float64(4) || body["serverOpening"] != "blitz" || body["fieldEncounters"] != "light-v1" {
+		if body["difficulty"] != "standard" || body["timeScale"] != float64(4) || body["serverOpening"] != "blitz" || body["fieldEncounters"] != "light-v1" || body["mapProfile"] != "real-campus-v1" {
 			t.Errorf("wrong host config: %v", body)
 		}
 		teams := body["humanTeams"].([]any)
@@ -73,6 +73,35 @@ func TestBlitzAIForcesStandardOnHost(t *testing.T) {
 	res := requestJSON(t, mux, "POST", "/api/lobby/ai", map[string]string{"team": "pku", "pace": "blitz", "difficulty": "hard"}, token)
 	if res.Code != 201 {
 		t.Fatal(res.Body.String())
+	}
+}
+
+func TestPVPQueuesAreSeparatedByMapProfile(t *testing.T) {
+	s, mux := newTestHub(t)
+	s.data.Users["classic-player"] = &userRecord{ID: "classic-player"}
+	s.data.Users["real-player"] = &userRecord{ID: "real-player"}
+	classicToken := s.newSessionLocked("classic-player")
+	realToken := s.newSessionLocked("real-player")
+
+	classic := requestJSON(t, mux, "POST", "/api/lobby/pvp", map[string]string{
+		"pace": "standard", "preferredTeam": "any", "mapProfile": "classic",
+	}, classicToken)
+	real := requestJSON(t, mux, "POST", "/api/lobby/pvp", map[string]string{
+		"pace": "standard", "preferredTeam": "any", "mapProfile": "real-campus-v1",
+	}, realToken)
+	if classic.Code != http.StatusAccepted || real.Code != http.StatusAccepted {
+		t.Fatalf("different maps unexpectedly matched: classic=%d real=%d", classic.Code, real.Code)
+	}
+	if s.waiting == nil || s.waiting.UserID != "classic-player" || s.waitingReal == nil || s.waitingReal.UserID != "real-player" {
+		t.Fatal("map-specific queues were not retained independently")
+	}
+	for token, expected := range map[string]string{classicToken: "classic", realToken: "real-campus-v1"} {
+		status := requestJSON(t, mux, "GET", "/api/lobby/status", nil, token)
+		var view map[string]any
+		_ = json.Unmarshal(status.Body.Bytes(), &view)
+		if view["mapProfile"] != expected {
+			t.Fatalf("queue status reported %v, expected %s", view["mapProfile"], expected)
+		}
 	}
 }
 

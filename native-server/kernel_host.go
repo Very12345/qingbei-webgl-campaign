@@ -143,7 +143,7 @@ func (battle *kernelBattle) reset() error {
 	battle.mu.RLock()
 	timeScale := battle.timeScale
 	battle.mu.RUnlock()
-	seed, navGrid, err := loadKernelSeed()
+	seed, navGrid, err := loadKernelSeed(battle.spec.MapProfile)
 	if err != nil {
 		return err
 	}
@@ -162,6 +162,7 @@ func (battle *kernelBattle) reset() error {
 		"aiTeams":               battle.aiTeams(nil),
 		"serverOpening":         battle.spec.ServerOpening,
 		"fieldEncounters":       battle.spec.FieldEncounters,
+		"mapProfile":            battle.spec.MapProfile,
 		"networkEpoch":          battle.networkEpoch.Add(1),
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,
@@ -335,6 +336,7 @@ func (battle *kernelBattle) infoConfiguration() map[string]any {
 		"timeScale":     battle.timeScale,
 		"mode":          battle.spec.Mode,
 		"difficulty":    battle.spec.Difficulty,
+		"mapProfile":    battle.spec.MapProfile,
 		"authPlugin":    battle.spec.AuthPlugin,
 		"metadata":      battle.spec.Metadata,
 	}
@@ -1054,7 +1056,13 @@ func (battle *kernelBattle) resume(name string) error {
 	if err := json.Unmarshal(encoded, &save); err != nil {
 		return err
 	}
-	_, navGrid, err := loadKernelSeed()
+	mapProfile := battle.spec.MapProfile
+	if campaign, ok := save.State["campaign"].(map[string]any); ok {
+		if savedProfile, ok := campaign["mapProfile"].(string); ok {
+			mapProfile = savedProfile
+		}
+	}
+	_, navGrid, err := loadKernelSeed(mapProfile)
 	if err != nil {
 		return err
 	}

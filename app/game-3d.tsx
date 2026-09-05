@@ -14,6 +14,7 @@ import {
   type QualityMode,
 } from "../src/performance-controller";
 import { isMobileClient } from "../src/mobile-support";
+import {DEFAULT_MAP_PROFILE,type MapProfile} from "../src/game/map-profile";
 import type {
   AcademicYearOutcome,
   AiDifficulty,
@@ -208,6 +209,7 @@ import SaveWorker from "../src/save-worker.ts?worker&inline";
 import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline";
 
 export default function Game3D() {
+  const renderBenchmark = new URLSearchParams(location.search).has("render-benchmark");
   const hostRef = useRef<HTMLDivElement>(null);
   const mobileClientRef = useRef(isMobileClient());
   const performanceControllerRef = useRef(
@@ -396,13 +398,17 @@ export default function Game3D() {
     Record<Team, AiDifficulty>
   >({ pku: "standard", thu: "standard" });
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
+    (new URLSearchParams(location.search).get("quality") as QualityMode) ||
     (localStorage.getItem("qingbei-quality-mode") as QualityMode) || "auto",
   );
+  const [mapProfile, setMapProfile] = useState<MapProfile>(() =>
+    (localStorage.getItem("qingbei-map-profile") as MapProfile) || DEFAULT_MAP_PROFILE,
+  );
   const [eventPopupEnabled, setEventPopupEnabled] = useState(
-    () => localStorage.getItem(EVENT_POPUP_SETTING_KEY) !== "false",
+    () => !renderBenchmark && localStorage.getItem(EVENT_POPUP_SETTING_KEY) !== "false",
   );
   const eventPopupEnabledRef = useRef(eventPopupEnabled);
-  const [showPerformance, setShowPerformance] = useState(false);
+  const [showPerformance, setShowPerformance] = useState(renderBenchmark);
   const [performanceMetrics, setPerformanceMetrics] =
     useState<PerformanceMetrics>(performanceControllerRef.current.metrics);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
@@ -705,6 +711,7 @@ export default function Game3D() {
     localStorage.setItem("qingbei-quality-mode", qualityMode);
     return controller.subscribe(setPerformanceMetrics);
   }, [qualityMode]);
+  useEffect(() => localStorage.setItem("qingbei-map-profile", mapProfile), [mapProfile]);
   useEffect(() => {
     if (typeof Worker === "undefined") return;
     const worker = new SaveWorker();
@@ -1061,7 +1068,7 @@ export default function Game3D() {
         mapSavedAt == null
           ? undefined
           : readSaves().find((save) => save.savedAt === mapSavedAt),
-      fresh = makeFreshGame(),
+      fresh = makeFreshGame(mapProfile),
       server: ServerRecord = {
         id: createId(),
         name: name.trim().slice(0, 24) || "清北联机服务器",
@@ -1211,6 +1218,7 @@ export default function Game3D() {
     save: Snapshot,
     team: Team = playerTeam,
     serverId: string | null = null,
+    mapOverride?: MapProfile,
   ) => {
     setAiObserverMode(false);
     aiObserverModeRef.current = false;
@@ -1247,6 +1255,11 @@ export default function Game3D() {
         normalizedCampaign: CampaignState = {
           ...defaults,
           ...campaign,
+          mapProfile: mapOverride ?? campaign.mapProfile ?? "classic",
+          mapGeometryVersion:
+            (mapOverride ?? campaign.mapProfile) === "real-campus-v1"
+              ? 1
+              : campaign.mapGeometryVersion ?? 0,
           rulesVersion: 3,
           startDateISO: campaign.startDateISO || defaults.startDateISO,
           elapsedHours: Number.isFinite(campaign.elapsedHours)
@@ -1456,7 +1469,7 @@ export default function Game3D() {
         campaign: normalizedCampaign,
       };
     } else {
-      const fresh = makeFreshGame(),
+      const fresh = makeFreshGame(mapOverride ?? "classic"),
         oldSiteById = new Map(save.sites.map((s) => [s.id, s])),
         freshByName = new Map(fresh.sites.map((s) => [s.name, s]));
       fresh.sites.forEach((site) => {
@@ -1498,6 +1511,7 @@ export default function Game3D() {
       fresh.deaths = save.deaths;
       gameRef.current = fresh;
     }
+    setMapProfile(gameRef.current.campaign.mapProfile ?? "classic");
     sceneApi.current?.sync();
     sceneApi.current?.clearUnitSelection();
     setSelected(null);
@@ -1517,6 +1531,7 @@ export default function Game3D() {
     team: Team = playerTeam,
     observeBothAi = false,
     observerDifficulties = observerAiDifficulty,
+    selectedMapProfile: MapProfile = mapProfile,
   ) => {
     clearUnfinishedGame();
     activePlayerSaveRef.current = null;
@@ -1526,7 +1541,8 @@ export default function Game3D() {
     playerTeamRef.current = team;
     setAiObserverMode(observeBothAi);
     aiObserverModeRef.current = observeBothAi;
-    gameRef.current = makeFreshGame();
+    gameRef.current = makeFreshGame(selectedMapProfile);
+    setMapProfile(selectedMapProfile);
     gameRef.current.campaign.ai.difficulty = aiDifficulty;
     gameRef.current.campaign.ai.difficultyByTeam = {
       pku: observeBothAi ? observerDifficulties.pku : aiDifficulty,
@@ -1542,12 +1558,25 @@ export default function Game3D() {
     setScreen("game");
   };
   useEffect(() => {
-    const scenario = new URLSearchParams(location.search).get("ai-benchmark");
-    if (!scenario || aiBenchmarkAutostartedRef.current) return;
+    const params = new URLSearchParams(location.search),
+      scenario = params.get("ai-benchmark"),
+      reviewSite = params.get("review-site");
+    if ((!scenario && reviewSite == null) || aiBenchmarkAutostartedRef.current) return;
     aiBenchmarkAutostartedRef.current = true;
+    if (reviewSite != null) {
+      setSaveName(`建筑验收-${reviewSite}`);
+      newGame("pku", false, observerAiDifficulty, params.get("map-profile") === "classic" ? "classic" : "real-campus-v1");
+      return;
+    }
+    if (!scenario) return;
     const humanTeam: Team = scenario.startsWith("pku-") ? "thu" : "pku";
     setSaveName(`AI基准-${scenario}`);
-    newGame(humanTeam);
+    newGame(
+      humanTeam,
+      false,
+      observerAiDifficulty,
+      params.get("map-profile") === "classic" ? "classic" : "real-campus-v1",
+    );
   }, []);
   const stanceText = useMemo(
     () => ({
@@ -4051,6 +4080,8 @@ export default function Game3D() {
           setSaveName={setSaveName}
           newGameTeam={newGameTeam}
           setNewGameTeam={setNewGameTeam}
+          mapProfile={mapProfile}
+          setMapProfile={setMapProfile}
           aiObserverMode={aiObserverMode}
           setAiObserverMode={setAiObserverMode}
           openToLan={openToLan}
@@ -4062,7 +4093,9 @@ export default function Game3D() {
           newGame={newGame}
           autosave={autosave}
           saves={saves}
-          loadGame={loadGame}
+          loadGame={(save, team, mapOverride) =>
+            loadGame(save, team, null, mapOverride)
+          }
           clearUnfinishedGame={clearUnfinishedGame}
           deleteSave={deleteSave}
           exportSave={exportSave}
