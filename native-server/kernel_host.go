@@ -161,6 +161,7 @@ func (battle *kernelBattle) reset() error {
 	instance, err := battle.runtime.create(seed, map[string]any{
 		"aiTeams":               battle.aiTeams(nil),
 		"serverOpening":         battle.spec.ServerOpening,
+		"fieldEncounters":       battle.spec.FieldEncounters,
 		"networkEpoch":          battle.networkEpoch.Add(1),
 		"navGrid":               navGrid,
 		"fixedStepMilliseconds": 100,

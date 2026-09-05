@@ -2399,6 +2399,13 @@ export default function Game3D() {
             if (!existing) continue;
             applyExistingUnit(existing, () => applyCompactUnit(existing, compact));
           }
+          for (const [startId, count, hp10] of payload.unitHp ?? []) {
+            for (let id = startId; id < startId + count; id++) {
+              const existing = unitsById.get(id);
+              if (!existing || (allowedTeam && existing.team !== allowedTeam)) continue;
+              existing.hp = hp10 / 10;
+            }
+          }
           if (payload.removedUnitIds.length) {
             const removed = new Set(
               payload.removedUnitIds.filter((id) => {
@@ -2471,6 +2478,13 @@ export default function Game3D() {
             game.deaths = payload.deaths;
             if (payload.campaign)
               game.campaign = structuredClone(payload.campaign);
+            if (payload.fieldContacts?.length) {
+              const encounters = game.campaign.fieldEncounters ??= {version: 1, tick: 0, nextId: payload.fieldContacts.at(-1)!.id + 1, alerts: [], unitStates: []};
+              const known = new Set(encounters.alerts.map(alert => alert.id));
+              encounters.alerts.push(...payload.fieldContacts.filter(alert => !known.has(alert.id)).map(alert => structuredClone(alert)));
+              if (encounters.alerts.length > 24)
+                encounters.alerts.splice(0, encounters.alerts.length - 24);
+            }
             for (const event of networkEventFeedRef.current(game.campaign, lastAutomaticRoomCodeRef.current ?? "lan"))
               pushEvent(event);
           }

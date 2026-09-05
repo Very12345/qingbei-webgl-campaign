@@ -50,6 +50,7 @@ jobs:
       - name: Build shared JS kernel
         run: |
           npm ci
+          npm run test:field-encounters
           npm run build:kernel
       - name: Build server
         working-directory: native-server

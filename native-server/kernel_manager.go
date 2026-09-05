@@ -10,6 +10,7 @@ import (
 type battleSpec struct {
 	HumanTeams       []string          `json:"humanTeams,omitempty"`
 	ServerOpening    string            `json:"serverOpening,omitempty"`
+	FieldEncounters  string            `json:"fieldEncounters,omitempty"`
 	Name             string            `json:"name,omitempty"`
 	Mode             string            `json:"mode,omitempty"`
 	Difficulty       string            `json:"difficulty,omitempty"`
@@ -43,6 +44,9 @@ func (manager *kernelManager) create(spec battleSpec) (*kernelBattle, error) {
 }
 
 func (manager *kernelManager) createWithRuntime(spec battleSpec, runtime *jsKernelRuntime) (*kernelBattle, error) {
+	if spec.FieldEncounters != "" && spec.FieldEncounters != "light-v1" {
+		return nil, errors.New("未知的途中遭遇规则")
+	}
 	manager.mu.Lock()
 	if len(manager.battles)+manager.creating >= manager.max {
 		manager.mu.Unlock()

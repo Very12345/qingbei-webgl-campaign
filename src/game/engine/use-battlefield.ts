@@ -29,6 +29,7 @@ import {
   siteEngagedBy as kernelSiteEngagedBy,
 } from "../kernel";
 import { createId } from "../id";
+import { createFieldContactFeed } from "../field-contact-feed";
 import { pointInPolygon } from "../create-game";
 import {
   RESEARCH_DEFINITIONS,
@@ -8706,6 +8707,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       kernelEventCursor = gameRef.current.campaign.eventHistory?.length ?? 0,
       kernelLastBattleAlertId = gameRef.current.campaign.battleAlerts?.at(-1)?.id ?? -1,
       kernelOutcomeAt = -1;
+    const fieldContactFeed = createFieldContactFeed();
     const directCenter = new THREE.Vector3(),
       directCameraGoal = new THREE.Vector3(),
       siteMenuProjection = new THREE.Vector3();
@@ -8923,6 +8925,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
       const authoritativeGuest =
         isRemoteGuest();
+      if (g.campaign.fieldEncounters?.alerts.length) for (const contact of fieldContactFeed(g.campaign)) {
+        spawnCombatEffect(contact.x, contact.z);
+        window.dispatchEvent(new CustomEvent("qingbei-field-contact", {detail: {id: contact.id}}));
+      }
       if (authoritativeGuest) {
         const ids = new Set<number>(), alpha = 1 - Math.exp(-16 * Math.max(0, Math.min(.25, rawDelta)));
         for (const unit of g.units) {

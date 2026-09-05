@@ -13,6 +13,7 @@ if(!workerPath)throw Error('Usage: node benchmark-kernel-workers.mjs before.js a
 const {navGrid}=JSON.parse(gunzipSync(readFileSync(seedPath)));
 const save=JSON.parse(readFileSync(savePath,'utf8')),state=save.state??save.State;
 const frames=Number(process.env.QBB_BENCH_FRAMES||120);
+const fieldMode=process.env.QBB_BENCH_FIELD_MODE;
 const ticks=process.platform==='linux'?Number(execFileSync('getconf',['CLK_TCK'])):null;
 const guard=async()=>{
   if(!process.env.QBB_BENCH_IDLE_SERVER)return;
@@ -40,13 +41,13 @@ function worker() {
     pending.push({resolve,reject,timer});child.stdin.write(JSON.stringify(data)+'\n');
   });}};
 }
-async function sample(bundle,rooms) {
+async function sample(bundle,rooms,fieldEnabled=false) {
   const workers=[];
   try {
     for(let i=0;i<rooms;i++) {
       const w=worker();workers.push(w);
       await w.request({op:'init',bundle:readFileSync(bundle,'utf8')});
-      const created=await w.request({op:'create',args:[state,{navGrid,aiTeams:['thu'],fixedStepMilliseconds:100}]});
+      const created=await w.request({op:'create',args:[state,{navGrid,aiTeams:fieldMode?[]:['thu'],fixedStepMilliseconds:100,profile:process.env.QBB_BENCH_PROFILE==='1',...(fieldEnabled?{fieldEncounters:'light-v1'}:{})}]});
       w.call=(method,...args)=>w.request({op:'call',instance:created.id,method,args});
       await w.call('dispatch',{type:'set_time_scale',value:4});
       for(let n=0;n<12;n++)await w.call('advanceOnly',100);
@@ -54,23 +55,31 @@ async function sample(bundle,rooms) {
       w.networkHash=createHash('sha256');
     }
     const initial=workers.map(w=>usage(w.child.pid));
-    const parentCPU=process.cpuUsage(),times=[];let bytes=0;
+    const parentCPU=process.cpuUsage(),times=[];let bytes=0,simulationMs=0,networkMs=0;
     const started=performance.now();
     for(let n=0;n<frames;n++) {
       const start=performance.now();
       await Promise.all(workers.map(async w=>{
+        const simulationStart=performance.now();
         await w.call('advanceOnly',100);
-        if(n%2===0) {const encoded=await w.call('networkDeltaJSON');bytes+=Buffer.byteLength(encoded);w.networkHash.update(encoded.length+':'+encoded);}
+        simulationMs+=performance.now()-simulationStart;
+        if(n%2===0) {const networkStart=performance.now();const encoded=await w.call('networkDeltaJSON');networkMs+=performance.now()-networkStart;bytes+=Buffer.byteLength(encoded);w.networkHash.update(encoded.length+':'+encoded);}
       }));
       times.push(performance.now()-start);
     }
     const elapsedMs=performance.now()-started,parent=process.cpuUsage(parentCPU),end=workers.map(w=>usage(w.child.pid));
     const cpuMs=ticks?end.reduce((sum,u,i)=>sum+u.cpu-initial[i].cpu,0)+(parent.user+parent.system)/1000:null;
-    const hashes=await Promise.all(workers.map(async w=>createHash('sha256').update(JSON.stringify((await w.call('snapshot')).state)).digest('hex')));
+    const profiles=await Promise.all(workers.map(w=>w.call('performanceProfile')));
+    const fieldStats=profiles.map(profile=>profile.fieldEncounters);
+    const hashes=await Promise.all(workers.map(async w=>{
+      const state=(await w.call('snapshot')).state;
+      if(fieldMode)delete state.campaign.fieldEncounters;
+      return createHash('sha256').update(JSON.stringify(state)).digest('hex');
+    }));
     times.sort((a,b)=>a-b);
     return {rooms,frames,elapsedMs,batchP50Ms:times[Math.floor(frames*.5)],batchP95Ms:times[Math.floor(frames*.95)],cpuMs,
       projectedCPUPercentAt10Hz:cpuMs==null?null:cpuMs/(frames*100)*100,
-      workerRSSBytes:ticks?end.reduce((sum,u)=>sum+u.rss,0):null,bytes,hashes,networkHashes:workers.map(w=>w.networkHash.digest('hex'))};
+      workerRSSBytes:ticks?end.reduce((sum,u)=>sum+u.rss,0):null,simulationMs,networkMs,bytes,hashes,fieldStats,profiles,networkHashes:workers.map(w=>w.networkHash.digest('hex'))};
   } finally {await Promise.all(workers.map(w=>new Promise(resolve=>{
     if(w.child.exitCode!=null){resolve();return;}
     const timer=setTimeout(()=>w.child.kill(),2000);
@@ -81,11 +90,16 @@ for(const rooms of (process.env.QBB_BENCH_ROOMS||'1,2,4').split(',').map(Number)
   if(!Number.isInteger(rooms)||rooms<1||rooms>4)throw Error('Use 1–4 offline rooms');
   await guard();
   let baseline,optimized;
-  if(process.env.QBB_BENCH_REVERSE==='1') {optimized=await sample(after,rooms);await guard();baseline=await sample(before,rooms);}
-  else {baseline=await sample(before,rooms);await guard();optimized=await sample(after,rooms);}
+  if(process.env.QBB_BENCH_REVERSE==='1') {optimized=await sample(after,rooms,!!fieldMode);await guard();baseline=await sample(before,rooms);}
+  else {baseline=await sample(before,rooms);await guard();optimized=await sample(after,rooms,!!fieldMode);}
   await guard();
-  assert.deepEqual(optimized.hashes,baseline.hashes,'Optimization changed authoritative game state');
-  assert.equal(optimized.bytes,baseline.bytes,'Optimization changed network output');
-  assert.deepEqual(optimized.networkHashes,baseline.networkHashes,'Optimization changed an intermediate network message');
+  if(!fieldMode){
+    assert.deepEqual(optimized.hashes,baseline.hashes,'Optimization changed authoritative game state');
+    assert.equal(optimized.bytes,baseline.bytes,'Optimization changed network output');
+    assert.deepEqual(optimized.networkHashes,baseline.networkHashes,'Optimization changed an intermediate network message');
+  } else if(fieldMode==='none') {
+    assert.deepEqual(optimized.hashes,baseline.hashes,'Non-contact scenario changed gameplay');
+    assert.ok(optimized.fieldStats.every(s=>s.pairs===0),'Non-contact fixture encountered enemies');
+  } else if(fieldMode==='dense')assert.ok(optimized.fieldStats.every(s=>s.pairs>0),'Dense fixture did not exercise encounters');
   console.log(JSON.stringify({baseline,optimized}));
 }

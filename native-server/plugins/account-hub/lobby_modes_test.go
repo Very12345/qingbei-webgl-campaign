@@ -59,7 +59,7 @@ func TestBlitzAIForcesStandardOnHost(t *testing.T) {
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["difficulty"] != "standard" || body["timeScale"] != float64(4) || body["serverOpening"] != "blitz" {
+		if body["difficulty"] != "standard" || body["timeScale"] != float64(4) || body["serverOpening"] != "blitz" || body["fieldEncounters"] != "light-v1" {
 			t.Errorf("wrong host config: %v", body)
 		}
 		teams := body["humanTeams"].([]any)

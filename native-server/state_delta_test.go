@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,6 +36,59 @@ func TestSlowClientRetainsUnsentDeltaChanges(t *testing.T) {
 	}
 	if len(c.stateSignal) != 1 || c.mergedDeltas.Load() != 1 {
 		t.Fatal("queue is not bounded")
+	}
+}
+
+func TestSlowClientRetainsBoundedFieldContacts(t *testing.T) {
+	older := statePacket(`{"type":"state_delta","revision":1,"units":[],"sites":[],"removedUnitIds":[],"fieldContacts":[{"id":1,"x":1},{"id":2,"x":2}]}`)
+	newer := statePacket(`{"type":"state_delta","revision":2,"units":[],"sites":[],"removedUnitIds":[],"fieldContacts":[{"id":2,"x":20},{"id":3,"x":3}]}`)
+	merged, err := mergeStateDeltas(older, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		FieldContacts []struct {
+			ID int
+			X  float64
+		}
+	}
+	if err := json.Unmarshal([]byte(merged.Data), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.FieldContacts) != 3 || result.FieldContacts[0].ID != 1 || result.FieldContacts[1].X != 20 || result.FieldContacts[2].ID != 3 {
+		t.Fatal(merged.Data)
+	}
+	for id := 4; id <= 30; id++ {
+		packet := statePacket(fmt.Sprintf(`{"type":"state_delta","revision":%d,"units":[],"sites":[],"removedUnitIds":[],"fieldContacts":[{"id":%d}]}`, id, id))
+		merged, err = mergeStateDeltas(merged, packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	result.FieldContacts = nil
+	_ = json.Unmarshal([]byte(merged.Data), &result)
+	if len(result.FieldContacts) != 24 || result.FieldContacts[0].ID != 7 || result.FieldContacts[23].ID != 30 {
+		t.Fatal(merged.Data)
+	}
+}
+
+func TestSlowClientMergesCompactHPWithoutOverridingNewerUnits(t *testing.T) {
+	older := statePacket(`{"type":"state_delta","revision":1,"units":[[1,0,10],[2,0,20]],"unitHp":[[3,1,997]],"sites":[],"removedUnitIds":[]}`)
+	newer := statePacket(`{"type":"state_delta","revision":2,"units":[[3,1,30]],"unitHp":[[1,1,985],[2,1,975]],"sites":[],"removedUnitIds":[2]}`)
+	merged, err := mergeStateDeltas(older, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Units          [][]int `json:"units"`
+		UnitHP         [][]int `json:"unitHp"`
+		RemovedUnitIds []int   `json:"removedUnitIds"`
+	}
+	if err := json.Unmarshal([]byte(merged.Data), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Units) != 2 || result.Units[0][0] != 1 || result.Units[1][0] != 3 || len(result.UnitHP) != 1 || result.UnitHP[0][0] != 1 || result.UnitHP[0][1] != 1 || result.UnitHP[0][2] != 985 || len(result.RemovedUnitIds) != 1 || result.RemovedUnitIds[0] != 2 {
+		t.Fatal(merged.Data)
 	}
 }
 

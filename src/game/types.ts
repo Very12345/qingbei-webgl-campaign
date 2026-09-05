@@ -115,6 +115,7 @@ export type TimedStatus = {
 
 export type EventCard = CampaignEventCardSpec & { id: string };
 export type EventHistoryEntry = EventCard & { atHour: number };
+export type FieldContactAlert = { id: number; x: number; z: number; atHour: number };
 export type BattleAlert = {
   id: number;
   x: number;
@@ -219,6 +220,16 @@ export type DecisionVote = {
 };
 
 export type CampaignState = {
+  fieldEncounters?: {
+    version: 1;
+    tick: number;
+    nextId: number;
+    nextScanAt?: number;
+    activeSlowUntil?: number;
+    /** Flat [unitId, nearSince, cooldownUntil, slowUntil, ...]; null represents an inactive timer in JSON saves. */
+    unitStates: Array<number | null>;
+    alerts: FieldContactAlert[];
+  };
   battleStats?: { kills: Record<Team, number>; captures: Record<Team, number> };
   rulesVersion: number;
   orderRulesVersion?: number;
@@ -365,10 +376,12 @@ export type MultiplayerEnvelope =
       revision: number;
       role: "host" | "guest";
       units: Array<CompactUnitNetworkState | UnitNetworkState>;
+      unitHp?: Array<[startId: number, count: number, hp10: number]>;
       newUnits?: UnitNetworkState[];
       removedUnitIds: number[];
       sites: SiteState[];
       campaign?: CampaignState;
+      fieldContacts?: FieldContactAlert[];
       timeOfDay: number;
       timeScale: number;
       elapsedHours: number;

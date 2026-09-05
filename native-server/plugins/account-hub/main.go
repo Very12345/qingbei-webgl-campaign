@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.11"
+const pluginVersion = "0.3.12"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -550,6 +550,7 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 	server.mu.Unlock()
 	spec := map[string]any{"name": "人机挑战 · " + input.Difficulty, "mode": "ai", "difficulty": input.Difficulty, "difficultyByTeam": map[string]string{"pku": input.Difficulty, "thu": input.Difficulty}, "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "metadata": map[string]any{"owner": userID, "playerTeam": input.Team}}
 	spec["humanTeams"], spec["serverOpening"] = []string{input.Team}, input.Pace
+	spec["fieldEncounters"] = "light-v1"
 	if input.Pace == "blitz" {
 		spec["name"] = "极速 · 标准人机"
 	}
@@ -655,7 +656,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	if input.Pace == "blitz" {
 		timeScale, name = 4, "极速 · 玩家对战"
 	}
-	room, err := server.createBattle(map[string]any{"name": name, "mode": "pvp", "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "humanTeams": []string{"pku", "thu"}, "serverOpening": input.Pace})
+	room, err := server.createBattle(map[string]any{"name": name, "mode": "pvp", "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "humanTeams": []string{"pku", "thu"}, "serverOpening": input.Pace, "fieldEncounters": "light-v1"})
 	if err != nil {
 		server.mu.Lock()
 		if *queue == nil {

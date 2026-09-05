@@ -35,6 +35,7 @@ import { cancelSiteMovement, migrateLegacyOrders, ORDER_RULES_VERSION } from "./
 import { prepareServerDeployment } from "./deployment";
 import { dispatchPlayerRoutes, PLAYER_DISPATCH_VERSION } from "./player-dispatch";
 import { withModifierCache } from "./modifiers";
+import { FieldEncounters, FIELD_ENCOUNTER_VERSION } from "./encounters";
 export {
   KernelPathfinder,
   navIndex,
@@ -121,6 +122,7 @@ export type KernelAction =
   | ProgressionAction;
 
 export type KernelOptions = {
+  fieldEncounters?: "light-v1";
   profile?: boolean;
   networkEpoch?: number;
   serverOpening?: "standard" | "blitz";
@@ -138,7 +140,7 @@ export type KernelEnvelope = {
 };
 
 export type KernelInstance = {
-  performanceProfile(): {stages:Record<string,number>;frames:number};
+  performanceProfile(): {stages:Record<string,number>;frames:number;fieldEncounters?: FieldEncounters["stats"]};
   dispatchMany(actions: KernelAction[], token?: string): void;
   drainCommandReceipts(): { tokens: string[] };
   networkDeltaJSON(): string;
@@ -154,6 +156,7 @@ export type KernelInstance = {
     revision: number;
     role: "host";
     units: CompactUnitNetworkState[];
+    unitHp?: Array<[number, number, number]>;
     newUnits?: UnitNetworkState[];
     removedUnitIds: number[];
     sites: SiteState[];
@@ -219,6 +222,12 @@ export function createKernel(
 ): KernelInstance {
   const state = options.mutateInitialState ? initialState : clone(initialState);
   normalizeKernelState(state);
+  if (options.fieldEncounters === "light-v1" && !state.campaign.fieldEncounters)
+    state.campaign.fieldEncounters = {version: 1, tick: 0, nextId: 1, alerts: [], unitStates: []};
+  if (state.campaign.fieldEncounters && state.campaign.fieldEncounters.activeSlowUntil == null)
+    state.campaign.fieldEncounters.activeSlowUntil = state.campaign.fieldEncounters.unitStates.reduce<number>((latest, value, index) => index % 4 === 3 ? Math.max(latest, typeof value === "number" ? value : 0) : latest, 0);
+  if (state.campaign.fieldEncounters && (state.campaign.fieldEncounters.version !== 1 || !options.navGrid))
+    throw new Error("Unsupported field encounter state or missing navigation grid");
   if (Number.isFinite(options.randomSeed)) {
     const seed = (options.randomSeed as number) >>> 0;
     state.campaign.ai.seed = seed;
@@ -251,7 +260,8 @@ export function createKernel(
   migrateLegacyOrders(state, enabledAiTeams);
   let networkRevision = 0,
     networkBaselineInitialized = false,
-    networkCampaignSignature = "";
+    networkCampaignSignature = "",
+    networkFieldContactId = 0;
   const networkUnitSignatures = new Map<number, CompactUnitNetworkState>(),
     networkSiteSignatures = new Map<number, string>();
   if (options.navGrid) options = {...options, navGrid: compactKernelNavGrid(options.navGrid)};
@@ -266,6 +276,9 @@ export function createKernel(
       [site.navX, site.navZ] = navPoint(options.navGrid, open);
     }
   if (options.serverOpening) prepareServerDeployment(state, options.navGrid, options.serverOpening);
+  const fieldEncounters = state.campaign.fieldEncounters?.version === 1 ? new FieldEncounters(options.navGrid!) : null;
+  const fieldExcluded = new Set<number>();
+  const fieldCandidates: number[] = [];
 
   const randomFor = (team: Team) => () => {
     state.campaign.ai.seedByTeam ??= {
@@ -299,6 +312,7 @@ export function createKernel(
       target.destroyed
     )
       return 0;
+    fieldEncounters?.invalidate();
     if (owner === "ai" && source.orderOwner === "player") return 0;
     // Player intent persists even when no unit or path is currently available.
     if (owner === "player") {
@@ -391,6 +405,7 @@ export function createKernel(
       return;
     }
     if (action.type === "order_units") {
+      fieldEncounters?.invalidate();
       const target =
           action.targetId == null ? undefined : state.sites[action.targetId],
         tx = target?.navX ?? target?.x ?? action.tx,
@@ -432,6 +447,7 @@ export function createKernel(
       return;
     }
     if (action.type === "configure_site") {
+      fieldEncounters?.invalidate();
       const site = state.sites[action.siteId];
       if (!site || site.destroyed) return;
       if (site.team === action.team) {
@@ -513,6 +529,7 @@ export function createKernel(
       action.type === "production_stop" ||
       action.type === "mobilize"
     ) {
+      fieldEncounters?.invalidate();
       applyProgressionAction(state, action);
       return;
     }
@@ -527,10 +544,18 @@ export function createKernel(
     const dead = new Set<number>(),
       attackersByTarget = new Map<number, UnitState[]>(),
       defendersByHome = new Map<number, UnitState[]>();
+    const checkField = state.campaign.warUnlocked && fieldEncounters?.due(state) ? fieldEncounters : null;
+    const resumeField = checkField?.canResume(state) ? checkField : null;
+    const skipField = !resumeField && checkField?.canSkip(state) ? checkField : null;
+    const inspectField = resumeField || skipField ? null : checkField;
     combatPulse++;
+    let fieldHasBuses = false, fieldInputsUnchanged = true;
+    if (inspectField) { fieldExcluded.clear(); fieldCandidates.length = 0; }
     fightingUnitIds = new Set<number>();
-    for (const unit of state.units) {
+    for (let unitIndex = 0; unitIndex < state.units.length; unitIndex++) {
+      const unit = state.units[unitIndex];
       if (unit.hp <= 0) continue;
+      let stationed = false;
       if (unit.targetSiteId != null) {
         const target = state.sites[unit.targetSiteId];
         if (
@@ -548,18 +573,27 @@ export function createKernel(
         }
       }
       const home = state.sites[unit.siteId];
-      if (
-        home &&
-        !home.destroyed &&
-        home.team === unit.team &&
-        Math.hypot(
-          unit.x - (home.navX ?? home.x),
-          unit.z - (home.navZ ?? home.z),
-        ) < 12
-      ) {
-        const defenders = defendersByHome.get(home.id);
-        if (defenders) defenders.push(unit);
-        else defendersByHome.set(home.id, [unit]);
+      if (home && !home.destroyed && home.team === unit.team) {
+        const homeDistance = Math.hypot(unit.x - (home.navX ?? home.x), unit.z - (home.navZ ?? home.z));
+        if (homeDistance < 12) {
+          const defenders = defendersByHome.get(home.id);
+          if (defenders) defenders.push(unit);
+          else defendersByHome.set(home.id, [unit]);
+        }
+        if (inspectField && homeDistance < 3.4 && unit.targetSiteId == null && !unit.movementOrder)
+          stationed = true;
+      }
+      if (inspectField) {
+        if (stationed) {
+          inspectField.clearNear(state, unit, state.campaign.elapsedHours);
+          if (unit.transport === "bus" && unit.transportGroupId) { fieldHasBuses = true; fieldExcluded.add(unit.id); }
+        } else if (unit.retreating || state.campaign.freezeUntil[unit.team] > state.campaign.elapsedHours) {
+          inspectField.clearNear(state, unit, state.campaign.elapsedHours);
+        } else if (unit.strength > 0) {
+          fieldHasBuses ||= unit.transport === "bus" && !!unit.transportGroupId;
+          fieldInputsUnchanged &&= inspectField.matchesCandidate(state, unit, fieldCandidates.length);
+          fieldCandidates.push(unitIndex);
+        }
       }
     }
     for (const site of state.sites) {
@@ -569,6 +603,10 @@ export function createKernel(
         attackers = attackersByTarget.get(site.id) ?? [],
         defenders = defendersByHome.get(site.id) ?? [];
       if (!attackers.length) continue;
+      if (inspectField && fieldCandidates.length) {
+        for (const unit of attackers) fieldExcluded.add(unit.id);
+        for (const unit of defenders) fieldExcluded.add(unit.id);
+      }
       if (defenders.length) {
         if (combatPulse % 8 === 0) {
           state.campaign.battleAlerts.push({
@@ -604,6 +642,18 @@ export function createKernel(
         issueOrder(team, sourceId, targetId, undefined, "combat", state.sites[sourceId]?.orderOwner ?? "ai");
       });
     }
+    if (resumeField) {
+      const at = options.profile ? Date.now() : 0;
+      resumeField.resume(state, dead);
+      stage('field-encounters', at);
+    }
+    else if (skipField) skipField.skip(state);
+    else if (inspectField) {
+      const at = options.profile ? Date.now() : 0;
+      fieldInputsUnchanged &&= inspectField.candidateCountMatches(fieldCandidates.length);
+      inspectField.step(state, fieldExcluded, dead, fieldCandidates, fieldHasBuses, fieldInputsUnchanged);
+      stage('field-encounters', at);
+    }
     if (dead.size) {
       for (const unit of state.units)
         if (dead.has(unit.id)) {
@@ -611,6 +661,7 @@ export function createKernel(
           if (state.campaign.battleStats)
             state.campaign.battleStats.kills[unit.team === "pku" ? "thu" : "pku"] += unit.strength;
         }
+      fieldEncounters?.remove(state, dead);
       state.units = state.units.filter((unit) => !dead.has(unit.id));
     }
     routeCollapsedUnits(state, fightingUnitIds, pathfinder);
@@ -753,6 +804,7 @@ export function createKernel(
       const activeCamps = state.sites.filter(
         (site) => site.team === team && site.type === "camp" && !site.destroyed,
       ).length;
+      fieldEncounters?.invalidate();
       runAiProgression(
         state,
         team,
@@ -851,7 +903,7 @@ export function createKernel(
   }
 
   return {
-    performanceProfile(){return {stages:{...stageTimes},frames:profiledFrames};},
+    performanceProfile(){return {stages:{...stageTimes},frames:profiledFrames,fieldEncounters:fieldEncounters?{...fieldEncounters.stats}:undefined};},
     battleStats() {
       return { version: 1, elapsedHours: state.campaign.elapsedHours,
         kills: clone(state.campaign.battleStats?.kills ?? { pku: 0, thu: 0 }),
@@ -888,18 +940,29 @@ export function createKernel(
         for (const site of state.sites)
           networkSiteSignatures.set(site.id, networkSiteSignature(site));
         networkCampaignSignature = campaignNetworkSignature(state.campaign);
+        networkFieldContactId = state.campaign.fieldEncounters?.alerts.at(-1)?.id ?? 0;
         networkBaselineInitialized = true;
       }
-      return { type: "state", game: clone({...state, sites: state.sites.map(networkSiteView)}), role: "host", revision: networkRevision, networkEpoch: options.networkEpoch };
+      return { type: "state", game: clone({...state, campaign: networkCampaignView(state.campaign), sites: state.sites.map(networkSiteView)}), role: "host", revision: networkRevision, networkEpoch: options.networkEpoch };
     },
     networkDelta() {
       networkBaselineInitialized = true;
       const currentIds = new Set<number>(),
         units: CompactUnitNetworkState[] = [],
+        unitHp: Array<[number, number, number]> = [],
         newUnits: UnitNetworkState[] = [];
       for (const unit of state.units) {
         currentIds.add(unit.id);
         const previous = networkUnitSignatures.get(unit.id);
+        if (previous && fieldEncounters && compactUnitExceptHpUnchanged(unit, previous)) {
+          const hp10 = Math.round(unit.hp * 10);
+          if (previous[6] === hp10) continue;
+          previous[6] = hp10;
+          const run = unitHp.at(-1);
+          if (run && run[0] + run[1] === unit.id && run[2] === hp10) run[1]++;
+          else unitHp.push([unit.id, 1, hp10]);
+          continue;
+        }
         if (previous && compactUnitUnchanged(unit, previous)) continue;
         const compact = encodeCompactUnit(unit);
         networkUnitSignatures.set(unit.id, compact);
@@ -924,16 +987,20 @@ export function createKernel(
       const campaignSignature = campaignNetworkSignature(state.campaign),
         campaignChanged = campaignSignature !== networkCampaignSignature;
       if (campaignChanged) networkCampaignSignature = campaignSignature;
+      const fieldContacts = (state.campaign.fieldEncounters?.alerts ?? []).filter(alert => alert.id > networkFieldContactId);
+      if (fieldContacts.length) networkFieldContactId = fieldContacts.at(-1)!.id;
       return {
         type: "state_delta" as const,
         networkEpoch: options.networkEpoch,
         revision: ++networkRevision,
         role: "host" as const,
         units,
+        unitHp: unitHp.length ? unitHp : undefined,
         newUnits: newUnits.length ? newUnits : undefined,
         removedUnitIds,
         sites,
-        campaign: campaignChanged ? clone(state.campaign) : undefined,
+        campaign: campaignChanged ? clone(networkCampaignView(state.campaign)) : undefined,
+        fieldContacts: fieldContacts.length ? clone(fieldContacts) : undefined,
         timeOfDay: state.timeOfDay,
         timeScale,
         elapsedHours: state.campaign.elapsedHours,
@@ -950,11 +1017,20 @@ const networkSiteView = (site: SiteState) => {
   return view;
 };
 
+const networkCampaignView = (campaign: GameData["campaign"]): GameData["campaign"] => ({
+  ...campaign,
+  fieldEncounters: campaign.fieldEncounters ? {
+    version: 1, tick: 0, nextId: campaign.fieldEncounters.nextId,
+    alerts: campaign.fieldEncounters.alerts, unitStates: [],
+  } : undefined,
+});
+
 // Time is already a top-level delta field. PRNG state cannot affect UI and
 // must not force resending the entire event/research history on every tick.
 const campaignNetworkSignature = (campaign: GameData["campaign"]) => JSON.stringify({
-  ...campaign, elapsedHours: 0,
+  ...networkCampaignView(campaign), elapsedHours: 0,
   ai: {...campaign.ai, seed: 0, seedByTeam: undefined},
+  fieldEncounters: campaign.fieldEncounters ? {version: campaign.fieldEncounters.version} : undefined,
 });
 
 const NETWORK_SKINS: Array<UnitState["skin"]> = [
@@ -994,7 +1070,7 @@ const encodeCompactUnit = (unit: UnitState): CompactUnitNetworkState => [
 // Compare directly against the previous wire view, allocating a new tuple only
 // when needed. Keep all wire fields and rounding identical to encodeCompactUnit.
 // A future tuple length change fails closed and sends a full update.
-const compactUnitUnchanged = (unit: UnitState, previous: CompactUnitNetworkState) =>
+const compactUnitExceptHpUnchanged = (unit: UnitState, previous: CompactUnitNetworkState) =>
   previous.length === 22 &&
   previous[0] === (unit.id) &&
   previous[1] === (unit.team === "pku" ? 0 : 1) &&
@@ -1002,7 +1078,6 @@ const compactUnitUnchanged = (unit: UnitState, previous: CompactUnitNetworkState
   previous[3] === (Math.round(unit.z * 100)) &&
   previous[4] === (Math.round(unit.tx * 100)) &&
   previous[5] === (Math.round(unit.tz * 100)) &&
-  previous[6] === (Math.round(unit.hp * 10)) &&
   previous[7] === (Math.round(unit.supply * 10)) &&
   previous[8] === (unit.strength) &&
   previous[9] === (unit.siteId) &&
@@ -1018,6 +1093,9 @@ const compactUnitUnchanged = (unit: UnitState, previous: CompactUnitNetworkState
   previous[19] === (unit.movementOrder?.goalSiteId ?? -1) &&
   previous[20] === (unit.movementOrder ? Math.round(unit.movementOrder.goalX*100) : null) &&
   previous[21] === (unit.movementOrder ? Math.round(unit.movementOrder.goalZ*100) : null);
+
+const compactUnitUnchanged = (unit: UnitState, previous: CompactUnitNetworkState) =>
+  compactUnitExceptHpUnchanged(unit, previous) && previous[6] === Math.round(unit.hp * 10);
 
 const networkSiteSignature = (site: SiteState) =>
   JSON.stringify({
@@ -1091,6 +1169,7 @@ export function healthCheck() {
     authoritative: true,
     orderRulesVersion: ORDER_RULES_VERSION,
     decisionCancellation: true,
+    fieldEncountersVersion: FIELD_ENCOUNTER_VERSION,
     serverScenariosVersion: 1,
     playerDispatchVersion: PLAYER_DISPATCH_VERSION,
     networkPerformanceVersion: 1,

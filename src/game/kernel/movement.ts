@@ -3,6 +3,7 @@ import type { GameData, SiteState, UnitState } from "../types";
 import { navIndex, type KernelNavGrid, type KernelPathfinder } from "./navigation";
 import { unitModifiers } from "./modifiers";
 import { prepareUnitMovement } from "./orders";
+import { FIELD_SLOW_FACTOR, fieldSlowUntilById } from "./encounters";
 
 const insideTsinghuaCampus = (x: number, z: number) =>
   x > -18 && x < 38 && z > -48 && z < 17;
@@ -70,6 +71,9 @@ export function simulateKernelMovement(
   pathfinder: KernelPathfinder | null,
   grid?: KernelNavGrid,
 ) {
+  const fieldRules = game.campaign.fieldEncounters?.version === 1 && game.campaign.warUnlocked &&
+    (game.campaign.fieldEncounters.activeSlowUntil ?? 0) > game.campaign.elapsedHours;
+  const fieldSlowUntil = fieldRules ? fieldSlowUntilById(game) : undefined;
   for (const unit of game.units) {
     if (unit.hp <= 0) continue;
     if (game.campaign.freezeUntil[unit.team] > game.campaign.elapsedHours)
@@ -155,7 +159,7 @@ export function simulateKernelMovement(
           slopeSpeed *
           modifiers.movement *
           (unit.moveModifier ?? 1) *
-          morningMove,
+          morningMove * ((fieldSlowUntil?.[unit.id] ?? 0) > game.campaign.elapsedHours ? FIELD_SLOW_FACTOR : 1),
         budget = speed * budgetSeconds;
       unit.transportOutsidePenalty =
         unit.transportModel === "thu_purple_bike" &&

@@ -140,7 +140,7 @@ func TestBlitzRulesAndSeparatePVPQueues(t *testing.T) {
 	if res.Code != 201 {
 		t.Fatal(res.Body.String())
 	}
-	if specs[0]["difficulty"] != "standard" || specs[0]["timeScale"] != float64(4) || specs[0]["serverOpening"] != "blitz" || s.data.Users["ai"].SpeedCards["4x"] != 2 {
+	if specs[0]["difficulty"] != "standard" || specs[0]["timeScale"] != float64(4) || specs[0]["serverOpening"] != "blitz" || specs[0]["fieldEncounters"] != "light-v1" || s.data.Users["ai"].SpeedCards["4x"] != 2 {
 		t.Fatal("blitz was not fixed standard / free 4x", specs[0])
 	}
 	if teams := specs[0]["humanTeams"].([]any); len(teams) != 1 || teams[0] != "thu" {

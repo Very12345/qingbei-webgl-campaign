@@ -37,6 +37,7 @@ jobs:
       - run: npm run test:realtime-dispatch
       - run: npm run test:network-performance
       - run: npm run test:events-routes-blitz
+      - run: npm run test:field-encounters
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build
