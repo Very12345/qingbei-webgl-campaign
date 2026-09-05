@@ -148,9 +148,15 @@ func TestPlayShellOwnsExitAndCommandReliability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"确认投降", "api/match/disconnect", "QingbeiProtocol", "PluginWebSocket", "保存并退出"} {
+	for _, expected := range []string{"确认投降", "api/match/disconnect", "QingbeiProtocol", "PluginWebSocket", "保存并退出", "mobile-immersion", "mobile-play.js"} {
 		if !bytes.Contains(data, []byte(expected)) {
 			t.Fatalf("play shell is missing %q", expected)
 		}
+	}
+	_, mux := newTestHub(t)
+	mobile := httptest.NewRecorder()
+	mux.ServeHTTP(mobile, httptest.NewRequest(http.MethodGet, "/mobile-play.js", nil))
+	if mobile.Code != http.StatusOK || !strings.Contains(mobile.Body.String(), "requestFullscreen") || mobile.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+		t.Fatal("mobile controller was not served")
 	}
 }

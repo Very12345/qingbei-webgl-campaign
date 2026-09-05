@@ -21,7 +21,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:events-routes-blitz": "tsx scripts/event-route-blitz-regressions.ts",
-    "test:field-encounters": "tsx scripts/field-encounter-regressions.ts"
+    "test:field-encounters": "tsx scripts/field-encounter-regressions.ts",
+    "test:mobile-support": "tsx scripts/mobile-support-regressions.ts"
   },
   "dependencies": {
     "react": "19.2.6",

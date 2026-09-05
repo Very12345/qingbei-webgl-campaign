@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.3.12"
+const pluginVersion = "0.3.13"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -184,6 +184,12 @@ func (server *hubServer) routes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/duel-ui.js", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := staticFiles.ReadFile("static/duel-ui.js")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("/mobile-play.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFiles.ReadFile("static/mobile-play.js")
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)

@@ -92,8 +92,40 @@ export class PerformanceController {
   private fastSince = 0;
   private interacting = false;
 
+  constructor(private readonly mobile = false) {
+    if (mobile) {
+      this.level = "low";
+      this.metrics.quality = "low";
+    }
+  }
+
   get profile() {
     const base = QUALITY_PROFILES[this.level];
+    if (this.mobile && this.mode === "auto") {
+      const level = this.interacting ? "low" : this.level;
+      const profile = QUALITY_PROFILES[level];
+      return {
+        ...profile,
+        pixelRatio: Math.min(
+          profile.pixelRatio,
+          level === "low" ? 0.62 : 0.78,
+        ),
+        shadowSize: 0,
+        dynamicLights: 0,
+        detailedUnits: Math.min(
+          profile.detailedUnits,
+          level === "low" ? 36 : 72,
+        ),
+        windowDetails: false,
+        roofDetails: false,
+        combatParticles: Math.min(profile.combatParticles, 5),
+        combatParticleIntervalMs: Math.max(
+          profile.combatParticleIntervalMs,
+          900,
+        ),
+        shadowIntervalMs: Number.POSITIVE_INFINITY,
+      };
+    }
     if (!this.interacting) return base;
     const index = Math.max(0, order.indexOf(this.level) - 1);
     return QUALITY_PROFILES[order[index]];
@@ -154,7 +186,8 @@ export class PerformanceController {
   }
 
   private shift(delta: number, now: number) {
-    const next = Math.max(0, Math.min(order.length - 1, order.indexOf(this.level) + delta));
+    const maximum = this.mobile && this.mode === "auto" ? 1 : order.length - 1;
+    const next = Math.max(0, Math.min(maximum, order.indexOf(this.level) + delta));
     if (order[next] === this.level) return;
     this.level = order[next];
     this.lastChangeAt = now;

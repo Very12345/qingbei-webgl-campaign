@@ -18,6 +18,8 @@ export type BattlefieldSceneApi = {
   enterDirectControl: () => boolean;
   exitDirectControl: () => void;
   refreshSiteStance: (siteId: number) => void;
+  zoomBy: (factor: number) => void;
+  beginTouchRoute: (siteId: number) => void;
   setToolMode: (mode: BattlefieldToolMode) => void;
   mobilizeAll: (team: Team, stance: import("../types").Stance) => void;
 };

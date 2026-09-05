@@ -15,6 +15,7 @@ import { ACADEMIC_YEAR_END_ISO, CALENDAR_EVENTS, DECISIONS } from "../../campaig
 import { TACTICAL_EVENTS, type TacticalEventDefinition } from "../../tactical-events";
 import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
+import { isMobileClient, mobileSiteHitRadius } from "../../mobile-support";
 import { EVENT_CARDS } from "../events/event-cards";
 import {
   classifyIntent as kernelClassifyIntent,
@@ -178,8 +179,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     }
     const host = hostRef.current;
     if (!host) return;
+    const mobileClient = isMobileClient();
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !mobileClient,
       powerPreference: "high-performance",
     });
     const performanceController = performanceControllerRef.current,
@@ -191,7 +193,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       );
     renderer.setPixelRatio(renderPixelRatio);
     renderer.setSize(host.clientWidth, host.clientHeight);
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = activeQualityProfile.shadowSize > 0;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
@@ -201,13 +203,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x9fc5d8);
     scene.fog = new THREE.FogExp2(0x9fc5d8, 0.007);
+    let portraitViewport = mobileClient && host.clientHeight > host.clientWidth;
     const camera = new THREE.PerspectiveCamera(
-      38,
+      portraitViewport ? 58 : 38,
       host.clientWidth / host.clientHeight,
       0.1,
       300,
     );
-    camera.position.set(-22, 24, 36);
+    camera.position.set(
+      -22,
+      portraitViewport ? 36 : 24,
+      portraitViewport ? 50 : 36,
+    );
     camera.lookAt(-22, 0, 14);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(-22, 0, 14);
@@ -215,9 +222,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     controls.dampingFactor = 0.08;
     controls.enableRotate = false;
     controls.enableZoom = true;
-    controls.minDistance = 13;
-    controls.maxDistance = 58;
-    controls.zoomSpeed = 0.72;
+    controls.minDistance = mobileClient ? 9 : 13;
+    controls.maxDistance = mobileClient ? 82 : 58;
+    controls.zoomSpeed = mobileClient ? 1.08 : 0.72;
     controls.enablePan = true;
     controls.screenSpacePanning = false;
     controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
@@ -244,10 +251,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x324226, 1.9);
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d0, 3.4);
-    sun.castShadow = true;
+    sun.castShadow = activeQualityProfile.shadowSize > 0;
     sun.shadow.mapSize.set(
-      activeQualityProfile.shadowSize,
-      activeQualityProfile.shadowSize,
+      Math.max(1, activeQualityProfile.shadowSize),
+      Math.max(1, activeQualityProfile.shadowSize),
     );
     sun.shadow.camera.left = -65;
     sun.shadow.camera.right = 65;
@@ -4112,6 +4119,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         routeTargets?: number[];
       } | null = null,
       previewLine: THREE.Object3D | null = null,
+      touchRouteSourceId: number | null = null,
       rightGesture: {
         x: number;
         y: number;
@@ -4160,7 +4168,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         .filter(
           (candidate) =>
             candidate.visible &&
-            candidate.distance <= candidate.radius * radiusMultiplier,
+            candidate.distance <= (mobileClient
+              ? mobileSiteHitRadius(candidate.radius, radiusMultiplier)
+              : candidate.radius * radiusMultiplier),
         )
         .sort((a, b) => a.distance - b.distance)[0];
       return screenHit?.id;
@@ -4186,7 +4196,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           pointerY = ev.clientY - rect.top;
         camera.updateMatrixWorld();
         let closest: UnitState | undefined,
-          closestDistance = 32;
+          closestDistance = mobileClient ? 46 : 32;
         for (const unit of gameRef.current.units) {
           if (unit.team !== playerTeamRef.current || unit.hp <= 0) continue;
           projectedUnitPoint
@@ -4259,7 +4269,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           pointerY = ev.clientY - rect.top;
         camera.updateMatrixWorld();
         let closest: (typeof commandAnimations)[number] | undefined,
-          closestDistance = 11;
+          closestDistance = mobileClient ? 22 : 11;
         commandAnimations.forEach((animation) => {
           animation.curve.getPoint(0, commandHoverPoint).project(camera);
           let previousX = ((commandHoverPoint.x + 1) * rect.width) / 2,
@@ -4509,6 +4519,43 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (next) next.visible = true;
       }
     };
+    const issueTouchRoute = (targetId: number) => {
+      const sourceId = touchRouteSourceId;
+      touchRouteSourceId = null;
+      if (sourceId == null || !canIssuePlayerCommandRef.current()) return false;
+      if (sourceId === targetId) {
+        setNotice("已取消点选调兵");
+        return false;
+      }
+      const source = gameRef.current.sites[sourceId],
+        target = gameRef.current.sites[targetId];
+      if (
+        !source ||
+        !target ||
+        source.destroyed ||
+        target.destroyed ||
+        source.team !== playerTeamRef.current
+      )
+        return false;
+      if (target.team !== playerTeamRef.current && !gameRef.current.campaign.warUnlocked) {
+        setNotice("8月19日前尚未开放交战：可以增援友方据点");
+        return false;
+      }
+      const { deployed, configured } = configureRouteChain(
+        playerTeamRef.current,
+        source,
+        [target],
+      );
+      setNotice(
+        configured
+          ? deployed
+            ? `${source.displayName ?? source.name} → ${target.displayName ?? target.name}：${deployed}名学生出发`
+            : `已建立持续兵线；后续可调兵力会自动前往${target.displayName ?? target.name}`
+          : "未找到可行路径，兵线建立失败",
+      );
+      setSelected(null);
+      return configured > 0;
+    };
     renderer.domElement.addEventListener("pointerdown", (e) => {
       hideCommandLabels();
       setCampContext(null);
@@ -4671,6 +4718,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return;
       }
       if (!canIssuePlayerCommandRef.current()) { down = null; return; }
+      if (!moved && touchRouteSourceId != null && down.site != null) {
+        issueTouchRoute(down.site);
+        down = null;
+        return;
+      }
       if (moved && down.selection) {
         const target = end != null ? gameRef.current.sites[end] : null,
           point = groundAt(e),
@@ -8730,6 +8782,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       if (now - performanceWindowAt > 2000 && performanceFrameCount > 20) {
         const averageFrameTime = performanceFrameTime / performanceFrameCount;
         activeQualityProfile = performanceController.profile;
+        const shadowsEnabled = activeQualityProfile.shadowSize > 0;
+        renderer.shadowMap.enabled = shadowsEnabled;
+        sun.castShadow = shadowsEnabled;
+        if (shadowsEnabled && sun.shadow.mapSize.width !== activeQualityProfile.shadowSize) {
+          sun.shadow.map?.dispose();
+          sun.shadow.map = null;
+          sun.shadow.mapSize.set(activeQualityProfile.shadowSize, activeQualityProfile.shadowSize);
+          renderer.shadowMap.needsUpdate = true;
+        }
         const nextPixelRatio = Math.min(
           maximumPixelRatio,
           activeQualityProfile.pixelRatio,
@@ -9610,6 +9671,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const resize = () => {
       renderer.setSize(host.clientWidth, host.clientHeight);
       camera.aspect = host.clientWidth / host.clientHeight;
+      const nextPortrait = mobileClient && host.clientHeight > host.clientWidth;
+      camera.fov = nextPortrait ? 58 : 38;
+      if (nextPortrait !== portraitViewport && nextPortrait) {
+        const offset = camera.position.clone().sub(controls.target);
+        if (offset.length() < 48)
+          camera.position.copy(controls.target).add(offset.setLength(48));
+      }
+      portraitViewport = nextPortrait;
       camera.updateProjectionMatrix();
       commandLineMaterials.forEach((material) =>
         material.resolution.set(host.clientWidth, host.clientHeight),
@@ -9670,7 +9739,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         regionRef.current = id;
         const [x, z] = [-22, 14];
         controls.target.set(x, 0, z);
-        camera.position.set(x, 24, z + 22);
+        camera.position.set(
+          x,
+          portraitViewport ? 36 : 24,
+          z + (portraitViewport ? 36 : 22),
+        );
         controls.update();
       },
       applyMaterials,
@@ -9685,8 +9758,15 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       },
       setPerspective: (team) => {
         const target = controls.target.clone(),
-          height = 24,
-          depth = team === "thu" ? -22 : 22;
+          height = portraitViewport ? 36 : 24,
+          depth =
+            team === "thu"
+              ? portraitViewport
+                ? -36
+                : -22
+              : portraitViewport
+                ? 36
+                : 22;
         camera.position.set(target.x, height, target.z + depth);
         camera.lookAt(target);
         controls.update();
@@ -9699,6 +9779,25 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       enterDirectControl,
       exitDirectControl,
       refreshSiteStance,
+      zoomBy: (factor) => {
+        const offset = camera.position.clone().sub(controls.target),
+          distance = THREE.MathUtils.clamp(
+            offset.length() * factor,
+            controls.minDistance,
+            controls.maxDistance,
+          );
+        camera.position.copy(controls.target).add(offset.setLength(distance));
+        controls.update();
+      },
+      beginTouchRoute: (siteId) => {
+        const source = gameRef.current.sites[siteId];
+        if (!source || source.team !== playerTeamRef.current || source.destroyed) return;
+        touchRouteSourceId = siteId;
+        setSelected(null);
+        setNotice(
+          `点按目标据点，为${source.displayName ?? source.name}建立持续兵线；再次点按原据点可取消`,
+        );
+      },
       setToolMode: (mode) => {
         activeToolMode = mode;
         setNotice(

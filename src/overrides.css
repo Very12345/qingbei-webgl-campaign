@@ -131,8 +131,9 @@
   }
   .command-notice {
     top: auto;
-    bottom: 64px;
-    max-width: 60vw;
+    left: calc(50% + 28px);
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 92px);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

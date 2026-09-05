@@ -2,10 +2,14 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <meta name="theme-color" content="#171a12" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>解放清华园 · 战区行动</title>
     <script data-asset-base="../assets/">/* ADAPTIVE_IMAGE_BOOTSTRAP */</script>
+    <script>if(matchMedia("(pointer:coarse)").matches||navigator.maxTouchPoints>0||innerWidth<=760)document.documentElement.classList.add("mobile-play")</script>
     <style>
       :root {
         --campus-art: url("../assets/campus-command-v1-480.webp");
@@ -790,6 +794,133 @@
       .progression-track i { display: block; height: 100%; width: 0; background: repeating-linear-gradient(90deg, transparent 0 29px, #19241e55 29px 31px), linear-gradient(90deg,#8d7843,#e7d38e); box-shadow: 0 0 14px #dbc68044; }
       .progression-caption { color: #b9bba5; font-size: 12px; }
       .progression-caption strong { color: #e5d18c; }
+      #mobile-immersion,
+      #mobile-fullscreen-fab { display: none; }
+      html.mobile-play,
+      html.mobile-play body,
+      html.mobile-play #root {
+        height: var(--mobile-visual-height, 100dvh);
+        min-height: var(--mobile-visual-height, 100dvh);
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      html.mobile-play body.plugin-duel-active .battle-nav {
+        position: fixed;
+        top: auto;
+        left: 50%;
+        bottom: calc(8px + env(safe-area-inset-bottom));
+        max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));
+        padding: 4px;
+        transform: translateX(-50%);
+        overflow-x: auto;
+        gap: 4px;
+        background: #111b18e8;
+        border: 1px solid #9ba78a70;
+        scrollbar-width: none;
+      }
+      html.mobile-play body.plugin-duel-active .battle-nav::-webkit-scrollbar { display: none; }
+      html.mobile-play body.plugin-duel-active .battle-nav button {
+        flex: 0 0 44px;
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+        font-size: 21px;
+        touch-action: manipulation;
+      }
+      html.mobile-play body.plugin-duel-active .battle-clock {
+        top: calc(75px + env(safe-area-inset-top));
+        right: 10px;
+        left: auto;
+        transform: none;
+      }
+      html.mobile-play body.plugin-duel-active .battle-drawer {
+        top: auto;
+        bottom: calc(62px + env(safe-area-inset-bottom));
+        max-height: calc(var(--mobile-visual-height, 100dvh) - 150px);
+      }
+      html.mobile-play .duel-player {
+        top: calc(7px + env(safe-area-inset-top));
+        width: min(220px, calc(50vw - 13px));
+        min-height: 58px;
+        padding: 7px;
+      }
+      html.mobile-play .duel-player.self { left: max(7px, env(safe-area-inset-left)); }
+      html.mobile-play .duel-player.opponent { right: max(7px, env(safe-area-inset-right)); }
+      html.mobile-play .duel-avatar { width: 36px; height: 42px; font-size: 20px; }
+      html.mobile-play .duel-player-copy strong { max-width: 100%; font-size: 13px; }
+      html.mobile-play .duel-player-copy small,
+      html.mobile-play .duel-player-copy > span { font-size: 8px; }
+      html.mobile-play body.plugin-duel-active .command-notice {
+        top: calc(116px + env(safe-area-inset-top));
+      }
+      html.mobile-play .duel-chat {
+        bottom: calc(62px + env(safe-area-inset-bottom));
+        right: max(8px, env(safe-area-inset-right));
+      }
+      html.mobile-play #performance-root {
+        bottom: calc(62px + env(safe-area-inset-bottom)) !important;
+        left: max(8px, env(safe-area-inset-left)) !important;
+      }
+      html.mobile-play #field-contact-notice {
+        bottom: calc(120px + env(safe-area-inset-bottom));
+      }
+      html.mobile-play #mobile-fullscreen-fab {
+        position: fixed;
+        z-index: 96;
+        left: 50%;
+        bottom: calc(65px + env(safe-area-inset-bottom));
+        display: block;
+        min-height: 38px;
+        transform: translateX(-50%);
+        padding: 7px 12px;
+        border: 1px solid #a9a071;
+        background: #17241ff0;
+        color: #eee5c4;
+        font: 800 11px var(--command-type);
+        touch-action: manipulation;
+      }
+      html.mobile-play #mobile-fullscreen-fab[hidden] { display: none; }
+      html.mobile-play #mobile-immersion {
+        position: fixed;
+        z-index: 1000003;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+        background: #09120ff2;
+        color: #eee7cb;
+        font-family: var(--command-type);
+      }
+      html.mobile-play #mobile-immersion[hidden] { display: none; }
+      .mobile-immersion-card {
+        display: grid;
+        width: min(430px, 100%);
+        gap: 13px;
+        padding: 22px;
+        border: 2px solid #b6a463;
+        background: var(--command-metal);
+        box-shadow: 0 24px 70px #000c;
+        text-align: center;
+      }
+      .mobile-rotate-mark { font-size: 42px; transform: rotate(90deg); }
+      .mobile-immersion-card h2,
+      .mobile-immersion-card p { margin: 0; }
+      .mobile-immersion-card p { color: #c8cfb8; font-size: 13px; line-height: 1.6; }
+      .mobile-immersion-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      #mobile-immersion[data-fullscreen="unsupported"] .mobile-immersion-actions { grid-template-columns: 1fr; }
+      .mobile-immersion-actions button { min-height: 48px; border: 1px solid #aaa274; background: #26342f; color: #f2e8c7; font-weight: 900; }
+      .mobile-immersion-actions button:first-child { background: #705326; }
+      @media (orientation: landscape) and (max-height: 520px) {
+        html.mobile-play .duel-player { min-height: 50px; }
+        html.mobile-play .duel-avatar { width: 32px; height: 36px; }
+        html.mobile-play body.plugin-duel-active .battle-clock { top: calc(62px + env(safe-area-inset-top)); }
+        html.mobile-play body.plugin-duel-active .command-notice { top: calc(104px + env(safe-area-inset-top)); }
+      }
+      @media (max-width: 360px) {
+        html.mobile-play body.plugin-duel-active .battle-nav button { flex-basis: 40px; width: 40px; height: 40px; min-height: 40px; }
+        html.mobile-play .duel-player { width: calc(50vw - 9px); }
+        .mobile-immersion-actions { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
@@ -803,6 +934,18 @@
       <span class="loader-caption">北京 · 海淀 / 两园之间，战局由你。</span>
     </div>
     <div id="root"></div>
+    <section id="mobile-immersion" role="dialog" aria-modal="true" aria-labelledby="mobile-immersion-title" hidden>
+      <div class="mobile-immersion-card">
+        <span class="mobile-rotate-mark" aria-hidden="true">▭</span>
+        <h2 id="mobile-immersion-title">横屏进入战场</h2>
+        <p id="mobile-immersion-copy">全屏横屏能腾出更多地图空间，并减少浏览器栏遮挡。</p>
+        <div class="mobile-immersion-actions">
+          <button id="mobile-enter-fullscreen" type="button">全屏并横屏</button>
+          <button id="mobile-continue-portrait" type="button">暂时继续</button>
+        </div>
+      </div>
+    </section>
+    <button id="mobile-fullscreen-fab" type="button" hidden>全屏</button>
     <div id="plugin-duel-ui" hidden>
       <section class="duel-player self" id="duel-self" aria-label="自己">
         <div class="duel-avatar" id="duel-self-avatar">
@@ -934,6 +1077,7 @@
       </section>
     </div>
     <script src="../protocol.js"></script>
+    <script src="../mobile-play.js"></script>
     <aside id="field-contact-notice" role="status" aria-live="polite" hidden>途中遭遇 · 短暂减速，保持原命令</aside>
     <style>
       #field-contact-notice { position:fixed; bottom:76px; left:50%; transform:translateX(-50%); z-index:105; max-width:85vw; padding:10px 18px; border:1px solid #a99862; background:#172822ed; color:#e7dfbf; font-size:14px; pointer-events:none; text-align:center; }

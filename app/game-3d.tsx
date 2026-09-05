@@ -13,6 +13,7 @@ import {
   type PerformanceMetrics,
   type QualityMode,
 } from "../src/performance-controller";
+import { isMobileClient } from "../src/mobile-support";
 import type {
   AcademicYearOutcome,
   AiDifficulty,
@@ -208,7 +209,10 @@ import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline"
 
 export default function Game3D() {
   const hostRef = useRef<HTMLDivElement>(null);
-  const performanceControllerRef = useRef(new PerformanceController());
+  const mobileClientRef = useRef(isMobileClient());
+  const performanceControllerRef = useRef(
+    new PerformanceController(mobileClientRef.current),
+  );
   const autosaveTaskRef = useRef<number | null>(null);
   const saveWorkerRef = useRef<Worker | null>(null);
   const saveWorkerRequestRef = useRef(0);
@@ -4244,6 +4248,28 @@ export default function Game3D() {
           </div>
         </aside>
       )}
+      {screen === "game" && !directControl && !selectedSite && (
+        <nav className="mobile-battle-controls" aria-label="手机地图控制">
+          <button
+            aria-label="放大地图"
+            onClick={() => sceneApi.current?.zoomBy(0.72)}
+          >
+            ＋
+          </button>
+          <button
+            aria-label="缩小地图"
+            onClick={() => sceneApi.current?.zoomBy(1.38)}
+          >
+            －
+          </button>
+          <button
+            aria-label="返回战场中心"
+            onClick={() => sceneApi.current?.focus(region)}
+          >
+            ◎
+          </button>
+        </nav>
+      )}
       <div className="command-notice">{notice}</div>
       {eventToast && screen === "game" && (
         <aside className="event-mini-toast" role="status" aria-live="polite">
@@ -4313,6 +4339,7 @@ export default function Game3D() {
           }
           onCancelRename={() => setRenamingSite(false)}
           onStance={setStance}
+          onBeginRoute={() => sceneApi.current?.beginTouchRoute(selectedSite.id)}
         />
       )}
       <DayScaleControl

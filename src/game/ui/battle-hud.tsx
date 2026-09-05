@@ -65,6 +65,7 @@ export function SiteCommandMenu({
   onRename,
   onCancelRename,
   onStance,
+  onBeginRoute,
 }: {
   menuRef: RefObject<HTMLElement | null>;
   site: SiteState;
@@ -77,6 +78,7 @@ export function SiteCommandMenu({
   onRename: () => void;
   onCancelRename: () => void;
   onStance: (stance: Stance) => void;
+  onBeginRoute: () => void;
 }) {
   return (
     <section
@@ -127,6 +129,11 @@ export function SiteCommandMenu({
           </button>
         ))}
       </div>
+      {site.team === playerTeam && (
+        <button className="touch-route-action" onClick={onBeginRoute}>
+          选择调兵目标
+        </button>
+      )}
     </section>
   );
 }
