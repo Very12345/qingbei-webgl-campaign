@@ -1566,6 +1566,11 @@ export default function Game3D() {
     if (reviewSite != null) {
       setSaveName(`建筑验收-${reviewSite}`);
       newGame("pku", false, observerAiDifficulty, params.get("map-profile") === "classic" ? "classic" : "real-campus-v1");
+      const reviewHour = params.has("review-hour") ? Number(params.get("review-hour")) : Number.NaN;
+      if (Number.isFinite(reviewHour) && reviewHour >= 0 && reviewHour < 24)
+        gameRef.current.timeOfDay = reviewHour;
+      timeScaleRef.current = 0;
+      setTimeScale(0);
       return;
     }
     if (!scenario) return;

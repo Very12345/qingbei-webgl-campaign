@@ -24,7 +24,8 @@
     "test:field-encounters": "tsx scripts/field-encounter-regressions.ts",
     "test:mobile-support": "tsx scripts/mobile-support-regressions.ts",
     "test:real-campus": "tsx scripts/real-campus-regressions.ts",
-    "review:real-campus": "tsx scripts/capture-real-campus-reviews.ts"
+    "review:real-campus": "tsx scripts/capture-real-campus-reviews.ts",
+    "audit:real-campus": "tsx scripts/real-campus-scene-audit.ts"
   },
   "dependencies": {
     "react": "19.2.6",

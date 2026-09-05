@@ -37,6 +37,19 @@ def spectral_noise(beta):
     return value / max(value.std(), 0.001)
 
 
+def spectral_noise_at(size, beta):
+    white = rng.normal(0, 1, (size, size))
+    spectrum = np.fft.rfft2(white)
+    fy = np.fft.fftfreq(size)[:, None]
+    fx = np.fft.rfftfreq(size)[None, :]
+    frequency = np.sqrt(fx * fx + fy * fy)
+    frequency[0, 0] = 1
+    spectrum *= 1 / np.power(frequency, beta / 2)
+    spectrum[0, 0] = 0
+    value = np.fft.irfft2(spectrum, s=(size, size)).real
+    return value / max(value.std(), 0.001)
+
+
 def save(name, rgb, quality=82):
     image = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), "RGB")
     image.save(TARGET / name, "WEBP", quality=quality, method=6)
@@ -82,5 +95,12 @@ normal = np.stack((-gradient_x * 2.2, -gradient_y * 2.2, np.ones_like(water_heig
 normal /= np.linalg.norm(normal, axis=2, keepdims=True)
 normal = (normal * 0.5 + 0.5) * 255
 save("campus-water-normal.webp", normal, 82)
+
+macro_size = 1024
+macro_low = spectral_noise_at(macro_size, 3.2) * 0.55
+macro_mid = spectral_noise_at(macro_size, 1.8) * 0.22
+macro = np.zeros((macro_size, macro_size, 3), dtype=np.float32)
+macro[:] = np.array([229, 232, 225]) + macro_low[..., None] * np.array([12, 14, 10]) + macro_mid[..., None] * np.array([6, 7, 5])
+save("campus-macro-variation.webp", macro, 80)
 
 print({path.name: path.stat().st_size for path in sorted(TARGET.glob("campus-*.webp"))})

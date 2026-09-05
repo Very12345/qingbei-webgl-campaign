@@ -213,7 +213,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       0.1,
       300,
     );
-    const reviewSiteId = Number(new URLSearchParams(location.search).get("review-site")),
+    const reviewParams = new URLSearchParams(location.search),
+      reviewSiteId = Number(reviewParams.get("review-site")),
+      reviewWide = reviewParams.has("review-wide"),
+      forcedReviewHour = reviewParams.has("review-hour") ? Number(reviewParams.get("review-hour")) : Number.NaN,
       reviewSite = Number.isInteger(reviewSiteId)
         ? gameRef.current.sites.find((site) => site.id === reviewSiteId)
         : undefined,
@@ -232,7 +235,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     controls.enableRotate = false;
     controls.enableZoom = true;
     controls.minDistance = reviewSite ? 1.4 : mobileClient ? 9 : 13;
-    controls.maxDistance = reviewSite ? 15 : mobileClient ? 82 : 58;
+    controls.maxDistance = reviewSite ? reviewWide ? 32 : 15 : mobileClient ? 82 : 58;
     controls.zoomSpeed = mobileClient ? 1.08 : 0.72;
     controls.enablePan = true;
     controls.screenSpacePanning = false;
@@ -295,11 +298,29 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         facade: loadCampusTexture("campus-facade-detail.webp", true),
         facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
         waterNormal: loadCampusTexture("campus-water-normal.webp"),
+        macro: loadCampusTexture("campus-macro-variation.webp"),
       } : null;
+    if (campusTextures) campusTextures.macro.wrapS = campusTextures.macro.wrapT = THREE.ClampToEdgeWrapping;
     const regions = mapRegionsFor(gameRef.current.campaign.mapProfile) as unknown as Record<string, any>;
+    const applyCampusMacro = (material: THREE.MeshStandardMaterial, strength: number) => {
+      if (!campusTextures) return material;
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nvarying vec3 vCampusWorldPosition;")
+          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", "#include <common>\nuniform sampler2D campusMacroMap;\nvarying vec3 vCampusWorldPosition;")
+          .replace("#include <map_fragment>", `#include <map_fragment>\nvec2 campusMacroUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));\nvec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusMacroUv.x, 1.0 - campusMacroUv.y)).rgb * 1.11;\ndiffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, ${strength.toFixed(3)});`);
+      };
+      material.customProgramCacheKey = () => `campus-macro-${strength}`;
+      return material;
+    };
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
       windowDetailMeshes: THREE.InstancedMesh[] = [],
-      sportMaterials: THREE.MeshStandardMaterial[] = [];
+      sportMaterials: THREE.MeshStandardMaterial[] = [],
+      sportDetailMeshes: THREE.Object3D[] = [],
+      buildingOutlineObjects: THREE.Object3D[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main,
       tsinghuaCampus = regions.main.campuses?.find(
@@ -318,7 +339,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     const gameplayBuildings = (r: any) => {
       const cached = gameplayBuildingCache.get(r);
       if (cached) return cached;
+      const relationMemberWayIds = realCampus
+        ? new Set<number>(r.buildings.flatMap((building: any) => building.memberWayIds ?? []))
+        : new Set<number>();
       const filtered = r.buildings.filter((building: any) => {
+        if (realCampus && building.osmType === "way" && relationMemberWayIds.has(building.osmId)) return false;
         const smallAnonymous =
           !building.name && footprintArea(building.points) < 0.13;
         if (!realCampus)
@@ -328,10 +353,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           insideCampus=r.campuses.some((campus:any)=>(campus.name==="北京大学"||campus.name==="清华大学")&&pointInPolygon(x,z,campus.points));
         return insideCampus || !smallAnonymous;
       });
-      gameplayBuildingCache.set(r, filtered);
-      return filtered;
+      const campusMeasures = realCampus ? filtered
+        .filter((building: any) => REAL_BUILDING_BY_KEY.has(`${building.osmType}/${building.osmId}`))
+        .map((building: any) => ({building,area:footprintArea(building.points),centerX:building.points.reduce((sum:number,point:number[])=>sum+point[0],0)/building.points.length,centerZ:building.points.reduce((sum:number,point:number[])=>sum+point[1],0)/building.points.length,minX:Math.min(...building.points.map((point:number[])=>point[0])),maxX:Math.max(...building.points.map((point:number[])=>point[0])),minZ:Math.min(...building.points.map((point:number[])=>point[1])),maxZ:Math.max(...building.points.map((point:number[])=>point[1]))})) : [],
+        suppressed = new Set<any>();
+      if (realCampus) for (const candidate of campusMeasures) {
+        if (candidate.building.name) continue;
+        const parent = campusMeasures.find(other => other !== candidate && other.area > candidate.area * 1.2 && candidate.centerX >= other.minX && candidate.centerX <= other.maxX && candidate.centerZ >= other.minZ && candidate.centerZ <= other.maxZ && pointInPolygon(candidate.centerX,candidate.centerZ,other.building.points));
+        if (parent) suppressed.add(candidate.building);
+      }
+      const deduplicated = suppressed.size ? filtered.filter((building:any)=>!suppressed.has(building)) : filtered;
+      gameplayBuildingCache.set(r, deduplicated);
+      return deduplicated;
     };
-    const terrainVerticalScale = 6,
+    const terrainVerticalScale = realCampus ? 1 : 6,
       terrainHeight = (r: any, x: number, z: number) => {
       const { cols, rows, heights } = r.terrain,
         u =
@@ -369,14 +404,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               Math.max(...reviewBuilding.points.map((point: number[]) => point[1])) - Math.min(...reviewBuilding.points.map((point: number[]) => point[1])),
             )
           : 0.55,
-        distance = Math.max(2.4, extent * 1.25 + 1.15),
+        distance = Math.max(2.4, extent * 1.25 + 1.15) * (reviewWide ? 8 : 1),
         ground = terrainHeight(regions.main, reviewSite.x, reviewSite.z),
         reviewProfile = REAL_LANDMARK_BY_SITE.get(reviewSite.id),
         bearing = reviewProfile?.entranceDirection == null ? null : reviewProfile.entranceDirection * Math.PI / 180,
         viewX = bearing == null ? 0.52 : Math.sin(bearing),
         viewZ = bearing == null ? 0.86 : -Math.cos(bearing);
       controls.target.set(reviewSite.x, ground + 0.12, reviewSite.z);
-      camera.position.set(reviewSite.x + distance * viewX, ground + Math.max(1.8, extent * 0.72 + 1.2), reviewSite.z + distance * viewZ);
+      camera.position.set(reviewSite.x + distance * viewX, ground + Math.max(1.8, extent * 0.72 + 1.2) * (reviewWide ? 4.5 : 1), reviewSite.z + distance * viewZ);
       camera.lookAt(controls.target);
       controls.update();
     }
@@ -1061,8 +1096,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         ),
       );
       g.setAttribute("uv", new THREE.Float32BufferAttribute(clean.flatMap((point) => [point[0] * 8, point[1] * 8]), 2));
-      g.setIndex(faces.flat());
-      g.computeVertexNormals();
+      g.setIndex(faces.flatMap((face) => {
+        if (!realCampus) return face;
+        const a=clean[face[0]],b=clean[face[1]],c=clean[face[2]],cross=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+        return cross>0?[face[0],face[2],face[1]]:face;
+      }));
+      if (realCampus) g.setAttribute("normal", new THREE.Float32BufferAttribute(clean.flatMap(() => [0,1,0]),3));
+      else g.computeVertexNormals();
       return g;
     };
     const sportSurfaces: {
@@ -1189,13 +1229,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       geo.computeVertexNormals();
       const terrain = new THREE.Mesh(
         geo,
-        new THREE.MeshStandardMaterial({
+        applyCampusMacro(new THREE.MeshStandardMaterial({
           vertexColors: true,
           map: campusTextures?.grass ?? null,
           roughnessMap: campusTextures?.grassRoughness ?? null,
           roughness: 0.98,
           side: THREE.FrontSide,
-        }),
+        }), 0.3),
       );
       terrain.receiveShadow = true;
       terrain.castShadow = true;
@@ -1215,6 +1255,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           pitch: { positions: [], indices: [], uvs: [], color: 0xc6dbc4 },
         };
         for (const cover of r.landcovers) {
+          if (cover.kind !== "pitch") continue;
           const clean = cover.points.filter(
             (point: number[], index: number, points: number[][]) =>
               !index || Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1]) > 0.001,
@@ -1244,7 +1285,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
           geometry.setIndex(bucket.indices);
           geometry.computeVertexNormals();
-          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+          const mesh = new THREE.Mesh(geometry, applyCampusMacro(new THREE.MeshStandardMaterial({
             color: bucket.color,
             map: campusTextures?.grass ?? null,
             roughnessMap: campusTextures?.grassRoughness ?? null,
@@ -1252,7 +1293,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             polygonOffset: true,
             polygonOffsetFactor: -1,
             polygonOffsetUnits: -1,
-          }));
+          }), 0.24));
           mesh.receiveShadow = false;
           mesh.renderOrder = 1;
           mapGroup.add(mesh);
@@ -1283,7 +1324,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
           geometry.setIndex(bucket.indices);
           geometry.computeVertexNormals();
-          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: bucket.color, map: bucket.texture ?? null, roughnessMap: bucket.roughness ?? null, roughness: 0.96, depthTest: false, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+          const mesh = new THREE.Mesh(geometry, applyCampusMacro(new THREE.MeshStandardMaterial({ color: bucket.color, map: bucket.texture ?? null, roughnessMap: bucket.roughness ?? null, roughness: 0.96, depthTest: false, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), 0.1));
           mesh.receiveShadow = false;
           mesh.renderOrder = 8;
           mapGroup.add(mesh);
@@ -1528,7 +1569,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               );
               markings.push({ points: lanePoints, closed: true });
             }
-          mapGroup.add(createSportMarkings(markings, surfaceHeight + .075));
+          const sportDetails = createSportMarkings(markings, surfaceHeight + .075);
+          sportDetailMeshes.push(sportDetails);
+          mapGroup.add(sportDetails);
         }
       type RoadBucket = {
         positions: number[];
@@ -1806,25 +1849,33 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         flushChunk();
       }
       if (realCampus) {
-        type RoadEndpoint = { x: number; z: number; width: number; pedestrian: boolean; bridge: boolean };
+        type RoadEndpoint = { x: number; z: number; width: number; pedestrian: boolean; bridge: boolean; roadIndex: number };
+        type RoadSegment = { x1:number;z1:number;x2:number;z2:number;width:number;pedestrian:boolean;bridge:boolean;roadIndex:number };
         const endpointCell = 0.35,
           endpointIndex = new Map<string, RoadEndpoint[]>(),
+          segmentIndex = new Map<string,RoadSegment[]>(),
           endpoints: RoadEndpoint[] = [];
-        for (const road of r.roads) {
+        for (const [roadIndex,road] of r.roads.entries()) {
           if (road.points.length < 2) continue;
           const pedestrian = pedestrianKinds.has(road.kind), width = Math.max(road.width, pedestrian ? 0.04 : 0.08);
-          for (const point of [road.points[0], road.points.at(-1)]) endpoints.push({ x: point[0], z: point[1], width, pedestrian, bridge: !!road.bridge });
+          for (const point of [road.points[0], road.points.at(-1)]) endpoints.push({ x: point[0], z: point[1], width, pedestrian, bridge: !!road.bridge, roadIndex });
+          for(let pointIndex=1;pointIndex<road.points.length;pointIndex++){
+            const first=road.points[pointIndex-1],second=road.points[pointIndex],segment={x1:first[0],z1:first[1],x2:second[0],z2:second[1],width,pedestrian,bridge:!!road.bridge,roadIndex};
+            for(let gx=Math.floor((Math.min(segment.x1,segment.x2)-.14)/endpointCell);gx<=Math.floor((Math.max(segment.x1,segment.x2)+.14)/endpointCell);gx++)for(let gz=Math.floor((Math.min(segment.z1,segment.z2)-.14)/endpointCell);gz<=Math.floor((Math.max(segment.z1,segment.z2)+.14)/endpointCell);gz++){
+              const key=`${gx}/${gz}`,bucket=segmentIndex.get(key);if(bucket)bucket.push(segment);else segmentIndex.set(key,[segment]);
+            }
+          }
         }
         for (const endpoint of endpoints) {
           const key = `${Math.floor(endpoint.x / endpointCell)}/${Math.floor(endpoint.z / endpointCell)}`, bucket = endpointIndex.get(key);
           if (bucket) bucket.push(endpoint); else endpointIndex.set(key, [endpoint]);
         }
-        const stitched = new Set<string>();
+        const stitched = new Set<string>(), endpointConnected = new Set<RoadEndpoint>();
         for (const endpoint of endpoints) {
           const gx = Math.floor(endpoint.x / endpointCell), gz = Math.floor(endpoint.z / endpointCell);
           let closest: RoadEndpoint | undefined, distance = 0.32;
           for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (const candidate of endpointIndex.get(`${gx + dx}/${gz + dz}`) ?? []) {
-            if (candidate.pedestrian !== endpoint.pedestrian) continue;
+            if (candidate.roadIndex===endpoint.roadIndex||candidate.pedestrian !== endpoint.pedestrian) continue;
             const gap = Math.hypot(endpoint.x - candidate.x, endpoint.z - candidate.z);
             if (gap > 0.004 && gap < distance) { closest = candidate; distance = gap; }
           }
@@ -1834,7 +1885,24 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           const midpointX = (endpoint.x + closest.x) / 2, midpointZ = (endpoint.z + closest.z) / 2;
           if (!endpoint.bridge && !closest.bridge && inWater(midpointX, midpointZ)) continue;
           stitched.add(key);
+          endpointConnected.add(endpoint);endpointConnected.add(closest);
           addRoadStrip(endpoint.pedestrian || closest.pedestrian ? roadBuckets.path : roadBuckets.asphalt, [[endpoint.x, endpoint.z], [closest.x, closest.z]], Math.min(endpoint.width, closest.width));
+        }
+        for(const endpoint of endpoints){
+          if(endpointConnected.has(endpoint))continue;
+          const gx=Math.floor(endpoint.x/endpointCell),gz=Math.floor(endpoint.z/endpointCell);let best:{segment:RoadSegment;x:number;z:number;distance:number}|undefined;
+          for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)for(const segment of segmentIndex.get(`${gx+dx}/${gz+dz}`)??[]){
+            if(segment.roadIndex===endpoint.roadIndex||segment.pedestrian!==endpoint.pedestrian)continue;
+            const sx=segment.x2-segment.x1,sz=segment.z2-segment.z1,length=sx*sx+sz*sz,t=length?THREE.MathUtils.clamp(((endpoint.x-segment.x1)*sx+(endpoint.z-segment.z1)*sz)/length,0,1):0,x=segment.x1+sx*t,z=segment.z1+sz*t,distance=Math.hypot(endpoint.x-x,endpoint.z-z);
+            if(distance>.004&&distance<.14&&(!best||distance<best.distance))best={segment,x,z,distance};
+          }
+          if(!best)continue;
+          const first=`${endpoint.x.toFixed(3)}/${endpoint.z.toFixed(3)}`,second=`${best.x.toFixed(3)}/${best.z.toFixed(3)}`,key=first<second?`${first}|${second}`:`${second}|${first}`;
+          if(stitched.has(key))continue;
+          const midpointX=(endpoint.x+best.x)/2,midpointZ=(endpoint.z+best.z)/2;
+          if(!endpoint.bridge&&!best.segment.bridge&&inWater(midpointX,midpointZ))continue;
+          stitched.add(key);
+          addRoadStrip(endpoint.pedestrian?roadBuckets.path:roadBuckets.asphalt,[[endpoint.x,endpoint.z],[best.x,best.z]],Math.min(endpoint.width,best.segment.width));
         }
       }
       Object.values(roadBuckets).forEach((bucket) => {
@@ -1849,7 +1917,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         geometry.computeVertexNormals();
         const roads = new THREE.Mesh(
           geometry,
-          new THREE.MeshStandardMaterial({
+          applyCampusMacro(new THREE.MeshStandardMaterial({
             color: bucket.color,
             map: bucket.texture ?? null,
             roughnessMap: bucket.roughness ?? null,
@@ -1860,7 +1928,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             polygonOffset: true,
             polygonOffsetFactor: -bucket.renderOrder,
             polygonOffsetUnits: -bucket.renderOrder,
-          }),
+          }), 0.12),
         );
         roads.receiveShadow = false;
         roads.renderOrder = realCampus ? 8 + bucket.renderOrder : bucket.renderOrder;
@@ -2009,14 +2077,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       bg.computeVertexNormals();
       const buildings = new THREE.Mesh(
         bg,
-        new THREE.MeshStandardMaterial({
+        applyCampusMacro(new THREE.MeshStandardMaterial({
           vertexColors: true,
           map: campusTextures?.facade ?? null,
           roughnessMap: campusTextures?.facadeRoughness ?? null,
           roughness: 0.82,
           side: THREE.DoubleSide,
           flatShading: true,
-        }),
+        }), 0.06),
       );
       buildings.receiveShadow = false;
       buildings.castShadow = true;
@@ -2174,8 +2242,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }),
       );
       outline.renderOrder = 5;
+      buildingOutlineObjects.push(outline);
       mapGroup.add(outline);
-      const windowMatrices: THREE.Matrix4[] = [],
+      const windowInstances: {matrix:THREE.Matrix4;x:number;y:number;z:number}[] = [],
         doorMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
         windowLimit = r === regions.main ? realCampus ? 48000 : 18000 : 2600,
@@ -2215,7 +2284,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         let longest: { a: number[]; c: number[]; len: number } | null = null;
         for (
           let i = 0;
-          i < pts.length && windowMatrices.length < windowLimit;
+          i < pts.length && windowInstances.length < windowLimit;
           i++
         ) {
           const a = pts[i],
@@ -2232,12 +2301,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             nz = (dx / len) * outwardSign;
           for (
             let row = 0;
-            row < rows && windowMatrices.length < windowLimit;
+            row < rows && windowInstances.length < windowLimit;
             row++
           )
             for (
               let col = 0;
-              col < cols && windowMatrices.length < windowLimit;
+              col < cols && windowInstances.length < windowLimit;
               col++
             ) {
               const t = (col + 1) / (cols + 1);
@@ -2253,7 +2322,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
                 1,
               );
               detailDummy.updateMatrix();
-              windowMatrices.push(detailDummy.matrix.clone());
+              windowInstances.push({matrix:detailDummy.matrix.clone(),x:detailDummy.position.x,y:detailDummy.position.y,z:detailDummy.position.z});
             }
         }
         if (longest && longest.len > (realCampus ? 0.12 : 0.45)) {
@@ -2273,7 +2342,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           doorMatrices.push(detailDummy.matrix.clone());
         }
       }
-      const windowMaterial = new THREE.MeshStandardMaterial({
+      const darkWindowMaterial = new THREE.MeshStandardMaterial({
+        color: 0x31566a,
+        roughness: 0.28,
+        metalness: 0.08,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }),
+        windowMaterial = new THREE.MeshStandardMaterial({
         color: 0x31566a,
         emissive: 0xffc45e,
         emissiveIntensity: 0,
@@ -2285,16 +2363,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         polygonOffsetUnits: -2,
       });
       windowMaterials.push(windowMaterial);
-      const windows = new THREE.InstancedMesh(
-        new THREE.PlaneGeometry(1, 1),
-        windowMaterial,
-        windowMatrices.length,
-      );
-      windowMatrices.forEach((m, i) => windows.setMatrixAt(i, m));
-      windows.instanceMatrix.needsUpdate = true;
-      windows.renderOrder = 6;
-      windowDetailMeshes.push(windows);
-      mapGroup.add(windows);
+      const windowGeometry=new THREE.PlaneGeometry(1,1),windowCells=new Map<string,typeof windowInstances>();
+      for(const instance of windowInstances){const key=realCampus?`${Math.floor(instance.x/16)}/${Math.floor(instance.z/16)}`:"classic",bucket=windowCells.get(key);if(bucket)bucket.push(instance);else windowCells.set(key,[instance]);}
+      for(const [key,instances] of windowCells){
+        const groups=realCampus?[
+          {material:darkWindowMaterial,instances:instances.filter(instance=>{const hash=(Math.imul(Math.round(instance.x*1000),73856093)^Math.imul(Math.round(instance.y*1000),83492791)^Math.imul(Math.round(instance.z*1000),19349663))>>>0;return hash%100>=18;})},
+          {material:windowMaterial,instances:instances.filter(instance=>{const hash=(Math.imul(Math.round(instance.x*1000),73856093)^Math.imul(Math.round(instance.y*1000),83492791)^Math.imul(Math.round(instance.z*1000),19349663))>>>0;return hash%100<18;})},
+        ]:[{material:windowMaterial,instances}];
+        for(const group of groups){if(!group.instances.length)continue;const windows=new THREE.InstancedMesh(windowGeometry,group.material,group.instances.length);group.instances.forEach((instance,index)=>windows.setMatrixAt(index,instance.matrix));windows.instanceMatrix.needsUpdate=true;windows.renderOrder=6;
+          if(realCampus){windows.userData.campusWindowCenter={x:group.instances.reduce((sum,instance)=>sum+instance.x,0)/group.instances.length,z:group.instances.reduce((sum,instance)=>sum+instance.z,0)/group.instances.length};windows.userData.campusWindowLit=group.material===windowMaterial;}
+          windowDetailMeshes.push(windows);mapGroup.add(windows);
+        }
+      }
       const doors = new THREE.InstancedMesh(
         new THREE.PlaneGeometry(1, 1),
         new THREE.MeshStandardMaterial({
@@ -2313,12 +2393,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       mapGroup.add(doors);
       const waterMat = new THREE.MeshStandardMaterial({
         color: 0x478ca5,
+        emissive: 0x173d4a,
+        emissiveIntensity: 0.28,
         normalMap: campusTextures?.waterNormal ?? null,
         normalScale: new THREE.Vector2(0.22, 0.22),
         transparent: true,
         opacity: 0.83,
-        roughness: 0.24,
-        metalness: 0.1,
+        roughness: 0.42,
+        metalness: 0,
         side: THREE.DoubleSide,
       });
       const bankPositions: number[] = [], bankIndices: number[] = [];
@@ -9231,6 +9313,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       lastShadowUpdateAt = 0,
       nextStuckCheckAt = 0,
       nextLodRefreshAt = 0,
+      nextMapDetailLodAt = 0,
       nextUnitSimulationAt = 0,
       lastUnitSimulationAt = last,
       unitSimulationTick = 0,
@@ -9258,6 +9341,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const rawDelta = (now - last) / 1000,
         dt = Math.min(backgroundServerTick ? 0.25 : 0.05, rawDelta);
       last = now;
+      if (!backgroundServerTick && now >= nextMapDetailLodAt) {
+        nextMapDetailLodAt = now + 240;
+        const distance = camera.position.distanceTo(controls.target),
+          daytime = gameRef.current.timeOfDay >= 6 && gameRef.current.timeOfDay <= 19;
+        windowDetailMeshes.forEach((mesh) => {
+          const center=mesh.userData.campusWindowCenter as {x:number;z:number}|undefined,
+            localDistance=center?Math.hypot(center.x-camera.position.x,center.z-camera.position.z):0;
+          mesh.visible=activeQualityProfile.windowDetails&&(!realCampus||distance<18&&localDistance<12&&(daytime||mesh.userData.campusWindowLit));
+        });
+        sportDetailMeshes.forEach((mesh) => (mesh.visible = !realCampus || distance < 16));
+        buildingOutlineObjects.forEach((mesh) => (mesh.visible = !realCampus || distance < 22 && daytime));
+      }
       if (!backgroundServerTick && rawDelta < 0.2) {
         performanceFrameTime += rawDelta;
         performanceFrameCount++;
@@ -9309,9 +9404,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               ? pathfindingSpentMs / pathfindingSamples
               : 0,
         });
-        windowDetailMeshes.forEach(
-          (mesh) => (mesh.visible = activeQualityProfile.windowDetails),
-        );
         performanceWindowAt = now;
         performanceFrameTime = 0;
         performanceFrameCount = 0;
@@ -9321,6 +9413,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         pathfindingSamples = 0;
       }
       const g = gameRef.current;
+      if (reviewSite && Number.isFinite(forcedReviewHour) && forcedReviewHour >= 0 && forcedReviewHour < 24) g.timeOfDay = forcedReviewHour;
       if (screenRef.current === "home") {
         if (!backgroundServerTick) {
           controls.update();
@@ -9567,6 +9660,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         if (autoDayRef.current)
           g.timeOfDay = (8 + g.campaign.elapsedHours) % 24;
       }
+      if (reviewSite && Number.isFinite(forcedReviewHour) && forcedReviewHour >= 0 && forcedReviewHour < 24) g.timeOfDay = forcedReviewHour;
       const angle = ((g.timeOfDay - 6) / 24) * Math.PI * 2,
         day = THREE.MathUtils.smoothstep(Math.sin(angle), -0.12, 0.35),
         night = 1 - day;
@@ -9600,7 +9694,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       );
       scene.background = sky;
       (scene.fog as THREE.FogExp2).color.copy(sky);
-      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 3.2));
+      (scene.fog as THREE.FogExp2).density = realCampus ? 0.007 + night * 0.015 : 0.007;
+      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 1.1));
       sportMaterials.forEach(
         (material) =>
           (material.emissiveIntensity = 0.025 + night * 0.16),

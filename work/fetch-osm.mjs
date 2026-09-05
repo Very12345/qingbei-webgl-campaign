@@ -70,15 +70,33 @@ async function fetchOsm(r){
 async function fetchTerrain(r,cols=72,rows=72){
   const [s,w,n,e]=r.bbox, coords=[];
   for(let j=0;j<rows;j++)for(let i=0;i<cols;i++)coords.push([s+(n-s)*j/(rows-1),w+(e-w)*i/(cols-1)]);
-  const heights=[];
-  for(let k=0;k<coords.length;k+=80){const chunk=coords.slice(k,k+80),lat=chunk.map(x=>x[0]).join(','),lon=chunk.map(x=>x[1]).join(',');
-    try{const res=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);const data=await res.json();heights.push(...data.elevation);}catch{heights.push(...chunk.map(()=>0));}}
+  const sampled=Array(coords.length).fill(null);let failedSamples=0;
+  for(let k=0;k<coords.length;k+=80){const chunk=coords.slice(k,k+80),lat=chunk.map(x=>x[0]).join(','),lon=chunk.map(x=>x[1]).join(',');let values=null;
+    for(let attempt=0;attempt<4&&!values;attempt++)try{const res=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);if(!res.ok)throw new Error(`elevation ${res.status}`);const data=await res.json();if(!Array.isArray(data.elevation)||data.elevation.length!==chunk.length||data.elevation.some(value=>!Number.isFinite(value)))throw new Error('invalid elevation payload');values=data.elevation;}catch{if(attempt<3)await new Promise(resolve=>setTimeout(resolve,180*(attempt+1)));}
+    if(values)for(let index=0;index<values.length;index++)sampled[k+index]=values[index];else failedSamples+=chunk.length;
+    await new Promise(resolve=>setTimeout(resolve,35));
+  }
+  if(sampled.every(value=>value==null))sampled.fill(0);
+  for(let pass=0;pass<cols+rows&&sampled.some(value=>value==null);pass++){
+    const next=sampled.slice();
+    for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){const index=j*cols+i;if(sampled[index]!=null)continue;const nearby=[];for(const [dx,dz] of [[-1,0],[1,0],[0,-1],[0,1]]){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows&&sampled[z*cols+x]!=null)nearby.push(sampled[z*cols+x]);}if(nearby.length)next[index]=nearby.reduce((sum,value)=>sum+value,0)/nearby.length;}
+    sampled.splice(0,sampled.length,...next);
+  }
+  const heights=sampled.map(value=>value??0);if(failedSamples)console.warn(r.id,`${failedSamples} elevation samples interpolated`);
   for(let pass=0;pass<2;pass++){
     const next=heights.slice();
     for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){
       let sum=heights[j*cols+i]*4,weight=4;
       for(const [dx,dz] of [[-1,0],[1,0],[0,-1],[0,1]]){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows){sum+=heights[z*cols+x];weight++;}}
       next[j*cols+i]=sum/weight;
+    }
+    heights.splice(0,heights.length,...next);
+  }
+  for(let pass=0;pass<2;pass++){
+    const next=heights.slice();
+    for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){
+      const nearby=[];for(let dz=-3;dz<=3;dz++)for(let dx=-3;dx<=3;dx++){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows)nearby.push(heights[z*cols+x]);}
+      nearby.sort((a,b)=>a-b);const median=nearby[Math.floor(nearby.length/2)],value=heights[j*cols+i];next[j*cols+i]=Math.max(median-3,Math.min(median+3,value));
     }
     heights.splice(0,heights.length,...next);
   }
@@ -99,7 +117,7 @@ for(const r of regions){
     const landcoverKind=tag.leisure==='park'||tag.leisure==='garden'||tag.landuse==='grass'||tag.landuse==='forest'||tag.natural==='wood'||tag.leisure==='pitch'?(tag.leisure||tag.landuse||tag.natural):'';
     const hardscapeKind=areaHighway?tag.highway:tag.place==='square'?'square':tag.amenity==='parking'?'parking':'';
     const destination=tag.building?buildings:(tag.natural==='water'||tag.landuse==='reservoir')?waters:tag.amenity==='university'?campuses:landcoverKind?landcovers:hardscapeKind?hardscapes:null;if(!destination)continue;
-    for(const raw of sets){const points=clipPolygon(raw.map(p=>project(p.lat,p.lon,r)),box);if(points.length<3)continue;const xs=points.map(p=>p[0]),zs=points.map(p=>p[1]),bw=Math.max(...xs)-Math.min(...xs),bd=Math.max(...zs)-Math.min(...zs);if(bw<.08||bd<.08)continue;const common={name:tag.name||'',osmType:el.type,osmId:el.id,points:points.map(p=>p.map(v=>Number(v.toFixed(3))))};if(destination===buildings)destination.push({...common,building:tag.building||'',levels:metric(tag['building:levels']),height:metric(tag.height),minHeight:metric(tag.min_height),material:tag['building:material']||'',colour:tag['building:colour']||tag.colour||'',roofShape:tag['roof:shape']||'',roofHeight:metric(tag['roof:height']),roofLevels:metric(tag['roof:levels']),roofMaterial:tag['roof:material']||'',roofColour:tag['roof:colour']||'',startDate:tag.start_date||'',amenity:tag.amenity||''});else if(destination===landcovers)destination.push({...common,kind:landcoverKind});else if(destination===hardscapes)destination.push({...common,kind:hardscapeKind,surface:tag.surface||''});else destination.push(common);}
+    for(const raw of sets){const points=clipPolygon(raw.map(p=>project(p.lat,p.lon,r)),box);if(points.length<3)continue;const xs=points.map(p=>p[0]),zs=points.map(p=>p[1]),bw=Math.max(...xs)-Math.min(...xs),bd=Math.max(...zs)-Math.min(...zs);if(bw<.08||bd<.08)continue;const common={name:tag.name||'',osmType:el.type,osmId:el.id,points:points.map(p=>p.map(v=>Number(v.toFixed(3))))};if(destination===buildings)destination.push({...common,building:tag.building||'',levels:metric(tag['building:levels']),height:metric(tag.height),minHeight:metric(tag.min_height),material:tag['building:material']||'',colour:tag['building:colour']||tag.colour||'',roofShape:tag['roof:shape']||'',roofHeight:metric(tag['roof:height']),roofLevels:metric(tag['roof:levels']),roofMaterial:tag['roof:material']||'',roofColour:tag['roof:colour']||'',startDate:tag.start_date||'',amenity:tag.amenity||'',memberWayIds:el.type==='relation'?(el.members||[]).filter(member=>member.type==='way'&&(!member.role||member.role==='outer')).map(member=>member.ref):[]});else if(destination===landcovers)destination.push({...common,kind:landcoverKind});else if(destination===hardscapes)destination.push({...common,kind:hardscapeKind,surface:tag.surface||''});else destination.push(common);}
   }
   roads.sort((a,b)=>b.points.length-a.points.length);buildings.sort((a,b)=>b.points.length-a.points.length);
   result[r.id]={label:r.label,bbox:r.bbox,width:r.width,depth:r.depth,offsetX:r.offsetX,roads,buildings,waters,campuses,landcovers,hardscapes,trees,treeRows,lamps,landmarks,terrain:await fetchTerrain(r)};
