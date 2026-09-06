@@ -2268,7 +2268,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               break;
             case "pku-library": {
               boxAt(0, depth * 0.51, base + height * 0.32, length * 0.22, height * 0.42, 0.02, "#395d67");
-              for (let step = 0; step < 4; step++) boxAt(0, depth * (0.53 + step * 0.025), base + 0.008 + step * 0.012, length * (0.28 + step * 0.06), 0.015, depth * 0.05, trim);
               break;
             }
             case "xuetang":
@@ -2305,7 +2304,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               boxAt(0, depth * 0.58, base + height * 0.82, length * 0.22, 0.025, 0.03, trim);
               break;
             case "modern-auditorium":
-              for (let tier = 0; tier < 3; tier++) boxAt(0, depth * (0.12 + tier * 0.04), base + height + 0.025 + tier * 0.025, length * (0.9 - tier * 0.12), 0.04, depth * (0.72 - tier * 0.12), tier === 2 ? roof : trim);
               boxAt(0, depth * 0.51, base + height * 0.4, length * 0.18, height * 0.52, 0.02, "#3d5963");
               break;
             case "museum":
@@ -4705,45 +4703,58 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
     treeCrowns.forEach((mesh) => (mesh.castShadow = true));
     treeCrownClusters.forEach((mesh) => (mesh.castShadow = false));
     treeGroup.add(treeTrunks, ...treeCrowns, ...treeCrownClusters);
-    const lampPositions: { x: number; z: number; r: any }[] = [],
+    const lampPositions: { x: number; z: number; glowX: number; glowZ: number; r: any }[] = [],
       lampSeen = new Set<string>();
     for (const r of [regions.main]) {
       const cap = r === regions.main ? 650 : 90,
-        pushLamp = (x: number, z: number) => {
-          const key = `${Math.round(x * 2)}/${Math.round(z * 2)}`;
+        pushLamp = (x: number, z: number, glowX = x, glowZ = z) => {
+          const precision = realCampus ? 4 : 2,
+            key = `${Math.round(x * precision)}/${Math.round(z * precision)}`;
           if (
             lampSeen.has(key) ||
-            lampPositions.filter((p) => p.r === r).length >= cap
+            lampPositions.length >= cap ||
+            (realCampus && insideObstacle(x, z))
           )
             return;
           lampSeen.add(key);
-          lampPositions.push({ x, z, r });
+          lampPositions.push({ x, z, glowX, glowZ, r });
         };
       for (const [x, z] of r.lamps ?? []) pushLamp(x, z);
-      if (realCampus) continue;
+      const campusAreas = realCampus
+          ? r.campuses.filter((campus: any) => campus.name === "北京大学" || campus.name === "清华大学")
+          : [],
+        insideCampus = (x: number, z: number) => !realCampus || campusAreas.some((campus: any) => pointInPolygon(x, z, campus.points)),
+        spacing = realCampus ? 0.72 : 3.1;
       for (const road of r.roads) {
         if (
-          ["footway", "path", "steps", "corridor", "track"].includes(road.kind)
+          ["steps", "corridor", "track", "motorway", "motorway_link", "trunk", "trunk_link"].includes(road.kind) ||
+          road.lit === "no" ||
+          (realCampus && !road.points.some((point: number[]) => insideCampus(point[0], point[1])))
         )
           continue;
+        let distanceUntilNext = spacing * 0.5,
+          sampleIndex = 0;
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
             [x2, z2] = road.points[k],
             dx = x2 - x1,
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
-          if (len < 1.8) continue;
-          const count = Math.floor(len / 3.1),
-            nx = -dz / len,
-            nz = dx / len;
-          for (let n = 1; n <= count; n++) {
-            const t = n / (count + 1),
-              side = (n + k) % 2 ? 1 : -1;
-            pushLamp(
-              x1 + dx * t + nx * (road.width / 2 + 0.16) * side,
-              z1 + dz * t + nz * (road.width / 2 + 0.16) * side,
-            );
+          if (len < 0.01) continue;
+          let travelled = 0;
+          while (travelled + distanceUntilNext <= len) {
+            travelled += distanceUntilNext;
+            const t = travelled / len,
+              nx = -dz / len,
+              nz = dx / len,
+              side = (sampleIndex++ + k) % 2 ? 1 : -1,
+              offset = road.width / 2 + (realCampus ? 0.07 : 0.16);
+            const roadX = x1 + dx * t,
+              roadZ = z1 + dz * t;
+            pushLamp(roadX + nx * offset * side, roadZ + nz * offset * side, roadX, roadZ);
+            distanceUntilNext = spacing;
           }
+          distanceUntilNext -= len - travelled;
         }
       }
     }
@@ -4769,29 +4780,40 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         lampBulbMaterial,
         lampPositions.length,
       ),
+      lampGlowCanvas = document.createElement("canvas"),
+      lampGlowContext = lampGlowCanvas.getContext("2d")!,
+      lampGlowGradient = (lampGlowCanvas.width = lampGlowCanvas.height = 64, lampGlowContext.createRadialGradient(32, 32, 2, 32, 32, 31)),
+      lampGlowTexture = (lampGlowGradient.addColorStop(0, "rgba(255,211,124,.82)"), lampGlowGradient.addColorStop(0.38, "rgba(255,186,74,.36)"), lampGlowGradient.addColorStop(1, "rgba(255,164,48,0)"), lampGlowContext.fillStyle = lampGlowGradient, lampGlowContext.fillRect(0, 0, 64, 64), new THREE.CanvasTexture(lampGlowCanvas)),
+      lampGlowGeometry = new THREE.CircleGeometry(realCampus ? 0.4 : 1.15, 20),
+      lampGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffc66f, map: lampGlowTexture, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }),
+      lampGlows = new THREE.InstancedMesh(lampGlowGeometry, lampGlowMaterial, lampPositions.length),
       lampDummy = new THREE.Object3D();
     lampPositions.forEach((p, i) => {
       const base = terrainHeight(p.r, p.x, p.z);
+      lampDummy.rotation.set(0, 0, 0);
       lampDummy.position.set(p.x, base + (realCampus ? 0.07 : 0.41), p.z);
       lampDummy.updateMatrix();
       poles.setMatrixAt(i, lampDummy.matrix);
       lampDummy.position.y = base + (realCampus ? 0.15 : 0.86);
       lampDummy.updateMatrix();
       bulbs.setMatrixAt(i, lampDummy.matrix);
+      lampDummy.position.set(p.glowX, terrainHeight(p.r, p.glowX, p.glowZ) + 0.012, p.glowZ);
+      lampDummy.rotation.set(-Math.PI / 2, 0, 0);
+      lampDummy.updateMatrix();
+      lampGlows.setMatrixAt(i, lampDummy.matrix);
     });
     poles.instanceMatrix.needsUpdate = true;
     bulbs.instanceMatrix.needsUpdate = true;
-    scene.add(poles, bulbs);
-    const lights: THREE.PointLight[] = [];
-    lampPositions
-      .filter((_, i) => i % 41 === 0)
-      .slice(0, 22)
-      .forEach((p) => {
-        const l = new THREE.PointLight(0xffc66f, 0, realCampus ? 0.6 : 5, 2);
-        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + (realCampus ? 0.17 : 0.9), p.z);
-        scene.add(l);
-        lights.push(l);
-      });
+    lampGlows.instanceMatrix.needsUpdate = true;
+    lampGlows.renderOrder = 7;
+    scene.add(poles, bulbs, lampGlows);
+    const lights: THREE.PointLight[] = Array.from({ length: Math.min(8, lampPositions.length) }, () => {
+      const light = new THREE.PointLight(0xffc66f, 0, realCampus ? 0.9 : 5, 2);
+      light.userData.hasLamp = false;
+      scene.add(light);
+      return light;
+    });
+    let lastLampLightUpdateAt = -Infinity;
     const ray = new THREE.Raycaster(),
       mouse = new THREE.Vector2(),
       projectedSiteNode = new THREE.Vector3(),
@@ -9822,8 +9844,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         renderer.shadowMap.needsUpdate = true;
       }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
-      moon.intensity = night * 0.9;
-      hemi.intensity = 0.36 + day * 1.54;
+      moon.intensity = night * 1.25;
+      hemi.intensity = 0.72 + day * 1.18;
       hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x486795);
       hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x182437);
       const sky = new THREE.Color(0x07101f).lerp(
@@ -9839,6 +9861,20 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           (material.emissiveIntensity = 0.025 + night * 0.16),
       );
       lampBulbMaterial.emissiveIntensity = 0.08 + night * 4.8;
+      lampGlowMaterial.opacity = night * (realCampus ? 0.26 : 0.14);
+      if (now - lastLampLightUpdateAt > 500) {
+        lastLampLightUpdateAt = now;
+        const nearestLamps = lampPositions
+          .map((lamp) => ({ lamp, distance: Math.hypot(lamp.x - controls.target.x, lamp.z - controls.target.z) }))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, lights.length);
+        lights.forEach((light, index) => {
+          const candidate = nearestLamps[index];
+          light.userData.hasLamp = !!candidate;
+          if (!candidate) return;
+          light.position.set(candidate.lamp.x, terrainHeight(candidate.lamp.r, candidate.lamp.x, candidate.lamp.z) + (realCampus ? 0.17 : 0.9), candidate.lamp.z);
+        });
+      }
       unitBodyMaterials.pku.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.ustc.emissiveIntensity = 0.035 + night * 0.24;
@@ -9849,9 +9885,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       lights.forEach(
         (light, index) =>
           (light.intensity =
-            index < activeQualityProfile.dynamicLights ? night * 5.5 : 0),
+            light.userData.hasLamp && index < activeQualityProfile.dynamicLights ? night * (realCampus ? 5 : 5.5) : 0),
       );
-      renderer.toneMappingExposure = 0.72 + day * 0.38;
+      renderer.toneMappingExposure = 0.9 + day * 0.2;
       commandAnimations.forEach((animation) => {
         animation.movers.forEach((mover, index) => {
           const t = (now * 0.00016 + animation.phase + index / 4) % 1;

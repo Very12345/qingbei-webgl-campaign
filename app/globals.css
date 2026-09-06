@@ -455,34 +455,11 @@ select option {
 .research-tabs button {
   min-width: 150px;
 }
-.research-nav-icon {
-  position: relative;
+.battle-nav-icon {
   display: block;
-  width: 18px;
-  height: 22px;
-  border: 2px solid currentColor;
-  border-top: 0;
-  border-radius: 3px 3px 8px 8px;
-}
-.research-nav-icon::before {
-  position: absolute;
-  content: "";
-  top: -5px;
-  left: 4px;
-  width: 7px;
-  height: 7px;
-  border: 2px solid currentColor;
-  border-bottom: 0;
-}
-.research-nav-icon i {
-  position: absolute;
-  right: 2px;
-  bottom: 3px;
-  left: 2px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.65;
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
 }
 .tools-nav-icon {
   position: relative;
@@ -1273,48 +1250,6 @@ select option {
   padding: 8px;
   background: #32433b;
   color: #fff;
-}
-.focus-tree-entry .focus-tree-glyph {
-  position: relative;
-  width: 24px;
-  height: 22px;
-}
-.focus-tree-glyph i {
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  border: 1px solid #f2dfa4;
-  border-radius: 2px;
-  background: #765b2e;
-}
-.focus-tree-glyph i:nth-child(1) {
-  left: 8px;
-  top: 0;
-}
-.focus-tree-glyph i:nth-child(2) {
-  left: 1px;
-  bottom: 0;
-}
-.focus-tree-glyph i:nth-child(3) {
-  right: 1px;
-  bottom: 0;
-}
-.focus-tree-glyph::before,
-.focus-tree-glyph::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  width: 12px;
-  height: 1px;
-  background: #f2dfa4;
-}
-.focus-tree-glyph::before {
-  left: 2px;
-  transform: rotate(-48deg);
-}
-.focus-tree-glyph::after {
-  right: 2px;
-  transform: rotate(48deg);
 }
 .focus-tree-screen {
   position: fixed;

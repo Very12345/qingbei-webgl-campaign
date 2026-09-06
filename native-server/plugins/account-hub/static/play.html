@@ -732,56 +732,6 @@
         }
       }
 
-      /* One fitted vector per control; do not inherit the original CSS glyph boxes. */
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开决策树"]
-        .focus-tree-glyph,
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开研发"]
-        .research-nav-icon {
-        display: none !important;
-      }
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开决策树"]::before,
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开研发"]::before {
-        content: "";
-        display: block;
-        width: 23px;
-        height: 23px;
-        position: static;
-        transform: none;
-        border: 0;
-        background-size: contain;
-        background-position: center;
-        background-repeat: no-repeat;
-        pointer-events: none;
-      }
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开决策树"]::before {
-        background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23eadb9b%22%20d%3D%22M10%202h4a2%202%200%200%201%202%202v3a2%202%200%200%201-2%202h-1v2h6a2%202%200%200%201%202%202v2h-2v-2h-6v2h-2v-2H5v2H3v-2a2%202%200%200%201%202-2h6V9h-1a2%202%200%200%201-2-2V4a2%202%200%200%201%202-2Zm-5%2014h2a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202H5a2%202%200%200%201-2-2v-2a2%202%200%200%201%202-2Zm12%200h2a2%202%200%200%201%202%202v2a2%202%200%200%201-2%202h-2a2%202%200%200%201-2-2v-2a2%202%200%200%201%202-2Z%22%2F%3E%3C%2Fsvg%3E");
-      }
-      body.plugin-duel-active
-        .battle-nav
-        button[aria-label="打开研发"]::before {
-        background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20fill%3D%22%23eadb9b%22%20d%3D%22M12%202a7%207%200%200%200-4.55%2012.31c.74.61%201.19%201.28%201.4%202.19h6.3c.21-.91.66-1.58%201.4-2.19A7%207%200%200%200%2012%202Zm-3%2016h6v1.5H9V18Zm1%202.5h4a2%202%200%200%201-4%200ZM11%206h2v4.17l2.24-1.3%201%201.73L12%2013.05%207.76%2010.6l1-1.73%202.24%201.3V6Z%22%2F%3E%3C%2Fsvg%3E");
-      }
-      @media (max-width: 500px) {
-        body.plugin-duel-active
-          .battle-nav
-          button[aria-label="打开决策树"]::before,
-        body.plugin-duel-active
-          .battle-nav
-          button[aria-label="打开研发"]::before {
-          width: 20px;
-          height: 20px;
-        }
-      }
       html[data-duel-paused="true"] .network-sync-warning { display: none; }
       html[data-duel-paused="true"] .webgl-stage { pointer-events: none; }
       .plugin-lifecycle button[hidden] { display: none; }

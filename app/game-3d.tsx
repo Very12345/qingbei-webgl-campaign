@@ -3827,11 +3827,9 @@ export default function Game3D() {
                 setSettingsOpen(false);
               }}
             >
-              <span className="focus-tree-glyph" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
+              <svg className="battle-nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M10 2h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1v2h6a2 2 0 0 1 2 2v2h-2v-2h-6v2h-2v-2H5v2H3v-2a2 2 0 0 1 2-2h6V9h-1a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm-5 14h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2Zm12 0h2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2Z" />
+              </svg>
             </button>
             <button
               aria-label="打开研发"
@@ -3844,9 +3842,9 @@ export default function Game3D() {
                 setSettingsOpen(false);
               }}
             >
-              <span className="research-nav-icon" aria-hidden="true">
-                <i />
-              </span>
+              <svg className="battle-nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M12 2a7 7 0 0 0-4.55 12.31c.74.61 1.19 1.28 1.4 2.19h6.3c.21-.91.66-1.58 1.4-2.19A7 7 0 0 0 12 2Zm-3 16h6v1.5H9V18Zm1 2.5h4a2 2 0 0 1-4 0ZM11 6h2v4.17l2.24-1.3 1 1.73L12 13.05 7.76 10.6l1-1.73 2.24 1.3V6Z" />
+              </svg>
             </button>
             <button
               aria-label="打开工具"
