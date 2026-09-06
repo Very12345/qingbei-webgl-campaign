@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-06T05:17:44.760Z",
+  "generatedAt": "2026-09-06T05:27:11.992Z",
   "projection": {
     "metersPerWorld": 44.576,
     "terrainGrid": "72x72",
@@ -106,12 +106,15 @@
     "visualFamilies": 4
   },
   "materials": {
-    "macroBytes": 9362,
+    "macroBytes": 9934,
     "surfaceMaskBytes": 1520078,
     "leafAlbedoBytes": 51878,
     "trackAlbedoBytes": 10090,
-    "waterAlbedoBytes": 2772,
+    "roofAlbedoBytes": 9892,
+    "waterAlbedoBytes": 2738,
     "worldSpaceMacroShader": true,
+    "multiSampledGrass": true,
+    "batchedRoofMaterial": true,
     "unifiedTerrainRoadSurface": true,
     "cohesiveNaturalMaterials": true,
     "genericRoofPlateRemoved": true,

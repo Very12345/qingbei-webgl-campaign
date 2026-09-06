@@ -106,6 +106,14 @@ save("campus-facade-detail.webp", facade)
 facade_rough = np.repeat((210 + facade_noise[..., None] * 22), 3, axis=2)
 save("campus-facade-roughness.webp", facade_rough, 76)
 
+roof_noise = spectral_noise(1.45) * 0.24 + spectral_noise(3.0) * 0.1
+roof_grain = periodic_noise([(80, 0.045, 14), (170, 0.025, 18)])
+roof = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
+roof[:] = np.array([214, 214, 207]) + roof_noise[..., None] * np.array([15, 15, 14]) + roof_grain[..., None] * np.array([7, 7, 6])
+save("campus-roof-detail.webp", roof)
+roof_rough = np.repeat((208 + roof_noise[..., None] * 20), 3, axis=2)
+save("campus-roof-roughness.webp", roof_rough, 76)
+
 water_height = spectral_noise(2.2) * 0.42 + spectral_noise(0.7) * 0.08
 gradient_y, gradient_x = np.gradient(water_height)
 normal = np.stack((-gradient_x * 2.2, -gradient_y * 2.2, np.ones_like(water_height)), axis=2)

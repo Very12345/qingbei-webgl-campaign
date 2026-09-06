@@ -301,6 +301,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         pavingRoughness: loadCampusTexture("campus-paving-roughness.webp"),
         facade: loadCampusTexture("campus-facade-detail.webp", true),
         facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
+        roof: loadCampusTexture("campus-roof-detail.webp", true),
+        roofRoughness: loadCampusTexture("campus-roof-roughness.webp"),
         water: loadCampusTexture("campus-water-albedo.webp", true),
         waterNormal: loadCampusTexture("campus-water-normal.webp"),
         macro: loadCampusTexture("campus-macro-variation.webp"),
@@ -313,6 +315,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       campusTextures.surfaceMask.minFilter = THREE.LinearMipmapLinearFilter;
       campusTextures.track.repeat.set(0.2, 0.2);
       campusTextures.trackRoughness.repeat.set(0.2, 0.2);
+      campusTextures.roof.repeat.set(0.18, 0.18);
+      campusTextures.roofRoughness.repeat.set(0.18, 0.18);
       campusTextures.water.repeat.set(0.18, 0.18);
       campusTextures.waterNormal.repeat.set(0.12, 0.12);
     }
@@ -335,6 +339,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       if (!campusTextures) return material;
       material.onBeforeCompile = (shader) => {
         shader.uniforms.campusSurfaceMask = { value: campusTextures.surfaceMask };
+        shader.uniforms.campusGrassMap = { value: campusTextures.grass };
+        shader.uniforms.campusGrassRoughnessMap = { value: campusTextures.grassRoughness };
         shader.uniforms.campusAsphaltMap = { value: campusTextures.asphalt };
         shader.uniforms.campusPavingMap = { value: campusTextures.paving };
         shader.uniforms.campusAsphaltRoughnessMap = { value: campusTextures.asphaltRoughness };
@@ -346,6 +352,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         shader.fragmentShader = shader.fragmentShader
           .replace("#include <common>", `#include <common>
 uniform sampler2D campusSurfaceMask;
+uniform sampler2D campusGrassMap;
+uniform sampler2D campusGrassRoughnessMap;
 uniform sampler2D campusAsphaltMap;
 uniform sampler2D campusPavingMap;
 uniform sampler2D campusAsphaltRoughnessMap;
@@ -358,6 +366,11 @@ vec3 campusSurfaceWeights = texture2D(campusSurfaceMask, campusSurfaceUv).rgb;
 float campusAsphaltWeight = campusSurfaceWeights.r;
 float campusPavingWeight = campusSurfaceWeights.g;
 float campusDirtWeight = campusSurfaceWeights.b;
+vec2 campusGrassPosition = vCampusWorldPosition.xz;
+vec2 campusGrassUvA = mat2(0.939693, -0.342020, 0.342020, 0.939693) * campusGrassPosition * 1.37;
+vec2 campusGrassUvB = mat2(0.642788, -0.766044, 0.766044, 0.642788) * campusGrassPosition * 0.43 + vec2(0.37, 0.19);
+vec3 campusGrassTone = mix(texture2D(campusGrassMap, campusGrassUvA).rgb, texture2D(campusGrassMap, campusGrassUvB).rgb, 0.34);
+diffuseColor.rgb *= campusGrassTone;
 vec3 campusAsphaltTone = texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 8.0).rgb * 0.82;
 vec3 campusPavingTone = texture2D(campusPavingMap, vCampusWorldPosition.xz * 24.0).rgb * 0.93;
 vec3 campusDirtTone = vec3(0.34, 0.25, 0.15) * (0.9 + texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 12.0).r * 0.25);
@@ -367,13 +380,46 @@ diffuseColor.rgb = mix(diffuseColor.rgb, campusDirtTone, campusDirtWeight);
 vec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusSurfaceUv.x, 1.0 - campusSurfaceUv.y)).rgb * 1.11;
 diffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, 0.22);`)
           .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
+float campusGrassRoughness = mix(texture2D(campusGrassRoughnessMap, campusGrassUvA).r, texture2D(campusGrassRoughnessMap, campusGrassUvB).r, 0.34);
+roughnessFactor = campusGrassRoughness;
 float campusAsphaltRoughness = texture2D(campusAsphaltRoughnessMap, vCampusWorldPosition.xz * 8.0).r;
 float campusPavingRoughness = texture2D(campusPavingRoughnessMap, vCampusWorldPosition.xz * 24.0).r;
 roughnessFactor = mix(roughnessFactor, campusAsphaltRoughness, campusAsphaltWeight);
 roughnessFactor = mix(roughnessFactor, campusPavingRoughness, campusPavingWeight);
 roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
       };
-      material.customProgramCacheKey = () => "campus-unified-surface-v1";
+      material.customProgramCacheKey = () => "campus-unified-surface-v2";
+      return material;
+    };
+    const applyCampusBuildingSurface = (material: THREE.MeshStandardMaterial) => {
+      if (!campusTextures) return material;
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.campusRoofMap = { value: campusTextures.roof };
+        shader.uniforms.campusRoofRoughnessMap = { value: campusTextures.roofRoughness };
+        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nattribute float campusRoofFactor;\nvarying float vCampusRoofFactor;\nvarying vec3 vCampusWorldPosition;")
+          .replace("#include <begin_vertex>", "#include <begin_vertex>\nvCampusRoofFactor = campusRoofFactor;")
+          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", `#include <common>
+uniform sampler2D campusRoofMap;
+uniform sampler2D campusRoofRoughnessMap;
+uniform sampler2D campusMacroMap;
+varying float vCampusRoofFactor;
+varying vec3 vCampusWorldPosition;`)
+          .replace("#include <color_fragment>", `#include <color_fragment>
+vec3 campusFacadeTexture = texture2D(map, vMapUv).rgb;
+vec3 campusRoofTexture = texture2D(campusRoofMap, vMapUv).rgb;
+diffuseColor.rgb *= mix(vec3(1.0), campusRoofTexture / max(campusFacadeTexture, vec3(0.03)), step(0.5, vCampusRoofFactor));
+vec2 campusBuildingMacroUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));
+vec3 campusBuildingMacroTone = texture2D(campusMacroMap, vec2(campusBuildingMacroUv.x, 1.0 - campusBuildingMacroUv.y)).rgb * 1.11;
+diffuseColor.rgb *= mix(vec3(1.0), campusBuildingMacroTone, mix(0.06, 0.04, step(0.5, vCampusRoofFactor)));`)
+          .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
+float campusRoofRoughness = texture2D(campusRoofRoughnessMap, vMapUv).r;
+roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoofFactor));`);
+      };
+      material.customProgramCacheKey = () => "campus-building-surface-v1";
       return material;
     };
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
@@ -1291,8 +1337,8 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
         geo,
         applyCampusSurface(new THREE.MeshStandardMaterial({
           vertexColors: true,
-          map: campusTextures?.grass ?? null,
-          roughnessMap: campusTextures?.grassRoughness ?? null,
+          map: null,
+          roughnessMap: null,
           roughness: 0.98,
           side: THREE.FrontSide,
         })),
@@ -2003,6 +2049,7 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
         bi: number[] = [],
         bc: number[] = [],
         bu: number[] = [],
+        bs: number[] = [],
         buildingPalette = [
           0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
         ],
@@ -2090,6 +2137,7 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
           if (pointIndex) facadeDistance += Math.hypot(p[0] - pts[pointIndex - 1][0], p[1] - pts[pointIndex - 1][1]);
           bp.push(p[0], realCampus ? terrainHeight(r, p[0], p[1]) : base, p[1], p[0], base + h, p[1]);
           bu.push(facadeDistance * 12, 0, facadeDistance * 12, Math.max(1, h * 40));
+          bs.push(0, 0);
           bc.push(
             wallTone.r,
             wallTone.g,
@@ -2103,8 +2151,9 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
         const roofStart = bv;
         if (realCampus) for (const point of pts) {
           bp.push(point[0], base + h, point[1]);
-          bu.push(point[0] * 8, point[1] * 8);
+          bu.push(point[0] * 1.35, point[1] * 1.35);
           bc.push(roofTone.r, roofTone.g, roofTone.b);
+          bs.push(1);
           bv++;
         }
         const roofVertex = (index: number) => realCampus ? roofStart + index : start + index * 2 + 1;
@@ -2118,10 +2167,10 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
           if (appearance.roof === "gabled") {
             const xs=pts.map((p:number[])=>p[0]),zs=pts.map((p:number[])=>p[1]),alongX=Math.max(...xs)-Math.min(...xs)>=Math.max(...zs)-Math.min(...zs),extent=(alongX?Math.max(...xs)-Math.min(...xs):Math.max(...zs)-Math.min(...zs))*.36,
               ridgeStart=bv,ridgeA=[x+(alongX?-extent:0),z+(alongX?0:-extent)],ridgeB=[x+(alongX?extent:0),z+(alongX?0:extent)];
-            for(const ridge of [ridgeA,ridgeB]){bp.push(ridge[0],base+h+appearance.roofHeight,ridge[1]);bu.push(ridge[0]*8,ridge[1]*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;}
+            for(const ridge of [ridgeA,ridgeB]){bp.push(ridge[0],base+h+appearance.roofHeight,ridge[1]);bu.push(ridge[0]*1.35,ridge[1]*1.35);bc.push(roofTone.r,roofTone.g,roofTone.b);bs.push(1);bv++;}
             for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,mid=(alongX?(pts[i][0]+pts[j][0])/2-x:(pts[i][1]+pts[j][1])/2-z);bi.push(roofVertex(i),roofVertex(j),ridgeStart+(mid>0?1:0));}
           } else {
-            const apex=bv;bp.push(x,base+h+appearance.roofHeight,z);bu.push(x*8,z*8);bc.push(roofTone.r,roofTone.g,roofTone.b);bv++;
+            const apex=bv;bp.push(x,base+h+appearance.roofHeight,z);bu.push(x*1.35,z*1.35);bc.push(roofTone.r,roofTone.g,roofTone.b);bs.push(1);bv++;
             for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;bi.push(roofVertex(i),roofVertex(j),apex);}
           }
         } else for (const face of THREE.ShapeUtils.triangulateShape(
@@ -2138,18 +2187,20 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
       bg.setAttribute("position", new THREE.Float32BufferAttribute(bp, 3));
       bg.setAttribute("color", new THREE.Float32BufferAttribute(bc, 3));
       bg.setAttribute("uv", new THREE.Float32BufferAttribute(bu, 2));
+      bg.setAttribute("campusRoofFactor", new THREE.Float32BufferAttribute(bs, 1));
       bg.setIndex(bi);
       bg.computeVertexNormals();
-      const buildings = new THREE.Mesh(
-        bg,
-        applyCampusMacro(new THREE.MeshStandardMaterial({
+      const facadeBuildingMaterial = applyCampusBuildingSurface(new THREE.MeshStandardMaterial({
           vertexColors: true,
           map: campusTextures?.facade ?? null,
           roughnessMap: campusTextures?.facadeRoughness ?? null,
           roughness: 0.82,
           side: THREE.DoubleSide,
           flatShading: true,
-        }), 0.06),
+        }));
+      const buildings = new THREE.Mesh(
+        bg,
+        facadeBuildingMaterial,
       );
       buildings.receiveShadow = false;
       buildings.castShadow = true;
@@ -2216,8 +2267,6 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
               roofAt(0, 0, base + height + 0.06, Math.max(0.16, length), 0.12, Math.max(0.16, depth));
               break;
             case "pku-library": {
-              const top = base + height;
-              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, top + 0.025, length * 0.27, 0.05, depth * 0.58);
               boxAt(0, depth * 0.51, base + height * 0.32, length * 0.22, height * 0.42, 0.02, "#395d67");
               for (let step = 0; step < 4; step++) boxAt(0, depth * (0.53 + step * 0.025), base + 0.008 + step * 0.012, length * (0.28 + step * 0.06), 0.015, depth * 0.05, trim);
               break;
@@ -2285,11 +2334,16 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
             dome: new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
             roof: new THREE.ConeGeometry(0.5, 1, 4),
           },
-          accentMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.02 });
+          accentMaterials: Record<AccentKind, THREE.MeshStandardMaterial> = {
+            box: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.facade ?? null, roughnessMap: campusTextures?.facadeRoughness ?? null, roughness: 0.84 }),
+            column: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.facade ?? null, roughnessMap: campusTextures?.facadeRoughness ?? null, roughness: 0.88 }),
+            dome: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.roof ?? null, roughnessMap: campusTextures?.roofRoughness ?? null, roughness: 0.86, metalness: 0.03 }),
+            roof: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.roof ?? null, roughnessMap: campusTextures?.roofRoughness ?? null, roughness: 0.9 }),
+          };
         geometries.roof.rotateY(Math.PI / 4);
         for (const [kind, instances] of Object.entries(accents) as [AccentKind, Accent[]][]) {
           if (!instances.length) continue;
-          const mesh = new THREE.InstancedMesh(geometries[kind], accentMaterial, instances.length);
+          const mesh = new THREE.InstancedMesh(geometries[kind], accentMaterials[kind], instances.length);
           instances.forEach((instance, index) => { mesh.setMatrixAt(index, instance.matrix); mesh.setColorAt(index, instance.color); });
           mesh.instanceMatrix.needsUpdate = true;
           if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
