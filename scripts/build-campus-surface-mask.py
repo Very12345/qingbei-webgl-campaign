@@ -2,7 +2,7 @@ import json
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "src" / "osm-map-data-real.ts").read_text("utf-8")
@@ -116,5 +116,59 @@ for _, points, width, color in sorted(draws, key=lambda value: value[0]):
 target = ROOT / "public" / "materials" / "campus-surface-mask.png"
 # Rasterize at double resolution, then downsample once. This preserves narrow
 # footways without forcing every client to keep a 4096px mask in GPU memory.
-mask.resize((OUTPUT_SIZE, OUTPUT_SIZE), Image.Resampling.LANCZOS).save(target, "PNG", optimize=True)
-print(json.dumps({"size": OUTPUT_SIZE, "rasterSize": SIZE, "roads": len(region["roads"]), "connectors": len(connector_keys), "bytes": target.stat().st_size, "target": str(target)}, ensure_ascii=False))
+output_mask = mask.resize((OUTPUT_SIZE, OUTPUT_SIZE), Image.Resampling.LANCZOS)
+output_mask.save(target, "PNG", optimize=True)
+def point_in_polygon(x, z, points):
+    inside = False
+    previous = points[-1]
+    for current in points:
+        if (current[1] > z) != (previous[1] > z) and x < (previous[0] - current[0]) * (z - current[1]) / (previous[1] - current[1] + 1e-12) + current[0]:
+            inside = not inside
+        previous = current
+    return inside
+
+
+campus_polygons = [campus["points"] for campus in region.get("campuses", []) if campus["name"] in {"北京大学", "清华大学"}]
+lamp_mask = Image.new("L", (SIZE, SIZE), 0)
+lamp_draw = ImageDraw.Draw(lamp_mask)
+lamp_seen = set()
+lamp_count = 0
+
+
+def add_lamp(x, z):
+    global lamp_count
+    key = (round(x * 4), round(z * 4))
+    if key in lamp_seen or lamp_count >= 650:
+        return
+    lamp_seen.add(key)
+    lamp_count += 1
+    px, py = pixel([x, z])
+    radius = pixel_width(0.22)
+    lamp_draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=255)
+
+
+for x, z in region.get("lamps", []):
+    add_lamp(x, z)
+for road in region["roads"]:
+    if road["kind"] in {"steps", "corridor", "track", "motorway", "motorway_link", "trunk", "trunk_link"} or road.get("lit") == "no":
+        continue
+    if not any(any(point_in_polygon(point[0], point[1], campus) for campus in campus_polygons) for point in road["points"]):
+        continue
+    spacing = 0.72
+    distance_until_next = spacing * 0.5
+    for first, second in zip(road["points"], road["points"][1:]):
+        dx, dz = second[0] - first[0], second[1] - first[1]
+        length = math.hypot(dx, dz)
+        if length < 0.01:
+            continue
+        travelled = 0
+        while travelled + distance_until_next <= length:
+            travelled += distance_until_next
+            amount = travelled / length
+            add_lamp(first[0] + dx * amount, first[1] + dz * amount)
+            distance_until_next = spacing
+        distance_until_next -= length - travelled
+night_light = lamp_mask.resize((OUTPUT_SIZE, OUTPUT_SIZE), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(4))
+light_target = ROOT / "public" / "materials" / "campus-night-light-mask.png"
+night_light.save(light_target, "PNG", optimize=True)
+print(json.dumps({"size": OUTPUT_SIZE, "rasterSize": SIZE, "roads": len(region["roads"]), "connectors": len(connector_keys), "lamps": lamp_count, "bytes": target.stat().st_size, "target": str(target), "nightLightBytes": light_target.stat().st_size}, ensure_ascii=False))

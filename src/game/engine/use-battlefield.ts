@@ -278,6 +278,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(sun);
     const moon = new THREE.DirectionalLight(0x91b7ff, 0.25);
     scene.add(moon);
+    const nightFill = new THREE.AmbientLight(0x8aa0b5, 0);
+    scene.add(nightFill);
     const mapGroup = new THREE.Group();
     scene.add(mapGroup);
     const campusTextureLoader = new THREE.TextureLoader(),
@@ -307,10 +309,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         waterNormal: loadCampusTexture("campus-water-normal.webp"),
         macro: loadCampusTexture("campus-macro-variation.webp"),
         surfaceMask: loadCampusTexture("campus-surface-mask.png"),
+        nightLightMask: loadCampusTexture("campus-night-light-mask.png"),
       } : null;
     if (campusTextures) {
       campusTextures.macro.wrapS = campusTextures.macro.wrapT = THREE.ClampToEdgeWrapping;
       campusTextures.surfaceMask.wrapS = campusTextures.surfaceMask.wrapT = THREE.ClampToEdgeWrapping;
+      campusTextures.nightLightMask.wrapS = campusTextures.nightLightMask.wrapT = THREE.ClampToEdgeWrapping;
       campusTextures.surfaceMask.magFilter = THREE.LinearFilter;
       campusTextures.surfaceMask.minFilter = THREE.LinearMipmapLinearFilter;
       campusTextures.track.repeat.set(0.2, 0.2);
@@ -424,6 +428,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
     };
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
       buildingSurfaceMaterials: THREE.MeshStandardMaterial[] = [],
+      campusNightRoadMaterials: THREE.MeshBasicMaterial[] = [],
       windowDetailMeshes: THREE.InstancedMesh[] = [],
       sportMaterials: THREE.MeshStandardMaterial[] = [],
       sportDetailMeshes: THREE.Object3D[] = [],
@@ -1348,6 +1353,29 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       terrain.castShadow = true;
       mapGroup.add(terrain);
       terrainMeshes.push(terrain);
+      if (realCampus && campusTextures) {
+        const nightRoadGeometry = geo.clone(),
+          nightRoadUvs: number[] = [];
+        for (let index = 0; index < pos.length; index += 3)
+          nightRoadUvs.push((pos[index] + 66) / 132, (pos[index + 2] + 65.7355) / 131.471);
+        nightRoadGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(nightRoadUvs, 2));
+        const nightRoadMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffba62,
+            map: campusTextures.nightLightMask,
+            transparent: true,
+            opacity: 0,
+            depthTest: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+          }),
+          nightRoads = new THREE.Mesh(nightRoadGeometry, nightRoadMaterial);
+        nightRoads.renderOrder = 1;
+        nightRoads.frustumCulled = false;
+        campusNightRoadMaterials.push(nightRoadMaterial);
+        mapGroup.add(nightRoads);
+      }
       if (realCampus && r.landcovers?.length) {
         type LandcoverBucket = {
           positions: number[];
@@ -2208,6 +2236,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       buildingSurfaceMaterials.push(facadeBuildingMaterial);
       buildings.receiveShadow = false;
       buildings.castShadow = true;
+      buildings.frustumCulled = false;
       mapGroup.add(buildings);
       if (realCampus) {
         type AccentKind = "box" | "column" | "dome" | "roof";
@@ -2350,6 +2379,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           mesh.instanceMatrix.needsUpdate = true;
           if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
           mesh.castShadow = true;
+          mesh.frustumCulled = false;
           mapGroup.add(mesh);
         }
       }
@@ -3483,31 +3513,45 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         context: CanvasRenderingContext2D,
         site: SiteState,
         labelColor: string,
-        count: number,
       ) => {
-        context.clearRect(0, 0, 512, 144);
+        context.clearRect(0, 0, 512, 96);
         context.beginPath();
-        context.fillStyle = "rgba(16,25,21,.94)";
-        context.roundRect(4, 4, 504, 136, 16);
+        context.fillStyle = "rgba(21,30,25,.86)";
+        context.roundRect(4, 4, 504, 88, 16);
         context.fill();
         context.strokeStyle = labelColor;
         context.lineWidth = 5;
         context.stroke();
+        context.fillStyle = "#fff6dc";
         const title = site.displayName ?? site.name,
-          titleSize = Math.max(22, Math.min(35, 43 - title.length * 0.55)),
-          teamName = site.team === "pku" ? "北大" : gameRef.current.campaign.thuFactionName,
-          stanceName = site.stance === "defend" ? "防守" : site.stance === "guard" ? "守卫" : "待命";
-        context.textAlign = "left";
-        context.textBaseline = "middle";
-        context.font = `800 ${titleSize}px Microsoft YaHei`;
-        context.lineWidth = 6;
+          titleSize = Math.max(21, Math.min(34, 42 - title.length * 0.6));
+        context.font = `700 ${titleSize}px Microsoft YaHei`;
+        context.textAlign = "center";
+        context.lineWidth = 5;
         context.strokeStyle = "rgba(0,0,0,.92)";
-        context.strokeText(title, 26, 47, 460);
+        context.strokeText(title, 256, 61, 474);
         context.fillStyle = "#fffaf0";
-        context.fillText(title, 26, 47, 460);
-        context.fillStyle = "rgba(236,231,210,.9)";
-        context.font = "700 25px Microsoft YaHei";
-        context.fillText(`${teamName} · ${stanceName} · ${count}人`, 26, 103, 460);
+        context.fillText(title, 256, 61, 474);
+      },
+      drawSiteCount = (
+        context: CanvasRenderingContext2D,
+        site: SiteState,
+        count: number,
+      ) => {
+        context.clearRect(0, 0, 128, 64);
+        context.font = "900 44px Microsoft YaHei";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.lineWidth = 7;
+        context.strokeStyle = "rgba(5,10,9,.88)";
+        context.strokeText(String(count), 64, 34, 112);
+        context.fillStyle =
+          site.team === "pku"
+            ? "rgba(255,115,133,.82)"
+            : gameRef.current.campaign.thuFactionName === "中科大"
+              ? "rgba(103,199,255,.82)"
+              : "rgba(211,160,255,.82)";
+        context.fillText(String(count), 64, 34, 112);
       };
     const siteNodeGeometry = new THREE.PlaneGeometry(1, 1),
       siteNodeBatches: {
@@ -3747,10 +3791,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
                   : "#a569d0",
             labelCanvas = document.createElement("canvas");
           labelCanvas.width = 512;
-          labelCanvas.height = 144;
-          const labelContext = labelCanvas.getContext("2d")!,
-            initialCount = nearbyFriendlyPeople(site);
-          drawSiteLabel(labelContext, site, labelColor, initialCount);
+          labelCanvas.height = 96;
+          const labelContext = labelCanvas.getContext("2d")!;
+          drawSiteLabel(labelContext, site, labelColor);
           const labelTexture = new THREE.CanvasTexture(labelCanvas),
             labelSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
@@ -3761,25 +3804,47 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               }),
             );
           labelTexture.colorSpace = THREE.SRGBColorSpace;
-          const labelScaleX = isTarget ? 4.1 : 3.35,
-            labelScaleY = isTarget ? 1.05 : 0.9,
-            labelY = (realCampus ? 1.55 : 2.75) + (site.id % 3) * (realCampus ? 0.32 : 0.42);
+          const labelScaleX = isTarget ? 4.6 : 3.7,
+            labelScaleY = isTarget ? 0.82 : 0.68,
+            labelY = realCampus ? 1.05 : 2.75 + (site.id % 3) * 0.42,
+            countCanvas = document.createElement("canvas");
           labelSprite.scale.set(labelScaleX, labelScaleY, 1);
           labelSprite.position.y = labelY;
           labelSprite.renderOrder = 30;
-          labelSprite.userData.maxMarkerScale = 1.15;
+          labelSprite.frustumCulled = false;
+          labelSprite.userData.markerRole = "label";
+          countCanvas.width = 128;
+          countCanvas.height = 64;
+          const countContext = countCanvas.getContext("2d")!,
+            initialCount = nearbyFriendlyPeople(site);
+          drawSiteCount(countContext, site, initialCount);
+          const countTexture = new THREE.CanvasTexture(countCanvas),
+            countSprite = new THREE.Sprite(
+              new THREE.SpriteMaterial({
+                map: countTexture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+              }),
+            );
+          countTexture.colorSpace = THREE.SRGBColorSpace;
+          countSprite.scale.set(0.68, 0.34, 1);
+          countSprite.position.y = 1.5;
+          countSprite.renderOrder = 31;
+          countSprite.frustumCulled = false;
+          countSprite.userData.markerRole = "count";
           g.add(
             routeHighlight,
             hoverHighlight,
             labelSprite,
+            countSprite,
           );
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
           g.userData.labelSprite = labelSprite;
           g.userData.countBadge = {
-            context: labelContext,
-            texture: labelTexture,
-            labelColor,
+            context: countContext,
+            texture: countTexture,
             last: initialCount,
           };
           let materialBadge: THREE.Sprite | null = null;
@@ -3827,6 +3892,13 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               y: 1.75,
               scaleX: 1.78,
               scaleY: 1.78,
+            },
+            {
+              object: countSprite,
+              x: 0,
+              y: 1.5,
+              scaleX: 0.68,
+              scaleY: 0.34,
             },
             {
               object: labelSprite,
@@ -4776,6 +4848,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
     bulbs.instanceMatrix.needsUpdate = true;
     lampGlows.instanceMatrix.needsUpdate = true;
     lampGlows.renderOrder = 7;
+    lampGlows.visible = !realCampus;
     scene.add(poles, bulbs, lampGlows);
     const lights: THREE.PointLight[] = Array.from({ length: Math.min(8, lampPositions.length) }, () => {
       const light = new THREE.PointLight(0xffc66f, 0, realCampus ? 0.9 : 5, 2);
@@ -4788,11 +4861,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       mouse = new THREE.Vector2(),
       projectedSiteNode = new THREE.Vector3(),
       projectedSiteEdge = new THREE.Vector3(),
-      projectedSiteLabel = new THREE.Vector3(),
-      projectedSiteLabelEdge = new THREE.Vector3(),
       siteNodeWorld = new THREE.Vector3(),
       siteNodeCameraRight = new THREE.Vector3(),
-      siteNodeCameraUp = new THREE.Vector3(),
       siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
         target.set(
           site.x,
@@ -4837,9 +4907,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       siteNodeCameraRight
         .setFromMatrixColumn(camera.matrixWorld, 0)
         .normalize();
-      siteNodeCameraUp
-        .setFromMatrixColumn(camera.matrixWorld, 1)
-        .normalize();
       const screenHit = gameRef.current.sites
         .filter((site) => !site.destroyed)
         .map((site) => {
@@ -4853,35 +4920,20 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             centerY = ((1 - projectedSiteNode.y) * rect.height) / 2,
             edgeX = ((projectedSiteEdge.x + 1) * rect.width) / 2,
             edgeY = ((1 - projectedSiteEdge.y) * rect.height) / 2,
-            radius = Math.hypot(edgeX - centerX, edgeY - centerY),
-            labelY = (realCampus ? 1.55 : 2.75) + (site.id % 3) * (realCampus ? 0.32 : 0.42),
-            labelMarkerScale = THREE.MathUtils.clamp(markerScale, 0.72, 1.15),
-            labelScaleX = 3.35 * labelMarkerScale,
-            labelScaleY = 0.9 * labelMarkerScale;
-          projectedSiteLabel.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).project(camera);
-          projectedSiteLabelEdge.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).addScaledVector(siteNodeCameraRight, labelScaleX / 2).project(camera);
-          const labelCenterX = ((projectedSiteLabel.x + 1) * rect.width) / 2,
-            labelCenterY = ((1 - projectedSiteLabel.y) * rect.height) / 2,
-            labelEdgeX = ((projectedSiteLabelEdge.x + 1) * rect.width) / 2,
-            labelHalfWidth = Math.abs(labelEdgeX - labelCenterX);
-          projectedSiteLabelEdge.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).addScaledVector(siteNodeCameraUp, labelScaleY / 2).project(camera);
-          const labelEdgeY = ((1 - projectedSiteLabelEdge.y) * rect.height) / 2,
-            labelHalfHeight = Math.abs(labelEdgeY - labelCenterY),
-            insideLabel = Math.abs(pointerX - labelCenterX) <= Math.max(labelHalfWidth, mobileClient ? 28 : 12) && Math.abs(pointerY - labelCenterY) <= Math.max(labelHalfHeight, mobileClient ? 22 : 8);
+            radius = Math.hypot(edgeX - centerX, edgeY - centerY);
           return {
             id: site.id,
             visible: projectedSiteNode.z >= -1 && projectedSiteNode.z <= 1,
-            distance: insideLabel ? 0 : Math.hypot(pointerX - centerX, pointerY - centerY),
+            distance: Math.hypot(pointerX - centerX, pointerY - centerY),
             radius,
-            insideLabel,
           };
         })
         .filter(
           (candidate) =>
             candidate.visible &&
-            (candidate.insideLabel || candidate.distance <= (mobileClient
+            candidate.distance <= (mobileClient
               ? mobileSiteHitRadius(candidate.radius, radiusMultiplier)
-              : candidate.radius * radiusMultiplier)),
+              : candidate.radius * radiusMultiplier),
         )
         .sort((a, b) => a.distance - b.distance)[0];
       return screenHit?.id;
@@ -9510,7 +9562,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           mesh.visible=activeQualityProfile.windowDetails&&(!realCampus||distance<18&&localDistance<12&&(daytime||mesh.userData.campusWindowLit));
         });
         sportDetailMeshes.forEach((mesh) => (mesh.visible = !realCampus || distance < 16));
-        buildingOutlineObjects.forEach((mesh) => (mesh.visible = !realCampus || distance < 22 && daytime));
+        buildingOutlineObjects.forEach((mesh) => (mesh.visible = !realCampus));
       }
       if (!backgroundServerTick && rawDelta < 0.2) {
         performanceFrameTime += rawDelta;
@@ -9844,6 +9896,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
       moon.intensity = night * 1.25;
+      nightFill.intensity = realCampus ? night * 1.45 : 0;
       hemi.intensity = 0.72 + day * 1.18;
       hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x7890a5);
       hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x303a4b);
@@ -9854,8 +9907,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       scene.background = sky;
       (scene.fog as THREE.FogExp2).color.copy(sky);
       (scene.fog as THREE.FogExp2).density = realCampus ? 0.007 + night * 0.015 : 0.007;
-      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 0.48));
-      buildingSurfaceMaterials.forEach((m) => (m.emissiveIntensity = night * 0.32));
+      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 0.36));
+      buildingSurfaceMaterials.forEach((m) => (m.emissiveIntensity = night * 0.24));
+      campusNightRoadMaterials.forEach((material) => (material.opacity = night * 0.2));
       sportMaterials.forEach(
         (material) =>
           (material.emissiveIntensity = 0.025 + night * 0.16),
@@ -9885,7 +9939,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       lights.forEach(
         (light, index) =>
           (light.intensity =
-            light.userData.hasLamp && index < activeQualityProfile.dynamicLights ? night * (realCampus ? 5 : 5.5) : 0),
+            light.userData.hasLamp && index < activeQualityProfile.dynamicLights ? night * (realCampus ? 3.2 : 5.5) : 0),
       );
       renderer.toneMappingExposure = 0.9 + day * 0.2;
       commandAnimations.forEach((animation) => {
@@ -10288,14 +10342,13 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               | {
                   context: CanvasRenderingContext2D;
                   texture: THREE.CanvasTexture;
-                  labelColor: string;
                   last: number;
                 }
               | undefined;
           if (!site || !badge) return;
           const count = nearbyFriendlyPeople(site);
           if (count === badge.last) return;
-          drawSiteLabel(badge.context, site, badge.labelColor, count);
+          drawSiteCount(badge.context, site, count);
           badge.texture.needsUpdate = true;
           badge.last = count;
         });
@@ -10307,8 +10360,10 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           0.45,
           1.9,
         ),
-        showSiteLabels = true;
+        showSiteLabels = (!!reviewSite && !reviewWide) || markerCameraDistance <= (realCampus ? 18 : 27);
       updateSiteNodeBatches(fixedRingScale);
+      camera.updateMatrixWorld();
+      siteNodeCameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
       siteObjects.forEach((object, id) => {
         const selectionHighlight = object.userData.routeHighlight as
           THREE.Object3D | undefined;
@@ -10328,11 +10383,24 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             }[]
           | undefined;
         icons?.forEach((icon) => {
-          const iconScale = icon.object.userData.maxMarkerScale
-            ? THREE.MathUtils.clamp(fixedRingScale, 0.72, icon.object.userData.maxMarkerScale)
-            : fixedRingScale;
-          icon.object.position.x = icon.x * iconScale;
-          icon.object.position.y = 1.75 + (icon.y - 1.75) * iconScale;
+          const markerRole = icon.object.userData.markerRole as string | undefined;
+          const iconScale =
+            realCampus && markerRole === "label"
+              ? fixedRingScale * 0.48
+              : realCampus && markerRole === "count"
+                ? fixedRingScale * 0.9
+                : fixedRingScale;
+          if (realCampus && markerRole) {
+            const offset =
+              (markerRole === "label" ? 2.1 : -1.25) * fixedRingScale;
+            icon.object.position.x = siteNodeCameraRight.x * offset;
+            icon.object.position.z = siteNodeCameraRight.z * offset;
+            icon.object.position.y = 0.35;
+          } else {
+            icon.object.position.x = icon.x * fixedRingScale;
+            icon.object.position.z = 0;
+            icon.object.position.y = 1.75 + (icon.y - 1.75) * fixedRingScale;
+          }
           icon.object.scale.set(
             icon.scaleX * iconScale,
             icon.scaleY * iconScale,
