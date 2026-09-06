@@ -23,6 +23,7 @@
     "test:events-routes-blitz": "tsx scripts/event-route-blitz-regressions.ts",
     "test:field-encounters": "tsx scripts/field-encounter-regressions.ts",
     "test:mobile-support": "tsx scripts/mobile-support-regressions.ts",
+    "build:campus-surface": "python scripts/build-campus-surface-mask.py",
     "test:real-campus": "tsx scripts/real-campus-regressions.ts",
     "review:real-campus": "tsx scripts/capture-real-campus-reviews.ts",
     "audit:real-campus": "tsx scripts/real-campus-scene-audit.ts"

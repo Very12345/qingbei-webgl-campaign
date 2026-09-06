@@ -35,4 +35,4 @@
 
 ## 复现
 
-`npm run test:real-campus` 检查 925/143 条覆盖、来源引用、固定尺寸/材质/屋顶、据点可达、旧存档升级和 v0.3.13 经典几何哈希。`npm run audit:real-campus` 重新生成 [real-campus-scene-audit.json](real-campus-scene-audit.json)，核验建筑自交与重叠抑制、道路宽度和端点、地表面积、地形跳变、树木来源与多尺度材质。更新数据时依次运行 `node work/fetch-osm.mjs`、`node scripts/fetch-satellite-references.mjs`、`python scripts/build-satellite-roof-colors.py` 和 `npx tsx scripts/build-real-campus-data.ts`；卫星原图只保存在被 Git 忽略的 `work/references`。`python scripts/build-campus-materials.py` 可重建本地原创材质。
+`npm run test:real-campus` 检查 925/143 条覆盖、来源引用、固定尺寸/材质/屋顶、据点可达、旧存档升级和 v0.3.13 经典几何哈希。`npm run audit:real-campus` 重新生成 [real-campus-scene-audit.json](real-campus-scene-audit.json)，核验建筑自交与重叠抑制、道路宽度和端点、地表面积、地形跳变、树木来源与多尺度材质。更新数据时依次运行 `node work/fetch-osm.mjs`、`npm run build:campus-surface`、`node scripts/fetch-satellite-references.mjs`、`python scripts/build-satellite-roof-colors.py` 和 `npx tsx scripts/build-real-campus-data.ts`；卫星原图只保存在被 Git 忽略的 `work/references`。地形着色器通过 `campus-surface-mask.png` 在同一个地形网格上混合草地、道路、路缘、步道和广场，桥梁仍保留独立几何；`python scripts/build-campus-materials.py` 可重建本地原创材质。

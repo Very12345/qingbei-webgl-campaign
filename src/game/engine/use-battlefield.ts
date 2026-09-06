@@ -299,8 +299,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
         waterNormal: loadCampusTexture("campus-water-normal.webp"),
         macro: loadCampusTexture("campus-macro-variation.webp"),
+        surfaceMask: loadCampusTexture("campus-surface-mask.png"),
       } : null;
-    if (campusTextures) campusTextures.macro.wrapS = campusTextures.macro.wrapT = THREE.ClampToEdgeWrapping;
+    if (campusTextures) {
+      campusTextures.macro.wrapS = campusTextures.macro.wrapT = THREE.ClampToEdgeWrapping;
+      campusTextures.surfaceMask.wrapS = campusTextures.surfaceMask.wrapT = THREE.ClampToEdgeWrapping;
+      campusTextures.surfaceMask.magFilter = THREE.LinearFilter;
+      campusTextures.surfaceMask.minFilter = THREE.LinearMipmapLinearFilter;
+    }
     const regions = mapRegionsFor(gameRef.current.campaign.mapProfile) as unknown as Record<string, any>;
     const applyCampusMacro = (material: THREE.MeshStandardMaterial, strength: number) => {
       if (!campusTextures) return material;
@@ -314,6 +320,51 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           .replace("#include <map_fragment>", `#include <map_fragment>\nvec2 campusMacroUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));\nvec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusMacroUv.x, 1.0 - campusMacroUv.y)).rgb * 1.11;\ndiffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, ${strength.toFixed(3)});`);
       };
       material.customProgramCacheKey = () => `campus-macro-${strength}`;
+      return material;
+    };
+    const applyCampusSurface = (material: THREE.MeshStandardMaterial) => {
+      if (!campusTextures) return material;
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.campusSurfaceMask = { value: campusTextures.surfaceMask };
+        shader.uniforms.campusAsphaltMap = { value: campusTextures.asphalt };
+        shader.uniforms.campusPavingMap = { value: campusTextures.paving };
+        shader.uniforms.campusAsphaltRoughnessMap = { value: campusTextures.asphaltRoughness };
+        shader.uniforms.campusPavingRoughnessMap = { value: campusTextures.pavingRoughness };
+        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nvarying vec3 vCampusWorldPosition;")
+          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", `#include <common>
+uniform sampler2D campusSurfaceMask;
+uniform sampler2D campusAsphaltMap;
+uniform sampler2D campusPavingMap;
+uniform sampler2D campusAsphaltRoughnessMap;
+uniform sampler2D campusPavingRoughnessMap;
+uniform sampler2D campusMacroMap;
+varying vec3 vCampusWorldPosition;`)
+          .replace("#include <color_fragment>", `#include <color_fragment>
+vec2 campusSurfaceUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));
+vec3 campusSurfaceWeights = texture2D(campusSurfaceMask, campusSurfaceUv).rgb;
+float campusAsphaltWeight = campusSurfaceWeights.r;
+float campusPavingWeight = campusSurfaceWeights.g;
+float campusDirtWeight = campusSurfaceWeights.b;
+vec3 campusAsphaltTone = texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 8.0).rgb * 0.82;
+vec3 campusPavingTone = texture2D(campusPavingMap, vCampusWorldPosition.xz * 24.0).rgb * 0.93;
+vec3 campusDirtTone = vec3(0.34, 0.25, 0.15) * (0.9 + texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 12.0).r * 0.25);
+diffuseColor.rgb = mix(diffuseColor.rgb, campusAsphaltTone, campusAsphaltWeight);
+diffuseColor.rgb = mix(diffuseColor.rgb, campusPavingTone, campusPavingWeight);
+diffuseColor.rgb = mix(diffuseColor.rgb, campusDirtTone, campusDirtWeight);
+vec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusSurfaceUv.x, 1.0 - campusSurfaceUv.y)).rgb * 1.11;
+diffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, 0.22);`)
+          .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
+float campusAsphaltRoughness = texture2D(campusAsphaltRoughnessMap, vCampusWorldPosition.xz * 8.0).r;
+float campusPavingRoughness = texture2D(campusPavingRoughnessMap, vCampusWorldPosition.xz * 24.0).r;
+roughnessFactor = mix(roughnessFactor, campusAsphaltRoughness, campusAsphaltWeight);
+roughnessFactor = mix(roughnessFactor, campusPavingRoughness, campusPavingWeight);
+roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
+      };
+      material.customProgramCacheKey = () => "campus-unified-surface-v1";
       return material;
     };
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
@@ -1229,13 +1280,13 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       geo.computeVertexNormals();
       const terrain = new THREE.Mesh(
         geo,
-        applyCampusMacro(new THREE.MeshStandardMaterial({
+        applyCampusSurface(new THREE.MeshStandardMaterial({
           vertexColors: true,
           map: campusTextures?.grass ?? null,
           roughnessMap: campusTextures?.grassRoughness ?? null,
           roughness: 0.98,
           side: THREE.FrontSide,
-        }), 0.3),
+        })),
       );
       terrain.receiveShadow = true;
       terrain.castShadow = true;
@@ -1299,7 +1350,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           mapGroup.add(mesh);
         }
       }
-      if (realCampus && r.hardscapes?.length) {
+      if (realCampus && r.hardscapes?.length && !campusTextures?.surfaceMask) {
         const hardscapeBuckets = {
           pedestrian: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xebe7df, texture: campusTextures?.paving, roughness: campusTextures?.pavingRoughness },
           parking: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xd2d4d2, texture: campusTextures?.asphalt, roughness: campusTextures?.asphaltRoughness },
@@ -1791,6 +1842,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         return Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t))<=segment.radius+.055;
       });
       for (const road of r.roads) {
+        if (realCampus && campusTextures?.surfaceMask && !road.bridge) continue;
         const kind = road.kind as string,
           pedestrianRoad = pedestrianKinds.has(kind),
           bucket = pedestrianRoad
@@ -1848,7 +1900,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
         flushChunk();
       }
-      if (realCampus) {
+      if (realCampus && !campusTextures?.surfaceMask) {
         type RoadEndpoint = { x: number; z: number; width: number; pedestrian: boolean; bridge: boolean; roadIndex: number };
         type RoadSegment = { x1:number;z1:number;x2:number;z2:number;width:number;pedestrian:boolean;bridge:boolean;roadIndex:number };
         const endpointCell = 0.35,
@@ -2205,7 +2257,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               break;
             }
             case "dormitory":
-              boxAt(0, 0, base + height + 0.015, length * 0.94, 0.03, depth * 0.92, roof);
               boxAt(0, depth * 0.52, base + Math.min(0.055, height * 0.25), Math.min(0.12, length * 0.18), Math.min(0.09, height * 0.36), 0.018, trim);
               break;
             case "dining-hall":

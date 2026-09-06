@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T18:18:14.826Z",
+  "generatedAt": "2026-09-06T00:18:26.122Z",
   "projection": {
     "metersPerWorld": 44.576,
     "terrainGrid": "72x72",
@@ -107,7 +107,10 @@
   },
   "materials": {
     "macroBytes": 9378,
+    "surfaceMaskBytes": 1520078,
     "worldSpaceMacroShader": true,
+    "unifiedTerrainRoadSurface": true,
+    "genericRoofPlateRemoved": true,
     "separateFacadeRoofVertices": true,
     "terrainConformingFoundations": true,
     "windowSpatialBatches": true,
