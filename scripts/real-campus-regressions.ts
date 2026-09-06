@@ -43,8 +43,8 @@ const upgraded=createKernel(classic,{navGrid:grid,aiTeams:[],mapProfile:"real-ca
 assert.equal(upgraded.campaign.mapProfile,"real-campus-v1");
 assert.ok(upgradedUnit.x!==blockedX||upgradedUnit.z!==blockedZ,"unit embedded in a new building was not migrated");
 assert.equal(upgradedUnit.targetSiteId,target.id);assert.equal(upgradedUnit.movementOrder?.goalSiteId,target.id);assert.equal(upgradedUnit.transport,"bike");assert.ok(upgradedUnit.path?.length,"upgraded order was not rerouted");
-const classicMapBytes=readFileSync(new URL("../src/osm-map-data.ts",import.meta.url));
-assert.equal(createHash("sha256").update(classicMapBytes).digest("hex"),"9fa0cdf37e6bb77974c352b0d1de1f55bcefff0560bc2b890e9fc52abf518795","classic geometry changed from v0.3.13");
+const classicMapText=readFileSync(new URL("../src/osm-map-data.ts",import.meta.url),"utf8").replace(/\r\n/g,"\n");
+assert.equal(createHash("sha256").update(classicMapText).digest("hex"),"90f2b492cb92f63d6066122fe9c15c971db836e34ab09e2603d38d98f1d2b13b","classic geometry changed from v0.3.13");
 const renderer=readFileSync(new URL("../src/game/engine/use-battlefield.ts",import.meta.url),"utf8");
 assert.ok(renderer.includes("REAL_BUILDING_BY_KEY")&&renderer.includes("namedRoadAt")&&renderer.includes("water.level - 0.08")&&renderer.includes("fallbackLevels")&&renderer.includes("const roofVertex")&&renderer.includes("realCampus ? wallTone.r : roofTone.r")&&renderer.includes("applyCampusSurface")&&renderer.includes("campusSurfaceMask")&&renderer.includes("campusGrassUvB")&&renderer.includes("applyCampusBuildingSurface")&&renderer.includes("campusRoofFactor")&&renderer.includes("campusTextures?.surfaceMask && !road.bridge")&&renderer.includes("treeCrownClusters")&&renderer.includes("campusTextures?.track")&&renderer.includes("campusTextures?.water")&&renderer.includes("distance<18")&&renderer.includes("localDistance<12")&&renderer.includes("distance < 22 && daytime")&&!renderer.includes("onVehicleSurface"));
 assert.ok(!renderer.includes("length * 0.94, 0.03, depth * 0.92, roof"),"generic dormitory roof plate returned");
