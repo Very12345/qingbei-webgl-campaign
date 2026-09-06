@@ -6,7 +6,7 @@ import type {
   Team,
 } from "../types";
 import { RELEASE_NOTES } from "../release-notes";
-import {MAP_PROFILES,type MapProfile} from "../map-profile";
+import type {MapProfile} from "../map-profile";
 
 const LOCAL_SERVER_HISTORY_KEY = "qingbei-local-server-addresses-v1";
 const DEFAULT_LOCAL_SERVER_PORT = "17890";
@@ -68,8 +68,6 @@ type HomeScreenProps = {
   setSaveName: (name: string) => void;
   newGameTeam: Team;
   setNewGameTeam: (team: Team) => void;
-  mapProfile: MapProfile;
-  setMapProfile: (profile: MapProfile) => void;
   aiObserverMode: boolean;
   setAiObserverMode: (enabled: boolean) => void;
   openToLan: boolean;
@@ -127,8 +125,6 @@ export function HomeScreen(props: HomeScreenProps) {
     setSaveName,
     newGameTeam,
     setNewGameTeam,
-    mapProfile,
-    setMapProfile,
     aiObserverMode,
     setAiObserverMode,
     openToLan,
@@ -520,13 +516,6 @@ export function HomeScreen(props: HomeScreenProps) {
               </select>
               {aiObserverMode && <small>观察模式由本机同时运行双方AI</small>}
             </label>
-            <label>
-              <span>校园地图</span>
-              <select value={mapProfile} onChange={(event)=>setMapProfile(event.target.value as MapProfile)}>
-                {MAP_PROFILES.map(profile=><option key={profile.id} value={profile.id}>{profile.title}</option>)}
-              </select>
-              <small>{MAP_PROFILES.find(profile=>profile.id===mapProfile)?.detail}</small>
-            </label>
             {aiObserverMode ? (
               <>
                 {(["pku", "thu"] as Team[]).map((team) => (
@@ -570,7 +559,6 @@ export function HomeScreen(props: HomeScreenProps) {
                   newGameTeam,
                   aiObserverMode,
                   observerAiDifficulty,
-                  mapProfile,
                 );
                 if (openToLan) void createLanHost();
               }}
@@ -611,9 +599,6 @@ export function HomeScreen(props: HomeScreenProps) {
                   </div>
                   <div className="save-row-actions">
                     <button onClick={() => loadGame(autosave, newGameTeam)}>继续</button>
-                    {(autosave.campaign.mapProfile ?? "classic") === "classic" && (
-                      <button onClick={() => loadGame(autosave, newGameTeam, "real-campus-v1")}>升级真实地图</button>
-                    )}
                     <button className="delete" onClick={clearUnfinishedGame}>放弃</button>
                   </div>
                 </article>
@@ -637,9 +622,6 @@ export function HomeScreen(props: HomeScreenProps) {
                   </div>
                   <div className="save-row-actions">
                     <button onClick={() => loadGame(save, newGameTeam)}>进入</button>
-                    {(save.campaign.mapProfile ?? "classic") === "classic" && (
-                      <button onClick={() => loadGame(save, newGameTeam, "real-campus-v1")}>升级真实地图</button>
-                    )}
                     <button
                       onClick={() => {
                         const name = window.prompt("新的存档名称", save.name);

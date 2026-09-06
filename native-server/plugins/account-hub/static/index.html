@@ -3632,7 +3632,7 @@
                     </select></label
                   >
                 </div>
-                <label class="field">校园地图<select id="mapProfile"><option value="real-campus-v1">2026真实校园</option><option value="classic">经典地图</option></select></label>
+                <p class="queue-state">校园地图 · 2026真实校园</p>
                 <div class="reward-line">
                   <span id="winReward"></span><span id="lossReward"></span>
                 </div>
@@ -4311,7 +4311,7 @@
         battleMode = "pvp",
         selectedTeam = "any",
         difficulty = "standard",
-        mapProfile = localStorage.getItem("qingbei-hub-map-profile") || "real-campus-v1",
+        mapProfile = "real-campus-v1",
         poll = null,
         queueBusy = false,
         toastTimer;
@@ -4414,9 +4414,7 @@
         updateReward();
       }
       function setMapProfile(next) {
-        mapProfile = next === "classic" ? "classic" : "real-campus-v1";
-        $("mapProfile").value = mapProfile;
-        localStorage.setItem("qingbei-hub-map-profile", mapProfile);
+        mapProfile = "real-campus-v1";
       }
       function updateReward() {
         $("winReward").textContent = "经验 = 击杀人数 + 占点次数 + 胜利 100";
@@ -4545,7 +4543,7 @@
         queueBusy = busy;
         document
           .querySelectorAll(
-            "[data-battle-mode],[data-team],[data-difficulty],#autoTeam,#speedCard,#mapProfile",
+            "[data-battle-mode],[data-team],[data-difficulty],#autoTeam,#speedCard",
           )
           .forEach((control) => (control.disabled = busy));
       }
@@ -4727,7 +4725,6 @@
         );
       $("autoTeam").onclick = () => selectTeam("any");
       $("shopTeam").onchange = () => { if (careerProfile) renderShop(careerProfile); };
-      $("mapProfile").onchange = () => setMapProfile($("mapProfile").value);
       $("battleAction").onclick = beginBattle;
       setMapProfile(mapProfile);
       setBattleMode("pvp");

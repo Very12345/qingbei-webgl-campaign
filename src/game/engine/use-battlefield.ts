@@ -2572,10 +2572,10 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       siteHitProxies: THREE.Mesh[] = [],
       siteHitGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
       siteHitMaterial = new THREE.MeshBasicMaterial({ visible: false });
-    buildingGroup.visible = !reviewSite;
+    buildingGroup.visible = true;
     scene.add(buildingGroup);
     const siteNodeBatchGroup = new THREE.Group();
-    siteNodeBatchGroup.visible = !reviewSite;
+    siteNodeBatchGroup.visible = true;
     scene.add(siteNodeBatchGroup);
     const unitGroup = new THREE.Group();
     unitGroup.visible = !reviewSite;
@@ -3483,45 +3483,31 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         context: CanvasRenderingContext2D,
         site: SiteState,
         labelColor: string,
+        count: number,
       ) => {
-        context.clearRect(0, 0, 512, 96);
+        context.clearRect(0, 0, 512, 144);
         context.beginPath();
-        context.fillStyle = "rgba(21,30,25,.86)";
-        context.roundRect(4, 4, 504, 88, 16);
+        context.fillStyle = "rgba(16,25,21,.94)";
+        context.roundRect(4, 4, 504, 136, 16);
         context.fill();
         context.strokeStyle = labelColor;
         context.lineWidth = 5;
         context.stroke();
-        context.fillStyle = "#fff6dc";
         const title = site.displayName ?? site.name,
-          titleSize = Math.max(21, Math.min(34, 42 - title.length * 0.6));
-        context.font = `700 ${titleSize}px Microsoft YaHei`;
-        context.textAlign = "center";
-        context.lineWidth = 5;
-        context.strokeStyle = "rgba(0,0,0,.92)";
-        context.strokeText(title, 256, 61, 474);
-        context.fillStyle = "#fffaf0";
-        context.fillText(title, 256, 61, 474);
-      },
-      drawSiteCount = (
-        context: CanvasRenderingContext2D,
-        site: SiteState,
-        count: number,
-      ) => {
-        context.clearRect(0, 0, 128, 64);
-        context.font = "900 44px Microsoft YaHei";
-        context.textAlign = "center";
+          titleSize = Math.max(22, Math.min(35, 43 - title.length * 0.55)),
+          teamName = site.team === "pku" ? "北大" : gameRef.current.campaign.thuFactionName,
+          stanceName = site.stance === "defend" ? "防守" : site.stance === "guard" ? "守卫" : "待命";
+        context.textAlign = "left";
         context.textBaseline = "middle";
-        context.lineWidth = 7;
-        context.strokeStyle = "rgba(5,10,9,.88)";
-        context.strokeText(String(count), 64, 34, 112);
-        context.fillStyle =
-          site.team === "pku"
-            ? "rgba(255,115,133,.82)"
-            : gameRef.current.campaign.thuFactionName === "中科大"
-              ? "rgba(103,199,255,.82)"
-              : "rgba(211,160,255,.82)";
-        context.fillText(String(count), 64, 34, 112);
+        context.font = `800 ${titleSize}px Microsoft YaHei`;
+        context.lineWidth = 6;
+        context.strokeStyle = "rgba(0,0,0,.92)";
+        context.strokeText(title, 26, 47, 460);
+        context.fillStyle = "#fffaf0";
+        context.fillText(title, 26, 47, 460);
+        context.fillStyle = "rgba(236,231,210,.9)";
+        context.font = "700 25px Microsoft YaHei";
+        context.fillText(`${teamName} · ${stanceName} · ${count}人`, 26, 103, 460);
       };
     const siteNodeGeometry = new THREE.PlaneGeometry(1, 1),
       siteNodeBatches: {
@@ -3761,9 +3747,10 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
                   : "#a569d0",
             labelCanvas = document.createElement("canvas");
           labelCanvas.width = 512;
-          labelCanvas.height = 96;
-          const labelContext = labelCanvas.getContext("2d")!;
-          drawSiteLabel(labelContext, site, labelColor);
+          labelCanvas.height = 144;
+          const labelContext = labelCanvas.getContext("2d")!,
+            initialCount = nearbyFriendlyPeople(site);
+          drawSiteLabel(labelContext, site, labelColor, initialCount);
           const labelTexture = new THREE.CanvasTexture(labelCanvas),
             labelSprite = new THREE.Sprite(
               new THREE.SpriteMaterial({
@@ -3774,43 +3761,25 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               }),
             );
           labelTexture.colorSpace = THREE.SRGBColorSpace;
-          const labelScaleX = isTarget ? 4.6 : 3.7,
-            labelScaleY = isTarget ? 0.82 : 0.68,
-            labelY = 2.75 + (site.id % 3) * 0.42,
-            countCanvas = document.createElement("canvas");
+          const labelScaleX = isTarget ? 4.1 : 3.35,
+            labelScaleY = isTarget ? 1.05 : 0.9,
+            labelY = (realCampus ? 1.55 : 2.75) + (site.id % 3) * (realCampus ? 0.32 : 0.42);
           labelSprite.scale.set(labelScaleX, labelScaleY, 1);
           labelSprite.position.y = labelY;
           labelSprite.renderOrder = 30;
-          countCanvas.width = 128;
-          countCanvas.height = 64;
-          const countContext = countCanvas.getContext("2d")!,
-            initialCount = nearbyFriendlyPeople(site);
-          drawSiteCount(countContext, site, initialCount);
-          const countTexture = new THREE.CanvasTexture(countCanvas),
-            countSprite = new THREE.Sprite(
-              new THREE.SpriteMaterial({
-                map: countTexture,
-                transparent: true,
-                depthTest: false,
-                depthWrite: false,
-              }),
-            );
-          countTexture.colorSpace = THREE.SRGBColorSpace;
-          countSprite.scale.set(0.68, 0.34, 1);
-          countSprite.position.y = 1.5;
-          countSprite.renderOrder = 31;
+          labelSprite.userData.maxMarkerScale = 1.15;
           g.add(
             routeHighlight,
             hoverHighlight,
             labelSprite,
-            countSprite,
           );
           g.userData.routeHighlight = routeHighlight;
           g.userData.hoverHighlight = hoverHighlight;
           g.userData.labelSprite = labelSprite;
           g.userData.countBadge = {
-            context: countContext,
-            texture: countTexture,
+            context: labelContext,
+            texture: labelTexture,
+            labelColor,
             last: initialCount,
           };
           let materialBadge: THREE.Sprite | null = null;
@@ -3858,13 +3827,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               y: 1.75,
               scaleX: 1.78,
               scaleY: 1.78,
-            },
-            {
-              object: countSprite,
-              x: 0,
-              y: 1.5,
-              scaleX: 0.68,
-              scaleY: 0.34,
             },
             {
               object: labelSprite,
@@ -4826,8 +4788,11 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       mouse = new THREE.Vector2(),
       projectedSiteNode = new THREE.Vector3(),
       projectedSiteEdge = new THREE.Vector3(),
+      projectedSiteLabel = new THREE.Vector3(),
+      projectedSiteLabelEdge = new THREE.Vector3(),
       siteNodeWorld = new THREE.Vector3(),
       siteNodeCameraRight = new THREE.Vector3(),
+      siteNodeCameraUp = new THREE.Vector3(),
       siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
         target.set(
           site.x,
@@ -4872,6 +4837,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       siteNodeCameraRight
         .setFromMatrixColumn(camera.matrixWorld, 0)
         .normalize();
+      siteNodeCameraUp
+        .setFromMatrixColumn(camera.matrixWorld, 1)
+        .normalize();
       const screenHit = gameRef.current.sites
         .filter((site) => !site.destroyed)
         .map((site) => {
@@ -4885,20 +4853,35 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             centerY = ((1 - projectedSiteNode.y) * rect.height) / 2,
             edgeX = ((projectedSiteEdge.x + 1) * rect.width) / 2,
             edgeY = ((1 - projectedSiteEdge.y) * rect.height) / 2,
-            radius = Math.hypot(edgeX - centerX, edgeY - centerY);
+            radius = Math.hypot(edgeX - centerX, edgeY - centerY),
+            labelY = (realCampus ? 1.55 : 2.75) + (site.id % 3) * (realCampus ? 0.32 : 0.42),
+            labelMarkerScale = THREE.MathUtils.clamp(markerScale, 0.72, 1.15),
+            labelScaleX = 3.35 * labelMarkerScale,
+            labelScaleY = 0.9 * labelMarkerScale;
+          projectedSiteLabel.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).project(camera);
+          projectedSiteLabelEdge.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).addScaledVector(siteNodeCameraRight, labelScaleX / 2).project(camera);
+          const labelCenterX = ((projectedSiteLabel.x + 1) * rect.width) / 2,
+            labelCenterY = ((1 - projectedSiteLabel.y) * rect.height) / 2,
+            labelEdgeX = ((projectedSiteLabelEdge.x + 1) * rect.width) / 2,
+            labelHalfWidth = Math.abs(labelEdgeX - labelCenterX);
+          projectedSiteLabelEdge.set(site.x, terrainHeight(regionForX(site.x), site.x, site.z) + labelY, site.z).addScaledVector(siteNodeCameraUp, labelScaleY / 2).project(camera);
+          const labelEdgeY = ((1 - projectedSiteLabelEdge.y) * rect.height) / 2,
+            labelHalfHeight = Math.abs(labelEdgeY - labelCenterY),
+            insideLabel = Math.abs(pointerX - labelCenterX) <= Math.max(labelHalfWidth, mobileClient ? 28 : 12) && Math.abs(pointerY - labelCenterY) <= Math.max(labelHalfHeight, mobileClient ? 22 : 8);
           return {
             id: site.id,
             visible: projectedSiteNode.z >= -1 && projectedSiteNode.z <= 1,
-            distance: Math.hypot(pointerX - centerX, pointerY - centerY),
+            distance: insideLabel ? 0 : Math.hypot(pointerX - centerX, pointerY - centerY),
             radius,
+            insideLabel,
           };
         })
         .filter(
           (candidate) =>
             candidate.visible &&
-            candidate.distance <= (mobileClient
+            (candidate.insideLabel || candidate.distance <= (mobileClient
               ? mobileSiteHitRadius(candidate.radius, radiusMultiplier)
-              : candidate.radius * radiusMultiplier),
+              : candidate.radius * radiusMultiplier)),
         )
         .sort((a, b) => a.distance - b.distance)[0];
       return screenHit?.id;
@@ -10305,13 +10288,14 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               | {
                   context: CanvasRenderingContext2D;
                   texture: THREE.CanvasTexture;
+                  labelColor: string;
                   last: number;
                 }
               | undefined;
           if (!site || !badge) return;
           const count = nearbyFriendlyPeople(site);
           if (count === badge.last) return;
-          drawSiteCount(badge.context, site, count);
+          drawSiteLabel(badge.context, site, badge.labelColor, count);
           badge.texture.needsUpdate = true;
           badge.last = count;
         });
@@ -10323,7 +10307,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           0.45,
           1.9,
         ),
-        showSiteLabels = markerCameraDistance <= 27;
+        showSiteLabels = true;
       updateSiteNodeBatches(fixedRingScale);
       siteObjects.forEach((object, id) => {
         const selectionHighlight = object.userData.routeHighlight as
@@ -10344,11 +10328,14 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             }[]
           | undefined;
         icons?.forEach((icon) => {
-          icon.object.position.x = icon.x * fixedRingScale;
-          icon.object.position.y = 1.75 + (icon.y - 1.75) * fixedRingScale;
+          const iconScale = icon.object.userData.maxMarkerScale
+            ? THREE.MathUtils.clamp(fixedRingScale, 0.72, icon.object.userData.maxMarkerScale)
+            : fixedRingScale;
+          icon.object.position.x = icon.x * iconScale;
+          icon.object.position.y = 1.75 + (icon.y - 1.75) * iconScale;
           icon.object.scale.set(
-            icon.scaleX * fixedRingScale,
-            icon.scaleY * fixedRingScale,
+            icon.scaleX * iconScale,
+            icon.scaleY * iconScale,
             1,
           );
         });
@@ -10522,8 +10509,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         refreshUnitSelection();
       },
       setLayers: (sites, control) => {
-        buildingGroup.visible = sites && !reviewSite;
-        siteNodeBatchGroup.visible = sites && !reviewSite;
+        buildingGroup.visible = sites;
+        siteNodeBatchGroup.visible = sites;
         territoryGroup.visible = control && !reviewSite;
       },
       setPerspective: (team) => {

@@ -1056,10 +1056,12 @@ func (battle *kernelBattle) resume(name string) error {
 	if err := json.Unmarshal(encoded, &save); err != nil {
 		return err
 	}
-	mapProfile := battle.spec.MapProfile
+	mapProfile := "real-campus-v1"
 	if campaign, ok := save.State["campaign"].(map[string]any); ok {
-		if savedProfile, ok := campaign["mapProfile"].(string); ok {
-			mapProfile = savedProfile
+		savedProfile, _ := campaign["mapProfile"].(string)
+		campaign["mapProfile"] = mapProfile
+		if savedProfile != mapProfile {
+			campaign["mapGeometryVersion"] = 0
 		}
 	}
 	_, navGrid, err := loadKernelSeed(mapProfile)

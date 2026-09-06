@@ -10,6 +10,7 @@ import {osmRegions} from "../src/osm-map-data-real";
 import {osmRegions as classicRegions} from "../src/osm-map-data";
 import {buildKernelNavGrid} from "../src/game/kernel/build-navigation";
 import {createKernel,navPoint,nearestOpenIndex} from "../src/game/kernel";
+import {MAP_PROFILES} from "../src/game/map-profile";
 
 const region:any=osmRegions.main,campuses=region.campuses.filter((c:any)=>c.name==="北京大学"||c.name==="清华大学");
 const campusBuildings=region.buildings.filter((building:any)=>{
@@ -26,6 +27,7 @@ assert.ok(SATELLITE_TREE_POINTS.pku.length>2000&&SATELLITE_TREE_POINTS.thu.lengt
 assert.equal(REAL_CAMPUS_BUILDINGS.length,925);
 assert.equal(new Set(REAL_CAMPUS_BUILDINGS.map(item=>item.key)).size,925);
 assert.equal(REAL_CAMPUS_LANDMARKS.length,143);
+assert.deepEqual(MAP_PROFILES.map(profile=>profile.id),["real-campus-v1"]);
 assert.equal(new Set(REAL_CAMPUS_LANDMARKS.map(item=>item.siteId)).size,143);
 assert.ok(REAL_CAMPUS_BUILDINGS.every(item=>item.heightMeters>2&&item.levels>0&&item.facadeColor&&item.roofColor&&item.sourceIds.length>=5&&item.photoSearch));
 assert.ok(REAL_CAMPUS_LANDMARKS.every(item=>item.key&&item.features.length&&item.photoReferenceChannels.length>=3&&item.photoSearch&&Object.values(item.photoAngles).every(value=>value==="pending-verification"||value==="verified")));
@@ -36,7 +38,7 @@ const real=makeFreshGame("real-campus-v1"),classic=makeFreshGame("classic"),grid
 assert.equal(real.campaign.mapProfile,"real-campus-v1");assert.equal(classic.campaign.mapProfile,"classic");
 assert.ok(real.sites.every(site=>site.osmKey&&nearestOpenIndex(grid,site.x,site.z)>=0),"a gameplay landmark cannot reach the navigation grid");
 delete classic.campaign.mapProfile;delete classic.campaign.mapGeometryVersion;
-assert.equal(createKernel(classic,{navGrid:classicGrid,aiTeams:[]}).snapshot().state.campaign.mapProfile,"classic");
+assert.equal(createKernel(classic,{navGrid:grid,aiTeams:[]}).snapshot().state.campaign.mapProfile,"real-campus-v1");
 const newlyBlocked=grid.blocked.findIndex((blocked,index)=>blocked>0&&!classicGrid.blocked[index]);
 assert.ok(newlyBlocked>=0,"test requires an obstacle added by the 2026 geometry");
 const [blockedX,blockedZ]=navPoint(grid,newlyBlocked),unit=classic.units[0],target=classic.sites.find(site=>!site.destroyed&&site.id!==unit.siteId)!;
@@ -48,7 +50,9 @@ assert.equal(upgradedUnit.targetSiteId,target.id);assert.equal(upgradedUnit.move
 const classicMapText=readFileSync(new URL("../src/osm-map-data.ts",import.meta.url),"utf8").replace(/\r\n/g,"\n");
 assert.equal(createHash("sha256").update(classicMapText).digest("hex"),"90f2b492cb92f63d6066122fe9c15c971db836e34ab09e2603d38d98f1d2b13b","classic geometry changed from v0.3.13");
 const renderer=readFileSync(new URL("../src/game/engine/use-battlefield.ts",import.meta.url),"utf8");
-assert.ok(renderer.includes("REAL_BUILDING_BY_KEY")&&renderer.includes("namedRoadAt")&&renderer.includes("water.holes")&&renderer.includes("water.level + 0.035")&&renderer.includes("buildingSurfaceMaterials")&&renderer.includes("THREE.FrontSide")&&renderer.includes("hoveredRoadName")&&renderer.includes("fallbackLevels")&&renderer.includes("const roofVertex")&&renderer.includes("realCampus ? wallTone.r : roofTone.r")&&renderer.includes("applyCampusSurface")&&renderer.includes("campusSurfaceMask")&&renderer.includes("campusGrassUvB")&&renderer.includes("applyCampusBuildingSurface")&&renderer.includes("campusRoofFactor")&&renderer.includes("campusTextures?.surfaceMask && !road.bridge")&&renderer.includes("treeCrownClusters")&&renderer.includes("campusTextures?.track")&&renderer.includes("campusTextures?.water")&&renderer.includes("lampGlowMaterial")&&renderer.includes("spacing = realCampus ? 0.72 : 3.1")&&renderer.includes("nearestLamps")&&renderer.includes("distance<18")&&renderer.includes("localDistance<12")&&renderer.includes("distance < 22 && daytime")&&!renderer.includes("onVehicleSurface"));
+const homeScreen=readFileSync(new URL("../src/game/ui/home-screen.tsx",import.meta.url),"utf8"),hubPage=readFileSync(new URL("../native-server/plugins/account-hub/static/index.html",import.meta.url),"utf8");
+assert.ok(!homeScreen.includes("升级真实地图")&&!hubPage.includes('<option value="classic">'),"classic map remains selectable");
+assert.ok(renderer.includes("REAL_BUILDING_BY_KEY")&&renderer.includes("namedRoadAt")&&renderer.includes("water.holes")&&renderer.includes("water.level + 0.035")&&renderer.includes("buildingSurfaceMaterials")&&renderer.includes("THREE.FrontSide")&&renderer.includes("hoveredRoadName")&&renderer.includes("showSiteLabels = true")&&renderer.includes("teamName = site.team")&&renderer.includes("fallbackLevels")&&renderer.includes("const roofVertex")&&renderer.includes("realCampus ? wallTone.r : roofTone.r")&&renderer.includes("applyCampusSurface")&&renderer.includes("campusSurfaceMask")&&renderer.includes("campusGrassUvB")&&renderer.includes("applyCampusBuildingSurface")&&renderer.includes("campusRoofFactor")&&renderer.includes("campusTextures?.surfaceMask && !road.bridge")&&renderer.includes("treeCrownClusters")&&renderer.includes("campusTextures?.track")&&renderer.includes("campusTextures?.water")&&renderer.includes("lampGlowMaterial")&&renderer.includes("spacing = realCampus ? 0.72 : 3.1")&&renderer.includes("nearestLamps")&&renderer.includes("distance<18")&&renderer.includes("localDistance<12")&&renderer.includes("distance < 22 && daytime")&&!renderer.includes("onVehicleSurface"));
 assert.ok(!renderer.includes("length * 0.94, 0.03, depth * 0.92, roof"),"generic dormitory roof plate returned");
 assert.ok(!renderer.includes("depth * (0.53 + step * 0.025)"),"detached library step plate returned");
 assert.ok(!renderer.includes("base + height + 0.025 + tier * 0.025"),"detached auditorium roof tiers returned");

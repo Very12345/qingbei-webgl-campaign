@@ -7,7 +7,6 @@ export const DEFAULT_MAP_PROFILE: MapProfile = "real-campus-v1";
 export const MAP_GEOMETRY_VERSION = 1;
 export const MAP_PROFILES: Array<{id:MapProfile;title:string;detail:string}> = [
   {id:"real-campus-v1",title:"2026真实校园",detail:"固定建筑高度、材质、屋顶与校园景观"},
-  {id:"classic",title:"经典地图",detail:"保留v0.3.13的原始地图表现"},
 ];
 
 export type RealCampusBuilding = (typeof REAL_CAMPUS_BUILDINGS)[number];

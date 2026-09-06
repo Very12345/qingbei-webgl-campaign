@@ -227,9 +227,7 @@ export function createKernel(
   const storedMapProfile = state.campaign?.mapProfile,
     storedMapGeometryVersion = state.campaign?.mapGeometryVersion ?? 0;
   normalizeKernelState(state);
-  const requestedMap = options.mapProfile || state.campaign.mapProfile || "classic";
-  if (requestedMap !== "classic" && requestedMap !== "real-campus-v1")
-    throw new Error("Unsupported map profile");
+  const requestedMap = "real-campus-v1";
   state.campaign.mapProfile = requestedMap;
   state.campaign.mapGeometryVersion = requestedMap === "real-campus-v1" ? MAP_GEOMETRY_VERSION : 0;
   const upgradingMap = requestedMap === "real-campus-v1" &&

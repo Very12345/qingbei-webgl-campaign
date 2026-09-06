@@ -12,8 +12,8 @@ func TestCancelQueuesAndReservedPair(t *testing.T) {
 	s, mux := newTestHub(t)
 	s.data.Users["player"] = &userRecord{ID: "player"}
 	token := s.newSessionLocked("player")
-	s.waiting = &queueEntry{UserID: "other", JoinedAt: time.Now()}
-	s.waitingBlitz = &queueEntry{UserID: "player", JoinedAt: time.Now().Add(-50 * time.Second)}
+	s.waitingReal = &queueEntry{UserID: "other", JoinedAt: time.Now()}
+	s.waitingBlitzReal = &queueEntry{UserID: "player", JoinedAt: time.Now().Add(-50 * time.Second)}
 	status := requestJSON(t, mux, "GET", "/api/lobby/status", nil, token)
 	var view map[string]any
 	_ = json.Unmarshal(status.Body.Bytes(), &view)
@@ -31,7 +31,7 @@ func TestCancelQueuesAndReservedPair(t *testing.T) {
 			t.Fatal(res.Body.String())
 		}
 	}
-	if s.waitingBlitz != nil || s.waiting == nil || s.waiting.UserID != "other" {
+	if s.waitingBlitzReal != nil || s.waitingReal == nil || s.waitingReal.UserID != "other" {
 		t.Fatal("cancel affected partner queue")
 	}
 	s.creating = map[string]bool{"player": true}
@@ -46,8 +46,8 @@ func TestCancelQueuesAndReservedPair(t *testing.T) {
 		t.Fatal("created battle lost", view)
 	}
 	delete(s.ready, "player")
-	s.waitingBlitz = &queueEntry{UserID: "player", JoinedAt: time.Now().Add(-11 * time.Minute)}
-	if s.queueStatusLocked("player")["queued"] != false || s.waitingBlitz != nil {
+	s.waitingBlitzReal = &queueEntry{UserID: "player", JoinedAt: time.Now().Add(-11 * time.Minute)}
+	if s.queueStatusLocked("player")["queued"] != false || s.waitingBlitzReal != nil {
 		t.Fatal("expired queue remained active")
 	}
 }
@@ -76,32 +76,25 @@ func TestBlitzAIForcesStandardOnHost(t *testing.T) {
 	}
 }
 
-func TestPVPQueuesAreSeparatedByMapProfile(t *testing.T) {
+func TestPVPLegacyMapProfileUsesRealCampus(t *testing.T) {
 	s, mux := newTestHub(t)
 	s.data.Users["classic-player"] = &userRecord{ID: "classic-player"}
-	s.data.Users["real-player"] = &userRecord{ID: "real-player"}
 	classicToken := s.newSessionLocked("classic-player")
-	realToken := s.newSessionLocked("real-player")
 
 	classic := requestJSON(t, mux, "POST", "/api/lobby/pvp", map[string]string{
 		"pace": "standard", "preferredTeam": "any", "mapProfile": "classic",
 	}, classicToken)
-	real := requestJSON(t, mux, "POST", "/api/lobby/pvp", map[string]string{
-		"pace": "standard", "preferredTeam": "any", "mapProfile": "real-campus-v1",
-	}, realToken)
-	if classic.Code != http.StatusAccepted || real.Code != http.StatusAccepted {
-		t.Fatalf("different maps unexpectedly matched: classic=%d real=%d", classic.Code, real.Code)
+	if classic.Code != http.StatusAccepted {
+		t.Fatalf("legacy map request rejected: %d", classic.Code)
 	}
-	if s.waiting == nil || s.waiting.UserID != "classic-player" || s.waitingReal == nil || s.waitingReal.UserID != "real-player" {
-		t.Fatal("map-specific queues were not retained independently")
+	if s.waitingReal == nil || s.waitingReal.UserID != "classic-player" || s.waiting != nil {
+		t.Fatal("legacy map request did not enter the real-campus queue")
 	}
-	for token, expected := range map[string]string{classicToken: "classic", realToken: "real-campus-v1"} {
-		status := requestJSON(t, mux, "GET", "/api/lobby/status", nil, token)
-		var view map[string]any
-		_ = json.Unmarshal(status.Body.Bytes(), &view)
-		if view["mapProfile"] != expected {
-			t.Fatalf("queue status reported %v, expected %s", view["mapProfile"], expected)
-		}
+	status := requestJSON(t, mux, "GET", "/api/lobby/status", nil, classicToken)
+	var view map[string]any
+	_ = json.Unmarshal(status.Body.Bytes(), &view)
+	if view["mapProfile"] != "real-campus-v1" {
+		t.Fatalf("queue status reported %v", view["mapProfile"])
 	}
 }
 

@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.4.2"
+const pluginVersion = "0.4.3"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -503,6 +503,7 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusBadRequest, "校园地图无效")
 		return
 	}
+	input.MapProfile = "real-campus-v1"
 	if input.Pace != "standard" && input.Pace != "blitz" {
 		writeError(writer, http.StatusBadRequest, "对局节奏无效")
 		return
@@ -613,6 +614,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusBadRequest, "校园地图无效")
 		return
 	}
+	input.MapProfile = "real-campus-v1"
 	if input.Pace != "standard" && input.Pace != "blitz" {
 		writeError(writer, http.StatusBadRequest, "对局节奏无效")
 		return

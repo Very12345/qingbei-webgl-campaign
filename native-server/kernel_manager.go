@@ -51,6 +51,7 @@ func (manager *kernelManager) createWithRuntime(spec battleSpec, runtime *jsKern
 	if spec.MapProfile != "" && spec.MapProfile != "classic" && spec.MapProfile != "real-campus-v1" {
 		return nil, errors.New("未知的校园地图")
 	}
+	spec.MapProfile = "real-campus-v1"
 	manager.mu.Lock()
 	if len(manager.battles)+manager.creating >= manager.max {
 		manager.mu.Unlock()
