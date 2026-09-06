@@ -57,12 +57,21 @@ def save(name, rgb, quality=82):
 
 grass_noise = spectral_noise(2.35) * 0.42
 grass_flecks = spectral_noise(0.55) * 0.16
+grass_blades = periodic_noise([(72, 0.08, 12), (150, 0.04, 18)])
 grass = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
-grass_base = np.array([103, 128, 76], dtype=np.float32)
-grass[:] = grass_base + grass_noise[..., None] * np.array([15, 18, 11]) + grass_flecks[..., None] * np.array([8, 9, 5])
+grass_base = np.array([91, 112, 69], dtype=np.float32)
+grass[:] = grass_base + grass_noise[..., None] * np.array([13, 15, 9]) + grass_flecks[..., None] * np.array([7, 8, 5]) + grass_blades[..., None] * np.array([5, 7, 4])
 save("campus-grass-albedo.webp", grass)
 grass_rough = np.repeat((222 + grass_noise[..., None] * 18), 3, axis=2)
 save("campus-grass-roughness.webp", grass_rough, 76)
+
+leaf_noise = spectral_noise(1.15) * 0.3 + spectral_noise(2.6) * 0.18
+leaf_flecks = periodic_noise([(48, 0.08, 10), (110, 0.05, 16)])
+leaf = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
+leaf[:] = np.array([132, 151, 105]) + leaf_noise[..., None] * np.array([28, 31, 20]) + leaf_flecks[..., None] * np.array([13, 15, 9])
+save("campus-leaf-albedo.webp", leaf)
+leaf_rough = np.repeat((204 + leaf_noise[..., None] * 26), 3, axis=2)
+save("campus-leaf-roughness.webp", leaf_rough, 76)
 
 asphalt_noise = spectral_noise(0.8) * 0.28 + spectral_noise(2.4) * 0.12
 asphalt = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
@@ -72,6 +81,14 @@ asphalt[aggregate] += rng.integers(8, 20, size=(aggregate.sum(), 1))
 save("campus-asphalt-albedo.webp", asphalt)
 asphalt_rough = np.repeat((205 + asphalt_noise[..., None] * 25), 3, axis=2)
 save("campus-asphalt-roughness.webp", asphalt_rough, 76)
+
+track_noise = spectral_noise(0.9) * 0.24 + spectral_noise(2.7) * 0.1
+track_grain = periodic_noise([(100, 0.04, 18)])
+track = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
+track[:] = np.array([121, 72, 60]) + track_noise[..., None] * np.array([18, 13, 11]) + track_grain[..., None] * np.array([8, 5, 4])
+save("campus-track-albedo.webp", track)
+track_rough = np.repeat((217 + track_noise[..., None] * 21), 3, axis=2)
+save("campus-track-roughness.webp", track_rough, 76)
 
 paving_noise = spectral_noise(1.25) * 0.32
 paving = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
@@ -95,6 +112,12 @@ normal = np.stack((-gradient_x * 2.2, -gradient_y * 2.2, np.ones_like(water_heig
 normal /= np.linalg.norm(normal, axis=2, keepdims=True)
 normal = (normal * 0.5 + 0.5) * 255
 save("campus-water-normal.webp", normal, 82)
+
+water_low = spectral_noise(3.0) * 0.18
+water_ripples = periodic_noise([(44, 0.07, 10), (92, 0.035, 16)])
+water = np.zeros((SIZE, SIZE, 3), dtype=np.float32)
+water[:] = np.array([65, 92, 94]) + water_low[..., None] * np.array([10, 14, 15]) + water_ripples[..., None] * np.array([5, 8, 9])
+save("campus-water-albedo.webp", water)
 
 macro_size = 1024
 macro_low = spectral_noise_at(macro_size, 3.2) * 0.55

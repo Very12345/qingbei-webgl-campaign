@@ -29,6 +29,9 @@ const game=readFileSync(new URL("../app/game-3d.tsx",import.meta.url),"utf8");
 const engine=readFileSync(new URL("../src/game/engine/use-battlefield.ts",import.meta.url),"utf8");
 for(const text of ["viewport-fit=cover","mobile-immersion","全屏并横屏","mobile-play.js"])
   assert.ok(play.includes(text),`mobile play shell is missing ${text}`);
+for(const text of ["M10%202h4a2", "M12%202a7%207"])
+  assert.ok(play.includes(text),`plugin battle navigation icon is missing ${text}`);
+assert.ok(!play.includes("%3Cpath%20d%3D%22M9%203h6"),"obsolete flask research icon returned");
 for(const text of ["requestFullscreen","orientation","visualViewport","fullscreenchange"])
   assert.ok(mobileScript.includes(text),`mobile immersion controller is missing ${text}`);
 for(const text of ["mobile-battle-controls","touch-route-action","safe-area-inset-bottom","100dvh"])

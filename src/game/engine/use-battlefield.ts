@@ -291,12 +291,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       campusTextures = realCampus ? {
         grass: loadCampusTexture("campus-grass-albedo.webp", true),
         grassRoughness: loadCampusTexture("campus-grass-roughness.webp"),
+        leaf: loadCampusTexture("campus-leaf-albedo.webp", true),
+        leafRoughness: loadCampusTexture("campus-leaf-roughness.webp"),
         asphalt: loadCampusTexture("campus-asphalt-albedo.webp", true),
         asphaltRoughness: loadCampusTexture("campus-asphalt-roughness.webp"),
+        track: loadCampusTexture("campus-track-albedo.webp", true),
+        trackRoughness: loadCampusTexture("campus-track-roughness.webp"),
         paving: loadCampusTexture("campus-paving-albedo.webp", true),
         pavingRoughness: loadCampusTexture("campus-paving-roughness.webp"),
         facade: loadCampusTexture("campus-facade-detail.webp", true),
         facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
+        water: loadCampusTexture("campus-water-albedo.webp", true),
         waterNormal: loadCampusTexture("campus-water-normal.webp"),
         macro: loadCampusTexture("campus-macro-variation.webp"),
         surfaceMask: loadCampusTexture("campus-surface-mask.png"),
@@ -306,6 +311,10 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       campusTextures.surfaceMask.wrapS = campusTextures.surfaceMask.wrapT = THREE.ClampToEdgeWrapping;
       campusTextures.surfaceMask.magFilter = THREE.LinearFilter;
       campusTextures.surfaceMask.minFilter = THREE.LinearMipmapLinearFilter;
+      campusTextures.track.repeat.set(0.2, 0.2);
+      campusTextures.trackRoughness.repeat.set(0.2, 0.2);
+      campusTextures.water.repeat.set(0.18, 0.18);
+      campusTextures.waterNormal.repeat.set(0.12, 0.12);
     }
     const regions = mapRegionsFor(gameRef.current.campaign.mapProfile) as unknown as Record<string, any>;
     const applyCampusMacro = (material: THREE.MeshStandardMaterial, strength: number) => {
@@ -1507,15 +1516,17 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
               ...interiorHeightSamples,
             ),
             flatSportHeight = () => surfaceHeight,
-            baseMaterial = new THREE.MeshStandardMaterial({
-                color: surface.track ? 0xb84a3f : 0x397a48,
-                emissive: surface.track ? 0x2a0d0a : 0x0a2411,
-                emissiveIntensity: 0.05,
-                roughness: 0.96,
+            baseMaterial = applyCampusMacro(new THREE.MeshStandardMaterial({
+                color: realCampus ? surface.track ? 0xd2cbc3 : 0xb4bea8 : surface.track ? 0xb84a3f : 0x397a48,
+                map: realCampus ? surface.track ? campusTextures?.track ?? null : campusTextures?.grass ?? null : null,
+                roughnessMap: realCampus ? surface.track ? campusTextures?.trackRoughness ?? null : campusTextures?.grassRoughness ?? null : null,
+                emissive: surface.track ? 0x170a07 : 0x07110a,
+                emissiveIntensity: realCampus ? 0.015 : 0.05,
+                roughness: realCampus ? 0.91 : 0.96,
                 side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -3,
-              }),
+              }), realCampus ? 0.12 : 0),
             base = new THREE.Mesh(
               surfaceGeometry(r, points, 0.035, flatSportHeight),
               baseMaterial,
@@ -1559,15 +1570,17 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
               at(pitchHalfLength, pitchHalfWidth),
               at(-pitchHalfLength, pitchHalfWidth),
             ],
-            pitchMaterial = new THREE.MeshStandardMaterial({
-                color: 0x2f914d,
-                emissive: 0x092a13,
-                emissiveIntensity: 0.05,
-                roughness: 1,
+            pitchMaterial = applyCampusMacro(new THREE.MeshStandardMaterial({
+                color: realCampus ? 0xb7c1a9 : 0x2f914d,
+                map: realCampus ? campusTextures?.grass ?? null : null,
+                roughnessMap: realCampus ? campusTextures?.grassRoughness ?? null : null,
+                emissive: 0x07110a,
+                emissiveIntensity: realCampus ? 0.015 : 0.05,
+                roughness: 0.96,
                 side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -4,
-              }),
+              }), realCampus ? 0.16 : 0),
             pitch = new THREE.Mesh(
               surfaceGeometry(r, inner, 0.055, flatSportHeight),
               pitchMaterial,
@@ -2442,18 +2455,19 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
       doors.instanceMatrix.needsUpdate = true;
       doors.renderOrder = 6;
       mapGroup.add(doors);
-      const waterMat = new THREE.MeshStandardMaterial({
-        color: 0x478ca5,
-        emissive: 0x173d4a,
-        emissiveIntensity: 0.28,
+      const waterMat = applyCampusMacro(new THREE.MeshStandardMaterial({
+        color: realCampus ? 0xc1cfcb : 0x478ca5,
+        map: realCampus ? campusTextures?.water ?? null : null,
+        emissive: 0x10282b,
+        emissiveIntensity: realCampus ? 0.12 : 0.28,
         normalMap: campusTextures?.waterNormal ?? null,
-        normalScale: new THREE.Vector2(0.22, 0.22),
+        normalScale: new THREE.Vector2(realCampus ? 0.14 : 0.22, realCampus ? 0.14 : 0.22),
         transparent: true,
-        opacity: 0.83,
-        roughness: 0.42,
-        metalness: 0,
+        opacity: realCampus ? 0.88 : 0.83,
+        roughness: realCampus ? 0.34 : 0.42,
+        metalness: realCampus ? 0.04 : 0,
         side: THREE.DoubleSide,
-      });
+      }), realCampus ? 0.08 : 0);
       const bankPositions: number[] = [], bankIndices: number[] = [];
       let bankVertex = 0;
       for (const water of waterVisualAreas) {
@@ -4555,10 +4569,10 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
     const tg = new THREE.CylinderGeometry(realCampus ? 0.012 : 0.07, realCampus ? 0.018 : 0.11, realCampus ? 0.24 : 0.86, 7),
       tm = new THREE.MeshStandardMaterial({ color: 0x61412f, roughness: 1 }),
       crownGeometries = realCampus
-        ? [new THREE.DodecahedronGeometry(0.13, 1), new THREE.SphereGeometry(0.12, 9, 7), new THREE.ConeGeometry(0.14, 0.32, 9), new THREE.SphereGeometry(0.12, 10, 7)]
+        ? [new THREE.DodecahedronGeometry(0.13, 1), new THREE.SphereGeometry(0.12, 12, 9), new THREE.ConeGeometry(0.14, 0.32, 11), new THREE.SphereGeometry(0.12, 12, 9)]
         : [new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8)],
-      crownMaterials = (realCampus ? [0x47763f, 0x6d8b43, 0x315c3b, 0x4f7e50] : [0x315d36, 0x467648, 0x5b8a4e]).map(
-        (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.94 }),
+      crownMaterials = (realCampus ? [0x8d9e80, 0x9ba17c, 0x778c72, 0x87977d] : [0x315d36, 0x467648, 0x5b8a4e]).map(
+        (color) => new THREE.MeshStandardMaterial({ color, map: realCampus ? campusTextures?.leaf ?? null : null, roughnessMap: realCampus ? campusTextures?.leafRoughness ?? null : null, roughness: 0.9 }),
       ),
       treePositions: { x: number; y: number; z: number; variant: number; scale: number }[] = [];
     if (realCampus) {
@@ -4598,26 +4612,45 @@ roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
     const treeTrunks = new THREE.InstancedMesh(tg, tm, treePositions.length),
       variantPositions = crownGeometries.map((_,variant)=>realCampus?treePositions.filter(position=>position.variant===variant):treePositions),
       treeCrowns = crownGeometries.map((geometry, variant) => new THREE.InstancedMesh(geometry, crownMaterials[variant], variantPositions[variant].length)),
+      treeCrownClusters = realCampus ? crownGeometries.map((geometry, variant) => new THREE.InstancedMesh(geometry, crownMaterials[variant], variantPositions[variant].length * 2)) : [],
       treeDummy = new THREE.Object3D();
     treePositions.forEach((position, index) => {
       treeDummy.position.set(position.x, position.y + (realCampus ? 0.12 : 0.43), position.z);
+      treeDummy.rotation.set(0, 0, 0);
       treeDummy.scale.set(position.scale * .82, position.scale, position.scale * .82);
       treeDummy.updateMatrix();
       treeTrunks.setMatrixAt(index, treeDummy.matrix);
     });
     treeCrowns.forEach((mesh, variant) => variantPositions[variant].forEach((position, index) => {
       treeDummy.position.set(position.x, position.y + (realCampus ? variant === 2 ? 0.27 : 0.24 : 0.92 + variant * 0.32), position.z);
+      treeDummy.rotation.set(0, ((index * 37 + variant * 19) % 360) * Math.PI / 180, 0);
       const width = realCampus ? variant === 1 ? .72 : variant === 2 ? .88 : variant === 3 ? 1.08 : 1 : 1.1 - variant * .18,
         height = realCampus ? variant === 0 ? .82 : variant === 1 ? 1.22 : variant === 2 ? 1.08 : 1.38 : .65;
       treeDummy.scale.set(position.scale * width, position.scale * height, position.scale * width);
       treeDummy.updateMatrix();
       mesh.setMatrixAt(index, treeDummy.matrix);
     }));
+    treeCrownClusters.forEach((mesh, variant) => variantPositions[variant].forEach((position, index) => {
+      for (let layer = 0; layer < 2; layer++) {
+        const angle = ((index * 137 + variant * 53 + layer * 167) % 360) * Math.PI / 180,
+          radial = variant === 2 ? 0.018 : 0.052 + layer * 0.012,
+          baseY = variant === 2 ? 0.27 : 0.24,
+          vertical = variant === 2 ? 0.035 + layer * 0.055 : variant === 1 ? -0.035 + layer * 0.09 : variant === 3 ? -0.045 + layer * 0.025 : -0.025 + layer * 0.055,
+          clusterScale = variant === 2 ? 0.62 - layer * 0.08 : 0.62 + layer * 0.05;
+        treeDummy.position.set(position.x + Math.cos(angle) * radial, position.y + baseY + vertical, position.z + Math.sin(angle) * radial);
+        treeDummy.rotation.set(0, angle, 0);
+        treeDummy.scale.set(position.scale * clusterScale, position.scale * clusterScale * (variant === 1 ? 1.18 : variant === 3 ? 1.12 : 0.88), position.scale * clusterScale);
+        treeDummy.updateMatrix();
+        mesh.setMatrixAt(index * 2 + layer, treeDummy.matrix);
+      }
+    }));
     treeTrunks.instanceMatrix.needsUpdate = true;
     treeCrowns.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
+    treeCrownClusters.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
     treeTrunks.castShadow = true;
     treeCrowns.forEach((mesh) => (mesh.castShadow = true));
-    treeGroup.add(treeTrunks, ...treeCrowns);
+    treeCrownClusters.forEach((mesh) => (mesh.castShadow = false));
+    treeGroup.add(treeTrunks, ...treeCrowns, ...treeCrownClusters);
     const lampPositions: { x: number; z: number; r: any }[] = [],
       lampSeen = new Set<string>();
     for (const r of [regions.main]) {
