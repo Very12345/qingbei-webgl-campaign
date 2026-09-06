@@ -423,6 +423,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       return material;
     };
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
+      buildingSurfaceMaterials: THREE.MeshStandardMaterial[] = [],
       windowDetailMeshes: THREE.InstancedMesh[] = [],
       sportMaterials: THREE.MeshStandardMaterial[] = [],
       sportDetailMeshes: THREE.Object3D[] = [],
@@ -1173,26 +1174,24 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       points: number[][],
       lift: number,
       heightResolver?: (x: number, z: number) => number,
+      holes: number[][][] = [],
     ) => {
-      const clean = points.filter(
-        (p, i, a) =>
-          !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
-      );
-      if (
-        clean.length > 2 &&
-        Math.hypot(
-          clean[0][0] - clean.at(-1)![0],
-          clean[0][1] - clean.at(-1)![1],
-        ) < 0.001
-      )
-        clean.pop();
+      const cleanRing = (ring: number[][]) => {
+          const clean = ring.filter((p, i, values) => !i || Math.hypot(p[0] - values[i - 1][0], p[1] - values[i - 1][1]) > 0.001);
+          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001) clean.pop();
+          return clean;
+        },
+        clean = cleanRing(points),
+        cleanHoles = holes.map(cleanRing).filter((ring) => ring.length >= 3),
+        allPoints = [clean, ...cleanHoles].flat();
       const contour = clean.map((p) => new THREE.Vector2(p[0], p[1])),
-        faces = THREE.ShapeUtils.triangulateShape(contour, []),
+        holeContours = cleanHoles.map((ring) => ring.map((p) => new THREE.Vector2(p[0], p[1]))),
+        faces = THREE.ShapeUtils.triangulateShape(contour, holeContours),
         g = new THREE.BufferGeometry();
       g.setAttribute(
         "position",
         new THREE.Float32BufferAttribute(
-          clean.flatMap((p) => [
+          allPoints.flatMap((p) => [
             p[0],
             (heightResolver?.(p[0], p[1]) ??
               terrainHeight(r, p[0], p[1])) + lift,
@@ -1201,13 +1200,13 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           3,
         ),
       );
-      g.setAttribute("uv", new THREE.Float32BufferAttribute(clean.flatMap((point) => [point[0] * 8, point[1] * 8]), 2));
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(allPoints.flatMap((point) => [point[0] * 8, point[1] * 8]), 2));
       g.setIndex(faces.flatMap((face) => {
         if (!realCampus) return face;
-        const a=clean[face[0]],b=clean[face[1]],c=clean[face[2]],cross=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+        const a=allPoints[face[0]],b=allPoints[face[1]],c=allPoints[face[2]],cross=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
         return cross>0?[face[0],face[2],face[1]]:face;
       }));
-      if (realCampus) g.setAttribute("normal", new THREE.Float32BufferAttribute(clean.flatMap(() => [0,1,0]),3));
+      if (realCampus) g.setAttribute("normal", new THREE.Float32BufferAttribute(allPoints.flatMap(() => [0,1,0]),3));
       else g.computeVertexNormals();
       return g;
     };
@@ -1260,9 +1259,10 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       },
       namedRoadAt=(x:number,z:number)=>{
         let best:{name:string;kind:string;distance:number}|undefined;
-        for(const segment of namedRoadIndex.get(`${Math.floor(x/namedRoadCell)}/${Math.floor(z/namedRoadCell)}`)??[]){
+        const gx=Math.floor(x/namedRoadCell),gz=Math.floor(z/namedRoadCell);
+        for(let cellX=-1;cellX<=1;cellX++)for(let cellZ=-1;cellZ<=1;cellZ++)for(const segment of namedRoadIndex.get(`${gx+cellX}/${gz+cellZ}`)??[]){
           const dx=segment.x2-segment.x1,dz=segment.z2-segment.z1,length=dx*dx+dz*dz,t=length?THREE.MathUtils.clamp(((x-segment.x1)*dx+(z-segment.z1)*dz)/length,0,1):0,distance=Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t));
-          if(distance<=Math.max(.28,segment.width/2+.12)&&(!best||distance<best.distance))best={name:segment.name,kind:segment.kind,distance};
+          if(distance<=Math.max(.55,segment.width/2+.2)&&(!best||distance<best.distance))best={name:segment.name,kind:segment.kind,distance};
         }
         return best;
       };
@@ -1277,13 +1277,14 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         ),
         waterVisualAreas = r.waters.map((water: any) => ({
           points: water.points,
+          holes: water.holes ?? [],
           minX: Math.min(...water.points.map((point: number[]) => point[0])),
           maxX: Math.max(...water.points.map((point: number[]) => point[0])),
           minZ: Math.min(...water.points.map((point: number[]) => point[1])),
           maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
           level: Math.min(...water.points.map((point: number[]) => terrainHeight(r, point[0], point[1]))) - 0.025,
         })),
-        waterAt = (x: number, z: number) => waterVisualAreas.find((water: any) => x >= water.minX && x <= water.maxX && z >= water.minZ && z <= water.maxZ && pointInPolygon(x, z, water.points)),
+        waterAt = (x: number, z: number) => waterVisualAreas.find((water: any) => x >= water.minX && x <= water.maxX && z >= water.minZ && z <= water.maxZ && pointInPolygon(x, z, water.points) && !water.holes.some((hole: number[][]) => pointInPolygon(x, z, hole))),
         minimumHeight = Math.min(...scaledHeights),
         maximumHeight = Math.max(...scaledHeights),
         heightRange = Math.max(0.001, maximumHeight - minimumHeight),
@@ -1746,7 +1747,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               x <= water.maxX &&
               z >= water.minZ &&
               z <= water.maxZ &&
-              pointInPolygon(x, z, water.points),
+              pointInPolygon(x, z, water.points) && !(water.holes ?? []).some((hole: number[][]) => pointInPolygon(x, z, hole)),
           );
       const addRoadCap = (
           bucket: RoadBucket,
@@ -2202,6 +2203,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         bg,
         facadeBuildingMaterial,
       );
+      facadeBuildingMaterial.emissive.set(0x26384b);
+      facadeBuildingMaterial.emissiveIntensity = 0;
+      buildingSurfaceMaterials.push(facadeBuildingMaterial);
       buildings.receiveShadow = false;
       buildings.castShadow = true;
       mapGroup.add(buildings);
@@ -2412,7 +2416,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           if (len < (realCampus ? 0.12 : 0.42)) continue;
           if (omitWindows) continue;
           const cols = Math.min(8, Math.max(1, Math.floor(len / (realCampus ? 0.12 : 0.34)))),
-            angle = Math.atan2(-dz, dx),
+            angle = Math.atan2(-dz, dx) + (outwardSign < 0 ? Math.PI : 0),
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           for (
@@ -2452,7 +2456,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             base + (realCampus ? 0.055 : 0.17),
             (longest.a[1] + longest.c[1]) / 2 + nz * (realCampus ? 0.007 : 0.03),
           );
-          detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
+          detailDummy.rotation.set(0, Math.atan2(-dz, dx) + (outwardSign < 0 ? Math.PI : 0), 0);
           detailDummy.scale.set(realCampus ? 0.07 : 0.23, realCampus ? 0.11 : 0.34, 1);
           detailDummy.updateMatrix();
           doorMatrices.push(detailDummy.matrix.clone());
@@ -2462,9 +2466,11 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         color: 0x31566a,
         roughness: 0.28,
         metalness: 0.08,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
+        depthTest: true,
+        depthWrite: true,
         polygonOffset: true,
-        polygonOffsetFactor: -2,
+        polygonOffsetFactor: -1,
         polygonOffsetUnits: -2,
       }),
         windowMaterial = new THREE.MeshStandardMaterial({
@@ -2473,9 +2479,11 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         emissiveIntensity: 0,
         roughness: 0.28,
         metalness: 0.08,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
+        depthTest: true,
+        depthWrite: true,
         polygonOffset: true,
-        polygonOffsetFactor: -2,
+        polygonOffsetFactor: -1,
         polygonOffsetUnits: -2,
       });
       windowMaterials.push(windowMaterial);
@@ -2525,14 +2533,14 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       for (const water of waterVisualAreas) {
         if (water.points.length < 3) continue;
         const wm = new THREE.Mesh(
-          realCampus ? surfaceGeometry(r, water.points, 0, () => water.level) : surfaceGeometry(r, water.points, 0.15),
+          realCampus ? surfaceGeometry(r, water.points, 0, () => water.level, water.holes) : surfaceGeometry(r, water.points, 0.15),
           waterMat,
         );
         wm.renderOrder = 4;
         mapGroup.add(wm);
-        if (realCampus) for (let index = 0; index < water.points.length; index++) {
-          const point = water.points[index], next = water.points[(index + 1) % water.points.length], topA = terrainHeight(r, point[0], point[1]), topB = terrainHeight(r, next[0], next[1]);
-          bankPositions.push(point[0], water.level - 0.08, point[1], point[0], topA, point[1], next[0], water.level - 0.08, next[1], next[0], topB, next[1]);
+        if (realCampus) for (const shore of [water.points, ...water.holes]) for (let index = 0; index < shore.length; index++) {
+          const point = shore[index], next = shore[(index + 1) % shore.length], topA = Math.min(terrainHeight(r, point[0], point[1]), water.level + 0.035), topB = Math.min(terrainHeight(r, next[0], next[1]), water.level + 0.035);
+          bankPositions.push(point[0], water.level - 0.015, point[1], point[0], topA, point[1], next[0], water.level - 0.015, next[1], next[0], topB, next[1]);
           bankIndices.push(bankVertex, bankVertex + 2, bankVertex + 1, bankVertex + 1, bankVertex + 2, bankVertex + 3);
           bankVertex += 4;
         }
@@ -2542,7 +2550,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         bankGeometry.setAttribute("position", new THREE.Float32BufferAttribute(bankPositions, 3));
         bankGeometry.setIndex(bankIndices);
         bankGeometry.computeVertexNormals();
-        const banks = new THREE.Mesh(bankGeometry, new THREE.MeshStandardMaterial({ color: 0x53634b, roughness: 1, side: THREE.DoubleSide }));
+        const banks = new THREE.Mesh(bankGeometry, new THREE.MeshStandardMaterial({ color: 0x667658, roughness: 1, side: THREE.DoubleSide }));
         banks.receiveShadow = true;
         mapGroup.add(banks);
       }
@@ -5225,7 +5233,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         z = units.reduce((sum, unit) => sum + unit.z, 0) / units.length;
       return new THREE.Vector3(x, terrainHeight(regionForX(x), x, z) + 1.35, z);
     };
-    let hoveredSiteId: number | null = null;
+    let hoveredSiteId: number | null = null,
+      hoveredRoadName = "";
     const setHoveredSite = (siteId: number | null) => {
       if (hoveredSiteId != null) {
         const previous = siteObjects.get(hoveredSiteId)?.userData
@@ -5343,6 +5352,13 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       }
       if (!down) {
         updateCommandLabelHover(e);
+        if (realCampus && !mobileClient && hitSite(e) == null) {
+          const point = groundAt(e), road = point ? namedRoadAt(point.x, point.z) : undefined;
+          if (road && road.name !== hoveredRoadName) {
+            hoveredRoadName = road.name;
+            setNotice(`${road.name} · ${road.kind} · 2026真实校园`);
+          } else if (!road) hoveredRoadName = "";
+        }
         return;
       }
       hideCommandLabels();
@@ -9846,8 +9862,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
       moon.intensity = night * 1.25;
       hemi.intensity = 0.72 + day * 1.18;
-      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x486795);
-      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x182437);
+      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x7890a5);
+      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x303a4b);
       const sky = new THREE.Color(0x07101f).lerp(
         new THREE.Color(0x9fc5d8),
         day,
@@ -9855,7 +9871,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       scene.background = sky;
       (scene.fog as THREE.FogExp2).color.copy(sky);
       (scene.fog as THREE.FogExp2).density = realCampus ? 0.007 + night * 0.015 : 0.007;
-      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 1.1));
+      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 0.48));
+      buildingSurfaceMaterials.forEach((m) => (m.emissiveIntensity = night * 0.32));
       sportMaterials.forEach(
         (material) =>
           (material.emissiveIntensity = 0.025 + night * 0.16),

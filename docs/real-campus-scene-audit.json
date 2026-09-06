@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-06T05:27:11.992Z",
+  "generatedAt": "2026-09-06T09:40:24.987Z",
   "projection": {
     "metersPerWorld": 44.576,
     "terrainGrid": "72x72",
@@ -90,8 +90,10 @@
     "campusHardscapeHectares": 6.24,
     "waters": 99,
     "campusWaters": 28,
-    "waterHectares": 163.54,
-    "campusWaterHectares": 16.19
+    "waterHoles": 21,
+    "buildingsInRenderedWater": 0,
+    "waterHectares": 147.85,
+    "campusWaterHectares": 12.7
   },
   "trees": {
     "osmPoints": 444,
