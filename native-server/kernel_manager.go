@@ -11,7 +11,6 @@ type battleSpec struct {
 	HumanTeams       []string          `json:"humanTeams,omitempty"`
 	ServerOpening    string            `json:"serverOpening,omitempty"`
 	FieldEncounters  string            `json:"fieldEncounters,omitempty"`
-	MapProfile       string            `json:"mapProfile,omitempty"`
 	Name             string            `json:"name,omitempty"`
 	Mode             string            `json:"mode,omitempty"`
 	Difficulty       string            `json:"difficulty,omitempty"`
@@ -48,10 +47,6 @@ func (manager *kernelManager) createWithRuntime(spec battleSpec, runtime *jsKern
 	if spec.FieldEncounters != "" && spec.FieldEncounters != "light-v1" {
 		return nil, errors.New("未知的途中遭遇规则")
 	}
-	if spec.MapProfile != "" && spec.MapProfile != "classic" && spec.MapProfile != "real-campus-v1" {
-		return nil, errors.New("未知的校园地图")
-	}
-	spec.MapProfile = "real-campus-v1"
 	manager.mu.Lock()
 	if len(manager.battles)+manager.creating >= manager.max {
 		manager.mu.Unlock()

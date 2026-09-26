@@ -40,5 +40,6 @@ for(const text of ["battle-nav-icon", "M10 2h4a2", "M12 2a7 7"])
   assert.ok(game.includes(text),`global battle navigation icon is missing ${text}`);
 for(const text of ["mobileSiteHitRadius","closestDistance = mobileClient ? 46 : 32","issueTouchRoute","portraitViewport ? 58 : 38"])
   assert.ok(engine.includes(text),`mobile battlefield interaction is missing ${text}`);
+assert.ok(engine.includes('setPerspective: (_team)') && engine.includes('depth = portraitViewport ? 36 : 22'),"battlefield camera no longer keeps the north-up perspective for both teams");
 
 console.log("PASS: phone detection, mobile auto quality cap, large hit targets, safe-area layout, fullscreen/landscape entry and touch controls");

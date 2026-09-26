@@ -12,7 +12,6 @@ import { defaultResearchState } from "../research";
 import {
   KernelPathfinder,
   compactKernelNavGrid,
-  navIndex,
   navPoint,
   nearestOpenIndex,
   type KernelNavGrid,
@@ -37,7 +36,6 @@ import { prepareServerDeployment } from "./deployment";
 import { dispatchPlayerRoutes, PLAYER_DISPATCH_VERSION } from "./player-dispatch";
 import { withModifierCache } from "./modifiers";
 import { FieldEncounters, FIELD_ENCOUNTER_VERSION } from "./encounters";
-import {MAP_GEOMETRY_VERSION,type MapProfile} from "../map-profile";
 export {
   KernelPathfinder,
   navIndex,
@@ -124,7 +122,6 @@ export type KernelAction =
   | ProgressionAction;
 
 export type KernelOptions = {
-  mapProfile?: MapProfile;
   fieldEncounters?: "light-v1";
   profile?: boolean;
   networkEpoch?: number;
@@ -224,14 +221,7 @@ export function createKernel(
   options: KernelOptions = {},
 ): KernelInstance {
   const state = options.mutateInitialState ? initialState : clone(initialState);
-  const storedMapProfile = state.campaign?.mapProfile,
-    storedMapGeometryVersion = state.campaign?.mapGeometryVersion ?? 0;
   normalizeKernelState(state);
-  const requestedMap = "real-campus-v1";
-  state.campaign.mapProfile = requestedMap;
-  state.campaign.mapGeometryVersion = requestedMap === "real-campus-v1" ? MAP_GEOMETRY_VERSION : 0;
-  const upgradingMap = requestedMap === "real-campus-v1" &&
-    (storedMapProfile !== "real-campus-v1" || storedMapGeometryVersion < MAP_GEOMETRY_VERSION);
   if (options.fieldEncounters === "light-v1" && !state.campaign.fieldEncounters)
     state.campaign.fieldEncounters = {version: 1, tick: 0, nextId: 1, alerts: [], unitStates: []};
   if (state.campaign.fieldEncounters && state.campaign.fieldEncounters.activeSlowUntil == null)
@@ -284,17 +274,6 @@ export function createKernel(
       const open = nearestOpenIndex(options.navGrid, site.navX ?? site.x, site.navZ ?? site.z);
       if (open < 0) continue;
       [site.navX, site.navZ] = navPoint(options.navGrid, open);
-    }
-  if (upgradingMap && options.navGrid && pathfinder)
-    for (const unit of state.units) {
-      const current=navIndex(options.navGrid,unit.x,unit.z);
-      if(current>=0&&!options.navGrid.blocked[current])continue;
-      const open=nearestOpenIndex(options.navGrid,unit.x,unit.z);
-      if(open<0)continue;
-      [unit.x,unit.z]=navPoint(options.navGrid,open);
-      const target=unit.targetSiteId==null?undefined:state.sites[unit.targetSiteId];
-      if(target&&!target.destroyed){const path=pathfinder.find(unit.x,unit.z,target.navX??target.x,target.navZ??target.z);unit.path=path;unit.pathIndex=0;const end=path.at(-1);unit.tx=end?.[0]??unit.x;unit.tz=end?.[1]??unit.z;}
-      else {unit.tx=unit.x;unit.tz=unit.z;unit.path=undefined;unit.pathIndex=undefined;}
     }
   if (options.serverOpening) prepareServerDeployment(state, options.navGrid, options.serverOpening);
   const fieldEncounters = state.campaign.fieldEncounters?.version === 1 ? new FieldEncounters(options.navGrid!) : null;

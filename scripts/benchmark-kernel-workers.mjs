@@ -10,13 +10,10 @@ import assert from 'node:assert/strict';
 
 const [before,after,seedPath,savePath,workerPath]=process.argv.slice(2);
 if(!workerPath)throw Error('Usage: node benchmark-kernel-workers.mjs before.js after.js seed.json.gz save.json node_runtime.cjs');
-const seedPayload=JSON.parse(gunzipSync(readFileSync(seedPath))),classicNavGrid=seedPayload.navGrid,realNavGrid=seedPayload.navGridReal??classicNavGrid;
+const {navGrid}=JSON.parse(gunzipSync(readFileSync(seedPath)));
 const save=JSON.parse(readFileSync(savePath,'utf8')),state=save.state??save.State;
 const frames=Number(process.env.QBB_BENCH_FRAMES||120);
 const fieldMode=process.env.QBB_BENCH_FIELD_MODE;
-const mapMode=process.env.QBB_BENCH_MAP_PROFILE;
-const workerTimeoutMs=Number(process.env.QBB_BENCH_WORKER_TIMEOUT_MS||120000);
-const workerHeapMb=Number(process.env.QBB_BENCH_WORKER_HEAP_MB||256);
 const ticks=process.platform==='linux'?Number(execFileSync('getconf',['CLK_TCK'])):null;
 const guard=async()=>{
   if(!process.env.QBB_BENCH_IDLE_SERVER)return;
@@ -30,7 +27,7 @@ function usage(pid) {
   return {cpu:(Number(fields[11])+Number(fields[12]))/ticks*1000,rss};
 }
 function worker() {
-  const child=spawn(process.execPath,[`--max-old-space-size=${workerHeapMb}`,workerPath],{windowsHide:true,stdio:['pipe','pipe','inherit']});
+  const child=spawn(process.execPath,['--max-old-space-size=256',workerPath],{windowsHide:true,stdio:['pipe','pipe','inherit']});
   const pending=[];
   createInterface({input:child.stdout}).on('line',line=>{
     const item=pending.shift();if(!item)return;
@@ -40,18 +37,17 @@ function worker() {
   child.on('error',error=>pending.splice(0).forEach(p=>{clearTimeout(p.timer);p.reject(error);}));
   child.on('exit',()=>pending.splice(0).forEach(p=>{clearTimeout(p.timer);p.reject(Error('Worker exited'));}));
   return {child,request(data){return new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>{child.kill();reject(Error('Worker timeout'));},workerTimeoutMs);
+    const timer=setTimeout(()=>{child.kill();reject(Error('Worker timeout'));},30000);
     pending.push({resolve,reject,timer});child.stdin.write(JSON.stringify(data)+'\n');
   });}};
 }
-async function sample(bundle,rooms,fieldEnabled=false,mapProfile='classic') {
+async function sample(bundle,rooms,fieldEnabled=false) {
   const workers=[];
   try {
     for(let i=0;i<rooms;i++) {
       const w=worker();workers.push(w);
       await w.request({op:'init',bundle:readFileSync(bundle,'utf8')});
-      const navGrid=mapProfile==='real-campus-v1'?realNavGrid:classicNavGrid;
-      const created=await w.request({op:'create',args:[state,{navGrid,mapProfile,aiTeams:fieldMode?[]:['thu'],fixedStepMilliseconds:100,profile:process.env.QBB_BENCH_PROFILE==='1',...(fieldEnabled?{fieldEncounters:'light-v1'}:{})}]});
+      const created=await w.request({op:'create',args:[state,{navGrid,aiTeams:fieldMode?[]:['thu'],fixedStepMilliseconds:100,profile:process.env.QBB_BENCH_PROFILE==='1',...(fieldEnabled?{fieldEncounters:'light-v1'}:{})}]});
       w.call=(method,...args)=>w.request({op:'call',instance:created.id,method,args});
       await w.call('dispatch',{type:'set_time_scale',value:4});
       for(let n=0;n<12;n++)await w.call('advanceOnly',100);
@@ -94,10 +90,10 @@ for(const rooms of (process.env.QBB_BENCH_ROOMS||'1,2,4').split(',').map(Number)
   if(!Number.isInteger(rooms)||rooms<1||rooms>4)throw Error('Use 1–4 offline rooms');
   await guard();
   let baseline,optimized;
-  if(process.env.QBB_BENCH_REVERSE==='1') {optimized=await sample(after,rooms,!!fieldMode,mapMode||'classic');await guard();baseline=await sample(before,rooms,false,'classic');}
-  else {baseline=await sample(before,rooms,false,'classic');await guard();optimized=await sample(after,rooms,!!fieldMode,mapMode||'classic');}
+  if(process.env.QBB_BENCH_REVERSE==='1') {optimized=await sample(after,rooms,!!fieldMode);await guard();baseline=await sample(before,rooms);}
+  else {baseline=await sample(before,rooms);await guard();optimized=await sample(after,rooms,!!fieldMode);}
   await guard();
-  if(!fieldMode&&!mapMode){
+  if(!fieldMode){
     assert.deepEqual(optimized.hashes,baseline.hashes,'Optimization changed authoritative game state');
     assert.equal(optimized.bytes,baseline.bytes,'Optimization changed network output');
     assert.deepEqual(optimized.networkHashes,baseline.networkHashes,'Optimization changed an intermediate network message');

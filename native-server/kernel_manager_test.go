@@ -14,11 +14,8 @@ func TestServerOpeningHumanSeatsAndAuthoritativeStats(t *testing.T) {
 	if _, err := manager.create(battleSpec{FieldEncounters: "unknown"}); err == nil {
 		t.Fatal("unknown field encounter rule accepted")
 	}
-	if _, err := manager.create(battleSpec{MapProfile: "unknown"}); err == nil {
-		t.Fatal("unknown map profile accepted")
-	}
 	defer manager.shutdown()
-	battle, err := manager.create(battleSpec{Mode: "pvp", HumanTeams: []string{"pku", "thu"}, ServerOpening: "blitz", FieldEncounters: "light-v1", MapProfile: "real-campus-v1", TimeScale: 4, MaxPlayers: 2})
+	battle, err := manager.create(battleSpec{Mode: "pvp", HumanTeams: []string{"pku", "thu"}, ServerOpening: "blitz", FieldEncounters: "light-v1", TimeScale: 4, MaxPlayers: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +34,6 @@ func TestServerOpeningHumanSeatsAndAuthoritativeStats(t *testing.T) {
 	campaign := state["campaign"].(map[string]any)
 	if campaign["fieldEncounters"].(map[string]any)["version"] != float64(1) {
 		t.Fatal("field encounters were not enabled")
-	}
-	if campaign["mapProfile"] != "real-campus-v1" {
-		t.Fatal("real campus map was not enabled")
 	}
 	if campaign["elapsedHours"] != float64(84) || campaign["warUnlocked"] != true {
 		t.Fatal("embedded kernel lacks blitz opening")

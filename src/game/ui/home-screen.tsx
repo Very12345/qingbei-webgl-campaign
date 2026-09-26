@@ -6,7 +6,6 @@ import type {
   Team,
 } from "../types";
 import { RELEASE_NOTES } from "../release-notes";
-import type {MapProfile} from "../map-profile";
 
 const LOCAL_SERVER_HISTORY_KEY = "qingbei-local-server-addresses-v1";
 const DEFAULT_LOCAL_SERVER_PORT = "17890";
@@ -80,11 +79,10 @@ type HomeScreenProps = {
     team: Team,
     observeBothAi?: boolean,
     observerDifficulties?: Record<Team, AiDifficulty>,
-    mapProfile?: MapProfile,
   ) => void;
   autosave: Snapshot | null;
   saves: Snapshot[];
-  loadGame: (save: Snapshot, team: Team, mapOverride?: MapProfile) => void;
+  loadGame: (save: Snapshot, team: Team) => void;
   clearUnfinishedGame: () => void;
   deleteSave: (savedAt: number) => void;
   exportSave: (save: Snapshot) => void;

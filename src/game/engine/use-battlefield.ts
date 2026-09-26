@@ -9,14 +9,13 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { osmRegions } from "../../osm-map-data";
 import { runCampaignEventHooks, type CampaignEventCardSpec } from "../../event-api";
 import { ACADEMIC_YEAR_END_ISO, CALENDAR_EVENTS, DECISIONS } from "../../campaign-content";
 import { TACTICAL_EVENTS, type TacticalEventDefinition } from "../../tactical-events";
 import { PathfindingWorkerPool } from "../../pathfinding-pool";
 import { PerformanceController } from "../../performance-controller";
 import { isMobileClient, mobileSiteHitRadius } from "../../mobile-support";
-import {REAL_BUILDING_BY_KEY,REAL_LANDMARK_BY_KEY,REAL_LANDMARK_BY_SITE,isRealCampus,mapRegionsFor} from "../map-profile";
-import {SATELLITE_TREE_POINTS} from "../real-campus-satellite-trees";
 import { EVENT_CARDS } from "../events/event-cards";
 import {
   classifyIntent as kernelClassifyIntent,
@@ -180,8 +179,6 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     }
     const host = hostRef.current;
     if (!host) return;
-    const realCampus = isRealCampus(gameRef.current.campaign.mapProfile),
-      buildingMeterScale = 0.023;
     const mobileClient = isMobileClient();
     const renderer = new THREE.WebGLRenderer({
       antialias: !mobileClient,
@@ -213,29 +210,20 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       0.1,
       300,
     );
-    const reviewParams = new URLSearchParams(location.search),
-      reviewSiteId = Number(reviewParams.get("review-site")),
-      reviewWide = reviewParams.has("review-wide"),
-      forcedReviewHour = reviewParams.has("review-hour") ? Number(reviewParams.get("review-hour")) : Number.NaN,
-      reviewSite = Number.isInteger(reviewSiteId)
-        ? gameRef.current.sites.find((site) => site.id === reviewSiteId)
-        : undefined,
-      initialTargetX = reviewSite?.x ?? -22,
-      initialTargetZ = reviewSite?.z ?? 14;
     camera.position.set(
-      initialTargetX + (reviewSite ? -1.5 : 0),
-      reviewSite ? 2.2 : portraitViewport ? 36 : 24,
-      initialTargetZ + (reviewSite ? 2.8 : portraitViewport ? 36 : 22),
+      -22,
+      portraitViewport ? 36 : 24,
+      portraitViewport ? 50 : 36,
     );
-    camera.lookAt(initialTargetX, 0, initialTargetZ);
+    camera.lookAt(-22, 0, 14);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(initialTargetX, 0, initialTargetZ);
+    controls.target.set(-22, 0, 14);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enableRotate = false;
     controls.enableZoom = true;
-    controls.minDistance = reviewSite ? 1.4 : mobileClient ? 9 : 13;
-    controls.maxDistance = reviewSite ? reviewWide ? 32 : 15 : mobileClient ? 82 : 58;
+    controls.minDistance = mobileClient ? 9 : 13;
+    controls.maxDistance = mobileClient ? 82 : 58;
     controls.zoomSpeed = mobileClient ? 1.08 : 0.72;
     controls.enablePan = true;
     controls.screenSpacePanning = false;
@@ -278,161 +266,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(sun);
     const moon = new THREE.DirectionalLight(0x91b7ff, 0.25);
     scene.add(moon);
-    const nightFill = new THREE.AmbientLight(0x8aa0b5, 0);
-    scene.add(nightFill);
     const mapGroup = new THREE.Group();
     scene.add(mapGroup);
-    const campusTextureLoader = new THREE.TextureLoader(),
-      loadCampusTexture = (name: string, color = false) => {
-        const texture = campusTextureLoader.load(`${import.meta.env.BASE_URL}materials/${name}`);
-        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-        texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-        if (color) texture.colorSpace = THREE.SRGBColorSpace;
-        return texture;
-      },
-      campusTextures = realCampus ? {
-        grass: loadCampusTexture("campus-grass-albedo.webp", true),
-        grassRoughness: loadCampusTexture("campus-grass-roughness.webp"),
-        leaf: loadCampusTexture("campus-leaf-albedo.webp", true),
-        leafRoughness: loadCampusTexture("campus-leaf-roughness.webp"),
-        asphalt: loadCampusTexture("campus-asphalt-albedo.webp", true),
-        asphaltRoughness: loadCampusTexture("campus-asphalt-roughness.webp"),
-        track: loadCampusTexture("campus-track-albedo.webp", true),
-        trackRoughness: loadCampusTexture("campus-track-roughness.webp"),
-        paving: loadCampusTexture("campus-paving-albedo.webp", true),
-        pavingRoughness: loadCampusTexture("campus-paving-roughness.webp"),
-        facade: loadCampusTexture("campus-facade-detail.webp", true),
-        facadeRoughness: loadCampusTexture("campus-facade-roughness.webp"),
-        roof: loadCampusTexture("campus-roof-detail.webp", true),
-        roofRoughness: loadCampusTexture("campus-roof-roughness.webp"),
-        water: loadCampusTexture("campus-water-albedo.webp", true),
-        waterNormal: loadCampusTexture("campus-water-normal.webp"),
-        macro: loadCampusTexture("campus-macro-variation.webp"),
-        surfaceMask: loadCampusTexture("campus-surface-mask.png"),
-        nightLightMask: loadCampusTexture("campus-night-light-mask.png"),
-      } : null;
-    if (campusTextures) {
-      campusTextures.macro.wrapS = campusTextures.macro.wrapT = THREE.ClampToEdgeWrapping;
-      campusTextures.surfaceMask.wrapS = campusTextures.surfaceMask.wrapT = THREE.ClampToEdgeWrapping;
-      campusTextures.nightLightMask.wrapS = campusTextures.nightLightMask.wrapT = THREE.ClampToEdgeWrapping;
-      campusTextures.surfaceMask.magFilter = THREE.LinearFilter;
-      campusTextures.surfaceMask.minFilter = THREE.LinearMipmapLinearFilter;
-      campusTextures.track.repeat.set(0.2, 0.2);
-      campusTextures.trackRoughness.repeat.set(0.2, 0.2);
-      campusTextures.roof.repeat.set(0.18, 0.18);
-      campusTextures.roofRoughness.repeat.set(0.18, 0.18);
-      campusTextures.water.repeat.set(0.18, 0.18);
-      campusTextures.waterNormal.repeat.set(0.12, 0.12);
-    }
-    const regions = mapRegionsFor(gameRef.current.campaign.mapProfile) as unknown as Record<string, any>;
-    const applyCampusMacro = (material: THREE.MeshStandardMaterial, strength: number) => {
-      if (!campusTextures) return material;
-      material.onBeforeCompile = (shader) => {
-        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
-        shader.vertexShader = shader.vertexShader
-          .replace("#include <common>", "#include <common>\nvarying vec3 vCampusWorldPosition;")
-          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
-        shader.fragmentShader = shader.fragmentShader
-          .replace("#include <common>", "#include <common>\nuniform sampler2D campusMacroMap;\nvarying vec3 vCampusWorldPosition;")
-          .replace("#include <map_fragment>", `#include <map_fragment>\nvec2 campusMacroUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));\nvec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusMacroUv.x, 1.0 - campusMacroUv.y)).rgb * 1.11;\ndiffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, ${strength.toFixed(3)});`);
-      };
-      material.customProgramCacheKey = () => `campus-macro-${strength}`;
-      return material;
-    };
-    const applyCampusSurface = (material: THREE.MeshStandardMaterial) => {
-      if (!campusTextures) return material;
-      material.onBeforeCompile = (shader) => {
-        shader.uniforms.campusSurfaceMask = { value: campusTextures.surfaceMask };
-        shader.uniforms.campusGrassMap = { value: campusTextures.grass };
-        shader.uniforms.campusGrassRoughnessMap = { value: campusTextures.grassRoughness };
-        shader.uniforms.campusAsphaltMap = { value: campusTextures.asphalt };
-        shader.uniforms.campusPavingMap = { value: campusTextures.paving };
-        shader.uniforms.campusAsphaltRoughnessMap = { value: campusTextures.asphaltRoughness };
-        shader.uniforms.campusPavingRoughnessMap = { value: campusTextures.pavingRoughness };
-        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
-        shader.vertexShader = shader.vertexShader
-          .replace("#include <common>", "#include <common>\nvarying vec3 vCampusWorldPosition;")
-          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
-        shader.fragmentShader = shader.fragmentShader
-          .replace("#include <common>", `#include <common>
-uniform sampler2D campusSurfaceMask;
-uniform sampler2D campusGrassMap;
-uniform sampler2D campusGrassRoughnessMap;
-uniform sampler2D campusAsphaltMap;
-uniform sampler2D campusPavingMap;
-uniform sampler2D campusAsphaltRoughnessMap;
-uniform sampler2D campusPavingRoughnessMap;
-uniform sampler2D campusMacroMap;
-varying vec3 vCampusWorldPosition;`)
-          .replace("#include <color_fragment>", `#include <color_fragment>
-vec2 campusSurfaceUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));
-vec3 campusSurfaceWeights = texture2D(campusSurfaceMask, campusSurfaceUv).rgb;
-float campusAsphaltWeight = campusSurfaceWeights.r;
-float campusPavingWeight = campusSurfaceWeights.g;
-float campusDirtWeight = campusSurfaceWeights.b;
-vec2 campusGrassPosition = vCampusWorldPosition.xz;
-vec2 campusGrassUvA = mat2(0.939693, -0.342020, 0.342020, 0.939693) * campusGrassPosition * 1.37;
-vec2 campusGrassUvB = mat2(0.642788, -0.766044, 0.766044, 0.642788) * campusGrassPosition * 0.43 + vec2(0.37, 0.19);
-vec3 campusGrassTone = mix(texture2D(campusGrassMap, campusGrassUvA).rgb, texture2D(campusGrassMap, campusGrassUvB).rgb, 0.34);
-diffuseColor.rgb *= campusGrassTone;
-vec3 campusAsphaltTone = texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 8.0).rgb * 0.82;
-vec3 campusPavingTone = texture2D(campusPavingMap, vCampusWorldPosition.xz * 24.0).rgb * 0.93;
-vec3 campusDirtTone = vec3(0.34, 0.25, 0.15) * (0.9 + texture2D(campusAsphaltMap, vCampusWorldPosition.xz * 12.0).r * 0.25);
-diffuseColor.rgb = mix(diffuseColor.rgb, campusAsphaltTone, campusAsphaltWeight);
-diffuseColor.rgb = mix(diffuseColor.rgb, campusPavingTone, campusPavingWeight);
-diffuseColor.rgb = mix(diffuseColor.rgb, campusDirtTone, campusDirtWeight);
-vec3 campusMacroTone = texture2D(campusMacroMap, vec2(campusSurfaceUv.x, 1.0 - campusSurfaceUv.y)).rgb * 1.11;
-diffuseColor.rgb *= mix(vec3(1.0), campusMacroTone, 0.22);`)
-          .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
-float campusGrassRoughness = mix(texture2D(campusGrassRoughnessMap, campusGrassUvA).r, texture2D(campusGrassRoughnessMap, campusGrassUvB).r, 0.34);
-roughnessFactor = campusGrassRoughness;
-float campusAsphaltRoughness = texture2D(campusAsphaltRoughnessMap, vCampusWorldPosition.xz * 8.0).r;
-float campusPavingRoughness = texture2D(campusPavingRoughnessMap, vCampusWorldPosition.xz * 24.0).r;
-roughnessFactor = mix(roughnessFactor, campusAsphaltRoughness, campusAsphaltWeight);
-roughnessFactor = mix(roughnessFactor, campusPavingRoughness, campusPavingWeight);
-roughnessFactor = mix(roughnessFactor, 1.0, campusDirtWeight);`);
-      };
-      material.customProgramCacheKey = () => "campus-unified-surface-v2";
-      return material;
-    };
-    const applyCampusBuildingSurface = (material: THREE.MeshStandardMaterial) => {
-      if (!campusTextures) return material;
-      material.onBeforeCompile = (shader) => {
-        shader.uniforms.campusRoofMap = { value: campusTextures.roof };
-        shader.uniforms.campusRoofRoughnessMap = { value: campusTextures.roofRoughness };
-        shader.uniforms.campusMacroMap = { value: campusTextures.macro };
-        shader.vertexShader = shader.vertexShader
-          .replace("#include <common>", "#include <common>\nattribute float campusRoofFactor;\nvarying float vCampusRoofFactor;\nvarying vec3 vCampusWorldPosition;")
-          .replace("#include <begin_vertex>", "#include <begin_vertex>\nvCampusRoofFactor = campusRoofFactor;")
-          .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvCampusWorldPosition = worldPosition.xyz;");
-        shader.fragmentShader = shader.fragmentShader
-          .replace("#include <common>", `#include <common>
-uniform sampler2D campusRoofMap;
-uniform sampler2D campusRoofRoughnessMap;
-uniform sampler2D campusMacroMap;
-varying float vCampusRoofFactor;
-varying vec3 vCampusWorldPosition;`)
-          .replace("#include <color_fragment>", `#include <color_fragment>
-vec3 campusFacadeTexture = texture2D(map, vMapUv).rgb;
-vec3 campusRoofTexture = texture2D(campusRoofMap, vMapUv).rgb;
-diffuseColor.rgb *= mix(vec3(1.0), campusRoofTexture / max(campusFacadeTexture, vec3(0.03)), step(0.5, vCampusRoofFactor));
-vec2 campusBuildingMacroUv = clamp((vCampusWorldPosition.xz - vec2(-66.0, -65.7355)) / vec2(132.0, 131.471), vec2(0.0), vec2(1.0));
-vec3 campusBuildingMacroTone = texture2D(campusMacroMap, vec2(campusBuildingMacroUv.x, 1.0 - campusBuildingMacroUv.y)).rgb * 1.11;
-diffuseColor.rgb *= mix(vec3(1.0), campusBuildingMacroTone, mix(0.06, 0.04, step(0.5, vCampusRoofFactor)));`)
-          .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
-float campusRoofRoughness = texture2D(campusRoofRoughnessMap, vMapUv).r;
-roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoofFactor));`);
-      };
-      material.customProgramCacheKey = () => "campus-building-surface-v1";
-      return material;
-    };
+    const regions = osmRegions as unknown as Record<string, any>;
     const windowMaterials: THREE.MeshStandardMaterial[] = [],
-      buildingSurfaceMaterials: THREE.MeshStandardMaterial[] = [],
-      campusNightRoadMaterials: THREE.MeshBasicMaterial[] = [],
       windowDetailMeshes: THREE.InstancedMesh[] = [],
-      sportMaterials: THREE.MeshStandardMaterial[] = [],
-      sportDetailMeshes: THREE.Object3D[] = [],
-      buildingOutlineObjects: THREE.Object3D[] = [];
+      sportMaterials: THREE.MeshStandardMaterial[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main,
       tsinghuaCampus = regions.main.campuses?.find(
@@ -451,34 +290,15 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
     const gameplayBuildings = (r: any) => {
       const cached = gameplayBuildingCache.get(r);
       if (cached) return cached;
-      const relationMemberWayIds = realCampus
-        ? new Set<number>(r.buildings.flatMap((building: any) => building.memberWayIds ?? []))
-        : new Set<number>();
       const filtered = r.buildings.filter((building: any) => {
-        if (realCampus && building.osmType === "way" && relationMemberWayIds.has(building.osmId)) return false;
         const smallAnonymous =
           !building.name && footprintArea(building.points) < 0.13;
-        if (!realCampus)
-          return !smallAnonymous || Math.abs(building.osmId) % 4 !== 0;
-        const x=building.points.reduce((sum:number,point:number[])=>sum+point[0],0)/building.points.length,
-          z=building.points.reduce((sum:number,point:number[])=>sum+point[1],0)/building.points.length,
-          insideCampus=r.campuses.some((campus:any)=>(campus.name==="北京大学"||campus.name==="清华大学")&&pointInPolygon(x,z,campus.points));
-        return insideCampus || !smallAnonymous;
+        return !smallAnonymous || Math.abs(building.osmId) % 4 !== 0;
       });
-      const campusMeasures = realCampus ? filtered
-        .filter((building: any) => REAL_BUILDING_BY_KEY.has(`${building.osmType}/${building.osmId}`))
-        .map((building: any) => ({building,area:footprintArea(building.points),centerX:building.points.reduce((sum:number,point:number[])=>sum+point[0],0)/building.points.length,centerZ:building.points.reduce((sum:number,point:number[])=>sum+point[1],0)/building.points.length,minX:Math.min(...building.points.map((point:number[])=>point[0])),maxX:Math.max(...building.points.map((point:number[])=>point[0])),minZ:Math.min(...building.points.map((point:number[])=>point[1])),maxZ:Math.max(...building.points.map((point:number[])=>point[1]))})) : [],
-        suppressed = new Set<any>();
-      if (realCampus) for (const candidate of campusMeasures) {
-        if (candidate.building.name) continue;
-        const parent = campusMeasures.find(other => other !== candidate && other.area > candidate.area * 1.2 && candidate.centerX >= other.minX && candidate.centerX <= other.maxX && candidate.centerZ >= other.minZ && candidate.centerZ <= other.maxZ && pointInPolygon(candidate.centerX,candidate.centerZ,other.building.points));
-        if (parent) suppressed.add(candidate.building);
-      }
-      const deduplicated = suppressed.size ? filtered.filter((building:any)=>!suppressed.has(building)) : filtered;
-      gameplayBuildingCache.set(r, deduplicated);
-      return deduplicated;
+      gameplayBuildingCache.set(r, filtered);
+      return filtered;
     };
-    const terrainVerticalScale = realCampus ? 1 : 6,
+    const terrainVerticalScale = 6,
       terrainHeight = (r: any, x: number, z: number) => {
       const { cols, rows, heights } = r.terrain,
         u =
@@ -497,36 +317,12 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         at = (ii: number, jj: number) =>
           (heights[Math.min(rows - 1, jj) * cols + Math.min(cols - 1, ii)] ||
             0) * terrainVerticalScale;
-      if (!realCampus)
-        return THREE.MathUtils.lerp(
-          THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
-          THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
-          fv,
-        );
-      const a = at(i, j), b = at(i + 1, j), c = at(i, j + 1), d = at(i + 1, j + 1);
-      return fu + fv <= 1
-        ? a + fu * (b - a) + fv * (c - a)
-        : d + (1 - fv) * (b - d) + (1 - fu) * (c - d);
+      return THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(at(i, j), at(i + 1, j), fu),
+        THREE.MathUtils.lerp(at(i, j + 1), at(i + 1, j + 1), fu),
+        fv,
+      );
     };
-    if (reviewSite) {
-      const reviewBuilding = regions.main.buildings.find((building: any) => `${building.osmType}/${building.osmId}` === reviewSite.osmKey),
-        extent = reviewBuilding
-          ? Math.max(
-              Math.max(...reviewBuilding.points.map((point: number[]) => point[0])) - Math.min(...reviewBuilding.points.map((point: number[]) => point[0])),
-              Math.max(...reviewBuilding.points.map((point: number[]) => point[1])) - Math.min(...reviewBuilding.points.map((point: number[]) => point[1])),
-            )
-          : 0.55,
-        distance = Math.max(2.4, extent * 1.25 + 1.15) * (reviewWide ? 8 : 1),
-        ground = terrainHeight(regions.main, reviewSite.x, reviewSite.z),
-        reviewProfile = REAL_LANDMARK_BY_SITE.get(reviewSite.id),
-        bearing = reviewProfile?.entranceDirection == null ? null : reviewProfile.entranceDirection * Math.PI / 180,
-        viewX = bearing == null ? 0.52 : Math.sin(bearing),
-        viewZ = bearing == null ? 0.86 : -Math.cos(bearing);
-      controls.target.set(reviewSite.x, ground + 0.12, reviewSite.z);
-      camera.position.set(reviewSite.x + distance * viewX, ground + Math.max(1.8, extent * 0.72 + 1.2) * (reviewWide ? 4.5 : 1), reviewSite.z + distance * viewZ);
-      camera.lookAt(controls.target);
-      controls.update();
-    }
     type NavGrid = {
       cell: number;
       cols: number;
@@ -967,8 +763,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       })),
     ].map((area: any) => ({
       points: area.points,
-      name: area.name as string,
-      osmKey: area.osmType && area.osmId ? `${area.osmType}/${area.osmId}` : undefined,
       kind: area.obstacleKind as "building" | "water",
       minX: Math.min(...area.points.map((point: number[]) => point[0])),
       maxX: Math.max(...area.points.map((point: number[]) => point[0])),
@@ -1162,15 +956,16 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           needsPortal &&
           Math.hypot(anchorPoint[0] - site.x, anchorPoint[1] - site.z) > 0.6;
       });
-      gameRef.current.units.forEach((unit) => {
+      gameRef.current.units.forEach((unit, index) => {
         const current = navIndex(navGrid, unit.x, unit.z);
         if (current >= 0 && !navGrid.blocked[current]) return;
-        const open = nearestClearIndex(unit.x, unit.z);
-        if (open < 0) return;
-        const [safeX,safeZ]=navPoint(navGrid,open),target=unit.targetSiteId==null?undefined:gameRef.current.sites[unit.targetSiteId];
-        unit.x=safeX;unit.z=safeZ;
-        if(target&&!target.destroyed){const path=findPath(safeX,safeZ,target.navX??target.x,target.navZ??target.z);unit.path=path;unit.pathIndex=0;const destination=path.at(-1);unit.tx=destination?.[0]??safeX;unit.tz=destination?.[1]??safeZ;}
-        else {unit.tx=safeX;unit.tz=safeZ;unit.path=undefined;unit.pathIndex=undefined;}
+        const home = gameRef.current.sites[unit.siteId];
+        if (!home) return;
+        const angle = ((index % 9) / 9) * Math.PI * 2;
+        unit.x = (home.navX ?? home.x) + Math.cos(angle) * 0.45;
+        unit.z = (home.navZ ?? home.z) + Math.sin(angle) * 0.45;
+        unit.tx = home.navX ?? home.x;
+        unit.tz = home.navZ ?? home.z;
       });
     };
     refreshNavAnchors();
@@ -1179,24 +974,26 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       points: number[][],
       lift: number,
       heightResolver?: (x: number, z: number) => number,
-      holes: number[][][] = [],
     ) => {
-      const cleanRing = (ring: number[][]) => {
-          const clean = ring.filter((p, i, values) => !i || Math.hypot(p[0] - values[i - 1][0], p[1] - values[i - 1][1]) > 0.001);
-          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001) clean.pop();
-          return clean;
-        },
-        clean = cleanRing(points),
-        cleanHoles = holes.map(cleanRing).filter((ring) => ring.length >= 3),
-        allPoints = [clean, ...cleanHoles].flat();
+      const clean = points.filter(
+        (p, i, a) =>
+          !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
+      );
+      if (
+        clean.length > 2 &&
+        Math.hypot(
+          clean[0][0] - clean.at(-1)![0],
+          clean[0][1] - clean.at(-1)![1],
+        ) < 0.001
+      )
+        clean.pop();
       const contour = clean.map((p) => new THREE.Vector2(p[0], p[1])),
-        holeContours = cleanHoles.map((ring) => ring.map((p) => new THREE.Vector2(p[0], p[1]))),
-        faces = THREE.ShapeUtils.triangulateShape(contour, holeContours),
+        faces = THREE.ShapeUtils.triangulateShape(contour, []),
         g = new THREE.BufferGeometry();
       g.setAttribute(
         "position",
         new THREE.Float32BufferAttribute(
-          allPoints.flatMap((p) => [
+          clean.flatMap((p) => [
             p[0],
             (heightResolver?.(p[0], p[1]) ??
               terrainHeight(r, p[0], p[1])) + lift,
@@ -1205,14 +1002,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           3,
         ),
       );
-      g.setAttribute("uv", new THREE.Float32BufferAttribute(allPoints.flatMap((point) => [point[0] * 8, point[1] * 8]), 2));
-      g.setIndex(faces.flatMap((face) => {
-        if (!realCampus) return face;
-        const a=allPoints[face[0]],b=allPoints[face[1]],c=allPoints[face[2]],cross=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
-        return cross>0?[face[0],face[2],face[1]]:face;
-      }));
-      if (realCampus) g.setAttribute("normal", new THREE.Float32BufferAttribute(allPoints.flatMap(() => [0,1,0]),3));
-      else g.computeVertexNormals();
+      g.setIndex(faces.flat());
+      g.computeVertexNormals();
       return g;
     };
     const sportSurfaces: {
@@ -1251,50 +1042,19 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         points: [[30.86, -5.91], [31.02, -2.48], [32.68, -2.5], [33.15, -2.53], [33, -6.03]],
       },
     ];
-    const namedRoadCell=3,
-      namedRoadIndex=new Map<string,{name:string;kind:string;x1:number;z1:number;x2:number;z2:number;width:number}[]>(),
-      registerNamedRoad=(road:any)=>{
-        if(!realCampus||!road.name)return;
-        for(let index=1;index<road.points.length;index++){
-          const [x1,z1]=road.points[index-1],[x2,z2]=road.points[index],segment={name:road.name,kind:road.kind,x1,z1,x2,z2,width:road.width};
-          for(let gx=Math.floor((Math.min(x1,x2)-road.width)/namedRoadCell);gx<=Math.floor((Math.max(x1,x2)+road.width)/namedRoadCell);gx++)for(let gz=Math.floor((Math.min(z1,z2)-road.width)/namedRoadCell);gz<=Math.floor((Math.max(z1,z2)+road.width)/namedRoadCell);gz++){
-            const key=`${gx}/${gz}`,bucket=namedRoadIndex.get(key);if(bucket)bucket.push(segment);else namedRoadIndex.set(key,[segment]);
-          }
-        }
-      },
-      namedRoadAt=(x:number,z:number)=>{
-        let best:{name:string;kind:string;distance:number}|undefined;
-        const gx=Math.floor(x/namedRoadCell),gz=Math.floor(z/namedRoadCell);
-        for(let cellX=-1;cellX<=1;cellX++)for(let cellZ=-1;cellZ<=1;cellZ++)for(const segment of namedRoadIndex.get(`${gx+cellX}/${gz+cellZ}`)??[]){
-          const dx=segment.x2-segment.x1,dz=segment.z2-segment.z1,length=dx*dx+dz*dz,t=length?THREE.MathUtils.clamp(((x-segment.x1)*dx+(z-segment.z1)*dz)/length,0,1):0,distance=Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t));
-          if(distance<=Math.max(.55,segment.width/2+.2)&&(!best||distance<best.distance))best={name:segment.name,kind:segment.kind,distance};
-        }
-        return best;
-      };
     const addRegion = (r: any) => {
       const { cols, rows, heights } = r.terrain,
         pos: number[] = [],
-        terrainUvs: number[] = [],
         terrainColors: number[] = [],
         idx: number[] = [];
       const scaledHeights = heights.map(
           (height: number) => height * terrainVerticalScale,
         ),
-        waterVisualAreas = r.waters.map((water: any) => ({
-          points: water.points,
-          holes: water.holes ?? [],
-          minX: Math.min(...water.points.map((point: number[]) => point[0])),
-          maxX: Math.max(...water.points.map((point: number[]) => point[0])),
-          minZ: Math.min(...water.points.map((point: number[]) => point[1])),
-          maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
-          level: Math.min(...water.points.map((point: number[]) => terrainHeight(r, point[0], point[1]))) - 0.025,
-        })),
-        waterAt = (x: number, z: number) => waterVisualAreas.find((water: any) => x >= water.minX && x <= water.maxX && z >= water.minZ && z <= water.maxZ && pointInPolygon(x, z, water.points) && !water.holes.some((hole: number[][]) => pointInPolygon(x, z, hole))),
         minimumHeight = Math.min(...scaledHeights),
         maximumHeight = Math.max(...scaledHeights),
         heightRange = Math.max(0.001, maximumHeight - minimumHeight),
-        lowlandColor = new THREE.Color(realCampus ? 0xd0d8bd : 0x587d49),
-        highlandColor = new THREE.Color(realCampus ? 0xd8cfb1 : 0x9a9866),
+        lowlandColor = new THREE.Color(0x587d49),
+        highlandColor = new THREE.Color(0x9a9866),
         terrainTone = new THREE.Color(),
         heightAt = (i: number, j: number) =>
           scaledHeights[
@@ -1305,9 +1065,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         for (let i = 0; i < cols; i++) {
           const x = r.offsetX - r.width / 2 + (i / (cols - 1)) * r.width,
             z = r.depth / 2 - (j / (rows - 1)) * r.depth,
-            rawHeight = heightAt(i, j),
-            water = waterAt(x, z),
-            height = realCampus && water ? Math.min(rawHeight, water.level - 0.08) : rawHeight,
+            height = heightAt(i, j),
             normalizedHeight = (height - minimumHeight) / heightRange,
             gradient = Math.hypot(
               heightAt(i + 1, j) - heightAt(i - 1, j),
@@ -1315,7 +1073,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             ),
             slopeShade = THREE.MathUtils.clamp(1 - gradient * 0.13, 0.72, 1);
           pos.push(x, height, z);
-          terrainUvs.push(x * 1.5, z * 1.5);
           terrainTone
             .copy(lowlandColor)
             .lerp(highlandColor, normalizedHeight * 0.82)
@@ -1332,7 +1089,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-      geo.setAttribute("uv", new THREE.Float32BufferAttribute(terrainUvs, 2));
       geo.setAttribute(
         "color",
         new THREE.Float32BufferAttribute(terrainColors, 3),
@@ -1341,130 +1097,16 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       geo.computeVertexNormals();
       const terrain = new THREE.Mesh(
         geo,
-        applyCampusSurface(new THREE.MeshStandardMaterial({
+        new THREE.MeshStandardMaterial({
           vertexColors: true,
-          map: null,
-          roughnessMap: null,
           roughness: 0.98,
           side: THREE.FrontSide,
-        })),
+        }),
       );
       terrain.receiveShadow = true;
       terrain.castShadow = true;
       mapGroup.add(terrain);
       terrainMeshes.push(terrain);
-      if (realCampus && campusTextures) {
-        const nightRoadGeometry = geo.clone(),
-          nightRoadUvs: number[] = [];
-        for (let index = 0; index < pos.length; index += 3)
-          nightRoadUvs.push((pos[index] + 66) / 132, (pos[index + 2] + 65.7355) / 131.471);
-        nightRoadGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(nightRoadUvs, 2));
-        const nightRoadMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffba62,
-            map: campusTextures.nightLightMask,
-            transparent: true,
-            opacity: 0,
-            depthTest: true,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-          }),
-          nightRoads = new THREE.Mesh(nightRoadGeometry, nightRoadMaterial);
-        nightRoads.renderOrder = 1;
-        nightRoads.frustumCulled = false;
-        campusNightRoadMaterials.push(nightRoadMaterial);
-        mapGroup.add(nightRoads);
-      }
-      if (realCampus && r.landcovers?.length) {
-        type LandcoverBucket = {
-          positions: number[];
-          indices: number[];
-          uvs: number[];
-          color: number;
-        };
-        const landcoverBuckets: Record<"lawn" | "garden" | "forest" | "pitch", LandcoverBucket> = {
-          lawn: { positions: [], indices: [], uvs: [], color: 0xd6dec9 },
-          garden: { positions: [], indices: [], uvs: [], color: 0xcbd8c1 },
-          forest: { positions: [], indices: [], uvs: [], color: 0xb9cbb7 },
-          pitch: { positions: [], indices: [], uvs: [], color: 0xc6dbc4 },
-        };
-        for (const cover of r.landcovers) {
-          if (cover.kind !== "pitch") continue;
-          const clean = cover.points.filter(
-            (point: number[], index: number, points: number[][]) =>
-              !index || Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1]) > 0.001,
-          );
-          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001)
-            clean.pop();
-          if (clean.length < 3) continue;
-          const bucket = cover.kind === "pitch"
-            ? landcoverBuckets.pitch
-            : cover.kind === "forest" || cover.kind === "wood"
-              ? landcoverBuckets.forest
-              : cover.kind === "garden"
-                ? landcoverBuckets.garden
-                : landcoverBuckets.lawn;
-          const base = bucket.positions.length / 3,
-            faces = THREE.ShapeUtils.triangulateShape(clean.map((point: number[]) => new THREE.Vector2(point[0], point[1])), []);
-          for (const point of clean) {
-            bucket.positions.push(point[0], terrainHeight(r, point[0], point[1]) + 0.018, point[1]);
-            bucket.uvs.push(point[0] * 1.5, point[1] * 1.5);
-          }
-          for (const face of faces) bucket.indices.push(base + face[0], base + face[1], base + face[2]);
-        }
-        for (const bucket of Object.values(landcoverBuckets)) {
-          if (!bucket.positions.length) continue;
-          const geometry = new THREE.BufferGeometry();
-          geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
-          geometry.setIndex(bucket.indices);
-          geometry.computeVertexNormals();
-          const mesh = new THREE.Mesh(geometry, applyCampusMacro(new THREE.MeshStandardMaterial({
-            color: bucket.color,
-            map: campusTextures?.grass ?? null,
-            roughnessMap: campusTextures?.grassRoughness ?? null,
-            roughness: 1,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1,
-          }), 0.24));
-          mesh.receiveShadow = false;
-          mesh.renderOrder = 1;
-          mapGroup.add(mesh);
-        }
-      }
-      if (realCampus && r.hardscapes?.length && !campusTextures?.surfaceMask) {
-        const hardscapeBuckets = {
-          pedestrian: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xebe7df, texture: campusTextures?.paving, roughness: campusTextures?.pavingRoughness },
-          parking: { positions: [] as number[], indices: [] as number[], uvs: [] as number[], color: 0xd2d4d2, texture: campusTextures?.asphalt, roughness: campusTextures?.asphaltRoughness },
-        };
-        for (const area of r.hardscapes) {
-          const clean = area.points.filter(
-            (point: number[], index: number, points: number[][]) =>
-              !index || Math.hypot(point[0] - points[index - 1][0], point[1] - points[index - 1][1]) > 0.001,
-          );
-          if (clean.length > 2 && Math.hypot(clean[0][0] - clean.at(-1)![0], clean[0][1] - clean.at(-1)![1]) < 0.001) clean.pop();
-          if (clean.length < 3) continue;
-          const bucket = area.kind === "parking" ? hardscapeBuckets.parking : hardscapeBuckets.pedestrian,
-            base = bucket.positions.length / 3,
-            faces = THREE.ShapeUtils.triangulateShape(clean.map((point: number[]) => new THREE.Vector2(point[0], point[1])), []);
-          for (const point of clean) { bucket.positions.push(point[0], terrainHeight(r, point[0], point[1]) + 0.026, point[1]); bucket.uvs.push(point[0] * 24, point[1] * 24); }
-          for (const face of faces) bucket.indices.push(base + face[0], base + face[1], base + face[2]);
-        }
-        for (const bucket of Object.values(hardscapeBuckets)) {
-          if (!bucket.positions.length) continue;
-          const geometry = new THREE.BufferGeometry();
-          geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-          geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
-          geometry.setIndex(bucket.indices);
-          geometry.computeVertexNormals();
-          const mesh = new THREE.Mesh(geometry, applyCampusMacro(new THREE.MeshStandardMaterial({ color: bucket.color, map: bucket.texture ?? null, roughnessMap: bucket.roughness ?? null, roughness: 0.96, depthTest: false, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), 0.1));
-          mesh.receiveShadow = false;
-          mesh.renderOrder = 8;
-          mapGroup.add(mesh);
-        }
-      }
       for (const campus of r.campuses ?? []) {
         const team: Team | null =
           campus.name === "北京大学"
@@ -1591,17 +1233,15 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               ...interiorHeightSamples,
             ),
             flatSportHeight = () => surfaceHeight,
-            baseMaterial = applyCampusMacro(new THREE.MeshStandardMaterial({
-                color: realCampus ? surface.track ? 0xd2cbc3 : 0xb4bea8 : surface.track ? 0xb84a3f : 0x397a48,
-                map: realCampus ? surface.track ? campusTextures?.track ?? null : campusTextures?.grass ?? null : null,
-                roughnessMap: realCampus ? surface.track ? campusTextures?.trackRoughness ?? null : campusTextures?.grassRoughness ?? null : null,
-                emissive: surface.track ? 0x170a07 : 0x07110a,
-                emissiveIntensity: realCampus ? 0.015 : 0.05,
-                roughness: realCampus ? 0.91 : 0.96,
+            baseMaterial = new THREE.MeshStandardMaterial({
+                color: surface.track ? 0xb84a3f : 0x397a48,
+                emissive: surface.track ? 0x2a0d0a : 0x0a2411,
+                emissiveIntensity: 0.05,
+                roughness: 0.96,
                 side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -3,
-              }), realCampus ? 0.12 : 0),
+              }),
             base = new THREE.Mesh(
               surfaceGeometry(r, points, 0.035, flatSportHeight),
               baseMaterial,
@@ -1645,17 +1285,15 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               at(pitchHalfLength, pitchHalfWidth),
               at(-pitchHalfLength, pitchHalfWidth),
             ],
-            pitchMaterial = applyCampusMacro(new THREE.MeshStandardMaterial({
-                color: realCampus ? 0xb7c1a9 : 0x2f914d,
-                map: realCampus ? campusTextures?.grass ?? null : null,
-                roughnessMap: realCampus ? campusTextures?.grassRoughness ?? null : null,
-                emissive: 0x07110a,
-                emissiveIntensity: realCampus ? 0.015 : 0.05,
-                roughness: 0.96,
+            pitchMaterial = new THREE.MeshStandardMaterial({
+                color: 0x2f914d,
+                emissive: 0x092a13,
+                emissiveIntensity: 0.05,
+                roughness: 1,
                 side: THREE.DoubleSide,
                 polygonOffset: true,
                 polygonOffsetFactor: -4,
-              }), realCampus ? 0.16 : 0),
+              }),
             pitch = new THREE.Mesh(
               surfaceGeometry(r, inner, 0.055, flatSportHeight),
               pitchMaterial,
@@ -1708,37 +1346,28 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               );
               markings.push({ points: lanePoints, closed: true });
             }
-          const sportDetails = createSportMarkings(markings, surfaceHeight + .075);
-          sportDetailMeshes.push(sportDetails);
-          mapGroup.add(sportDetails);
+          mapGroup.add(createSportMarkings(markings, surfaceHeight + .075));
         }
       type RoadBucket = {
         positions: number[];
         indices: number[];
-        uvs: number[];
         vertexIndex: number;
         color: number;
         lift: number;
         renderOrder: number;
-        texture?: THREE.Texture;
-        roughness?: THREE.Texture;
       };
-      const roadBuckets: Record<"asphalt" | "path" | "dirt" | "curb", RoadBucket> = {
+      const roadBuckets: Record<"asphalt" | "path" | "dirt", RoadBucket> = {
           asphalt: {
             positions: [],
             indices: [],
-            uvs: [],
             vertexIndex: 0,
-            color: realCampus ? 0xd2d4d3 : 0x303840,
+            color: 0x303840,
             lift: 0.035,
             renderOrder: 2,
-            texture: campusTextures?.asphalt,
-            roughness: campusTextures?.asphaltRoughness,
           },
           dirt: {
             positions: [],
             indices: [],
-            uvs: [],
             vertexIndex: 0,
             color: 0x9a805a,
             lift: 0.042,
@@ -1747,27 +1376,19 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           path: {
             positions: [],
             indices: [],
-            uvs: [],
             vertexIndex: 0,
-            color: realCampus ? 0xeeeae2 : 0xb9ad91,
+            color: 0xb9ad91,
             lift: 0.048,
             renderOrder: 4,
-            texture: campusTextures?.paving,
-            roughness: campusTextures?.pavingRoughness,
-          },
-          curb: {
-            positions: [],
-            indices: [],
-            uvs: [],
-            vertexIndex: 0,
-            color: 0xd8d3c8,
-            lift: 0.03,
-            renderOrder: 1,
-            texture: campusTextures?.paving,
-            roughness: campusTextures?.pavingRoughness,
           },
         },
-        waterAreas = waterVisualAreas,
+        waterAreas = r.waters.map((water: any) => ({
+          points: water.points,
+          minX: Math.min(...water.points.map((point: number[]) => point[0])),
+          maxX: Math.max(...water.points.map((point: number[]) => point[0])),
+          minZ: Math.min(...water.points.map((point: number[]) => point[1])),
+          maxZ: Math.max(...water.points.map((point: number[]) => point[1])),
+        })),
         inWater = (x: number, z: number) =>
           waterAreas.some(
             (water: any) =>
@@ -1775,7 +1396,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               x <= water.maxX &&
               z >= water.minZ &&
               z <= water.maxZ &&
-              pointInPolygon(x, z, water.points) && !(water.holes ?? []).some((hole: number[][]) => pointInPolygon(x, z, hole)),
+              pointInPolygon(x, z, water.points),
           );
       const addRoadCap = (
           bucket: RoadBucket,
@@ -1800,11 +1421,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               0.004,
             centerIndex = bucket.vertexIndex;
           bucket.positions.push(x, flatY, z);
-          bucket.uvs.push(x * 8, z * 8);
           bucket.vertexIndex++;
           ring.forEach(([edgeX, edgeZ], step) => {
             bucket.positions.push(edgeX, flatY, edgeZ);
-            bucket.uvs.push(edgeX * 8, edgeZ * 8);
             bucket.vertexIndex++;
             if (step > 0)
               bucket.indices.push(
@@ -1881,7 +1500,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               terrainHeight(r, rightX, rightZ) + bucket.lift,
               rightZ,
             );
-            bucket.uvs.push(leftX * 8, leftZ * 8, rightX * 8, rightZ * 8);
             bucket.vertexIndex += 2;
             if (index > 0) {
               const previousLeft = firstVertex + (index - 1) * 2,
@@ -1909,28 +1527,66 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           "steps",
           "cycleway",
           "corridor",
-        ]);
-      for (const road of r.roads) registerNamedRoad(road);
-      const classicVehicleCell = 3,
-        classicVehicleSegments: {x1:number;z1:number;x2:number;z2:number;radius:number}[] = [],
-        classicVehicleIndex = new Map<string,number[]>();
-      if (!realCampus) for (const road of r.roads) {
+        ]),
+        vehicleCell = 3,
+        vehicleSegments: {
+          x1: number;
+          z1: number;
+          x2: number;
+          z2: number;
+          radius: number;
+        }[] = [],
+        vehicleIndex = new Map<string, number[]>();
+      for (const road of r.roads) {
         if (pedestrianKinds.has(road.kind)) continue;
         const radius = Math.max(road.width, 0.24) / 2;
         for (let index = 1; index < road.points.length; index++) {
-          const [x1,z1]=road.points[index-1],[x2,z2]=road.points[index],segmentIndex=classicVehicleSegments.length;
-          classicVehicleSegments.push({x1,z1,x2,z2,radius});
-          for(let gx=Math.floor((Math.min(x1,x2)-radius)/classicVehicleCell);gx<=Math.floor((Math.max(x1,x2)+radius)/classicVehicleCell);gx++)for(let gz=Math.floor((Math.min(z1,z2)-radius)/classicVehicleCell);gz<=Math.floor((Math.max(z1,z2)+radius)/classicVehicleCell);gz++){
-            const key=`${gx}/${gz}`,bucket=classicVehicleIndex.get(key);if(bucket)bucket.push(segmentIndex);else classicVehicleIndex.set(key,[segmentIndex]);
-          }
+          const [x1, z1] = road.points[index - 1],
+            [x2, z2] = road.points[index],
+            segmentIndex = vehicleSegments.length;
+          vehicleSegments.push({ x1, z1, x2, z2, radius });
+          for (
+            let gx = Math.floor((Math.min(x1, x2) - radius) / vehicleCell);
+            gx <= Math.floor((Math.max(x1, x2) + radius) / vehicleCell);
+            gx++
+          )
+            for (
+              let gz = Math.floor((Math.min(z1, z2) - radius) / vehicleCell);
+              gz <= Math.floor((Math.max(z1, z2) + radius) / vehicleCell);
+              gz++
+            ) {
+              const key = `${gx}/${gz}`,
+                bucket = vehicleIndex.get(key);
+              if (bucket) bucket.push(segmentIndex);
+              else vehicleIndex.set(key, [segmentIndex]);
+            }
         }
       }
-      const onClassicVehicleSurface=(x:number,z:number)=>(classicVehicleIndex.get(`${Math.floor(x/classicVehicleCell)}/${Math.floor(z/classicVehicleCell)}`)??[]).some(index=>{
-        const segment=classicVehicleSegments[index],dx=segment.x2-segment.x1,dz=segment.z2-segment.z1,length=dx*dx+dz*dz,t=length?THREE.MathUtils.clamp(((x-segment.x1)*dx+(z-segment.z1)*dz)/length,0,1):0;
-        return Math.hypot(x-(segment.x1+dx*t),z-(segment.z1+dz*t))<=segment.radius+.055;
-      });
+      const onVehicleSurface = (x: number, z: number) =>
+        (
+          vehicleIndex.get(
+            `${Math.floor(x / vehicleCell)}/${Math.floor(z / vehicleCell)}`,
+          ) ?? []
+        ).some((index) => {
+          const segment = vehicleSegments[index],
+            dx = segment.x2 - segment.x1,
+            dz = segment.z2 - segment.z1,
+            lengthSquared = dx * dx + dz * dz,
+            t = lengthSquared
+              ? THREE.MathUtils.clamp(
+                  ((x - segment.x1) * dx + (z - segment.z1) * dz) /
+                    lengthSquared,
+                  0,
+                  1,
+                )
+              : 0,
+            closestX = segment.x1 + dx * t,
+            closestZ = segment.z1 + dz * t;
+          return (
+            Math.hypot(x - closestX, z - closestZ) <= segment.radius + 0.055
+          );
+        });
       for (const road of r.roads) {
-        if (realCampus && campusTextures?.surfaceMask && !road.bridge) continue;
         const kind = road.kind as string,
           pedestrianRoad = pedestrianKinds.has(kind),
           bucket = pedestrianRoad
@@ -1938,14 +1594,10 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             : kind === "track"
               ? roadBuckets.dirt
               : roadBuckets.asphalt,
-          displayWidth = Math.max(road.width, realCampus ? pedestrianRoad ? 0.04 : 0.08 : pedestrianRoad ? 0.15 : 0.24);
+          displayWidth = Math.max(road.width, pedestrianRoad ? 0.15 : 0.24);
         let chunk: [number, number][] = [];
         const flushChunk = () => {
-          if (chunk.length > 1) {
-            if (realCampus && !pedestrianRoad && (road.sidewalk && road.sidewalk !== "no" || ["primary","secondary","tertiary","residential","living_street"].includes(kind)))
-              addRoadStrip(roadBuckets.curb, chunk, displayWidth + 0.055);
-            addRoadStrip(bucket, chunk, displayWidth);
-          }
+          if (chunk.length > 1) addRoadStrip(bucket, chunk, displayWidth);
           chunk = [];
         };
         for (let k = 1; k < road.points.length; k++) {
@@ -1961,8 +1613,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               sampleX = x1 + dx * t,
               sampleZ = z1 + dz * t;
             if (
-              (!realCampus && inWater(sampleX, sampleZ)) ||
-              (!realCampus && pedestrianRoad && onClassicVehicleSurface(sampleX, sampleZ))
+              inWater(sampleX, sampleZ) ||
+              (pedestrianRoad && onVehicleSurface(sampleX, sampleZ))
             ) {
               flushChunk();
               continue;
@@ -1988,63 +1640,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         }
         flushChunk();
       }
-      if (realCampus && !campusTextures?.surfaceMask) {
-        type RoadEndpoint = { x: number; z: number; width: number; pedestrian: boolean; bridge: boolean; roadIndex: number };
-        type RoadSegment = { x1:number;z1:number;x2:number;z2:number;width:number;pedestrian:boolean;bridge:boolean;roadIndex:number };
-        const endpointCell = 0.35,
-          endpointIndex = new Map<string, RoadEndpoint[]>(),
-          segmentIndex = new Map<string,RoadSegment[]>(),
-          endpoints: RoadEndpoint[] = [];
-        for (const [roadIndex,road] of r.roads.entries()) {
-          if (road.points.length < 2) continue;
-          const pedestrian = pedestrianKinds.has(road.kind), width = Math.max(road.width, pedestrian ? 0.04 : 0.08);
-          for (const point of [road.points[0], road.points.at(-1)]) endpoints.push({ x: point[0], z: point[1], width, pedestrian, bridge: !!road.bridge, roadIndex });
-          for(let pointIndex=1;pointIndex<road.points.length;pointIndex++){
-            const first=road.points[pointIndex-1],second=road.points[pointIndex],segment={x1:first[0],z1:first[1],x2:second[0],z2:second[1],width,pedestrian,bridge:!!road.bridge,roadIndex};
-            for(let gx=Math.floor((Math.min(segment.x1,segment.x2)-.14)/endpointCell);gx<=Math.floor((Math.max(segment.x1,segment.x2)+.14)/endpointCell);gx++)for(let gz=Math.floor((Math.min(segment.z1,segment.z2)-.14)/endpointCell);gz<=Math.floor((Math.max(segment.z1,segment.z2)+.14)/endpointCell);gz++){
-              const key=`${gx}/${gz}`,bucket=segmentIndex.get(key);if(bucket)bucket.push(segment);else segmentIndex.set(key,[segment]);
-            }
-          }
-        }
-        for (const endpoint of endpoints) {
-          const key = `${Math.floor(endpoint.x / endpointCell)}/${Math.floor(endpoint.z / endpointCell)}`, bucket = endpointIndex.get(key);
-          if (bucket) bucket.push(endpoint); else endpointIndex.set(key, [endpoint]);
-        }
-        const stitched = new Set<string>(), endpointConnected = new Set<RoadEndpoint>();
-        for (const endpoint of endpoints) {
-          const gx = Math.floor(endpoint.x / endpointCell), gz = Math.floor(endpoint.z / endpointCell);
-          let closest: RoadEndpoint | undefined, distance = 0.32;
-          for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) for (const candidate of endpointIndex.get(`${gx + dx}/${gz + dz}`) ?? []) {
-            if (candidate.roadIndex===endpoint.roadIndex||candidate.pedestrian !== endpoint.pedestrian) continue;
-            const gap = Math.hypot(endpoint.x - candidate.x, endpoint.z - candidate.z);
-            if (gap > 0.004 && gap < distance) { closest = candidate; distance = gap; }
-          }
-          if (!closest) continue;
-          const first = `${endpoint.x.toFixed(3)}/${endpoint.z.toFixed(3)}`, second = `${closest.x.toFixed(3)}/${closest.z.toFixed(3)}`, key = first < second ? `${first}|${second}` : `${second}|${first}`;
-          if (stitched.has(key)) continue;
-          const midpointX = (endpoint.x + closest.x) / 2, midpointZ = (endpoint.z + closest.z) / 2;
-          if (!endpoint.bridge && !closest.bridge && inWater(midpointX, midpointZ)) continue;
-          stitched.add(key);
-          endpointConnected.add(endpoint);endpointConnected.add(closest);
-          addRoadStrip(endpoint.pedestrian || closest.pedestrian ? roadBuckets.path : roadBuckets.asphalt, [[endpoint.x, endpoint.z], [closest.x, closest.z]], Math.min(endpoint.width, closest.width));
-        }
-        for(const endpoint of endpoints){
-          if(endpointConnected.has(endpoint))continue;
-          const gx=Math.floor(endpoint.x/endpointCell),gz=Math.floor(endpoint.z/endpointCell);let best:{segment:RoadSegment;x:number;z:number;distance:number}|undefined;
-          for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)for(const segment of segmentIndex.get(`${gx+dx}/${gz+dz}`)??[]){
-            if(segment.roadIndex===endpoint.roadIndex||segment.pedestrian!==endpoint.pedestrian)continue;
-            const sx=segment.x2-segment.x1,sz=segment.z2-segment.z1,length=sx*sx+sz*sz,t=length?THREE.MathUtils.clamp(((endpoint.x-segment.x1)*sx+(endpoint.z-segment.z1)*sz)/length,0,1):0,x=segment.x1+sx*t,z=segment.z1+sz*t,distance=Math.hypot(endpoint.x-x,endpoint.z-z);
-            if(distance>.004&&distance<.14&&(!best||distance<best.distance))best={segment,x,z,distance};
-          }
-          if(!best)continue;
-          const first=`${endpoint.x.toFixed(3)}/${endpoint.z.toFixed(3)}`,second=`${best.x.toFixed(3)}/${best.z.toFixed(3)}`,key=first<second?`${first}|${second}`:`${second}|${first}`;
-          if(stitched.has(key))continue;
-          const midpointX=(endpoint.x+best.x)/2,midpointZ=(endpoint.z+best.z)/2;
-          if(!endpoint.bridge&&!best.segment.bridge&&inWater(midpointX,midpointZ))continue;
-          stitched.add(key);
-          addRoadStrip(endpoint.pedestrian?roadBuckets.path:roadBuckets.asphalt,[[endpoint.x,endpoint.z],[best.x,best.z]],Math.min(endpoint.width,best.segment.width));
-        }
-      }
       Object.values(roadBuckets).forEach((bucket) => {
         if (!bucket.positions.length) return;
         const geometry = new THREE.BufferGeometry();
@@ -2052,88 +1647,29 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           "position",
           new THREE.Float32BufferAttribute(bucket.positions, 3),
         );
-        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
         geometry.setIndex(bucket.indices);
         geometry.computeVertexNormals();
         const roads = new THREE.Mesh(
           geometry,
-          applyCampusMacro(new THREE.MeshStandardMaterial({
+          new THREE.MeshStandardMaterial({
             color: bucket.color,
-            map: bucket.texture ?? null,
-            roughnessMap: bucket.roughness ?? null,
             roughness: 0.94,
             metalness: 0,
-            depthTest: true,
-            depthWrite: true,
             polygonOffset: true,
             polygonOffsetFactor: -bucket.renderOrder,
             polygonOffsetUnits: -bucket.renderOrder,
-          }), 0.12),
+          }),
         );
         roads.receiveShadow = false;
-        roads.renderOrder = realCampus ? 8 + bucket.renderOrder : bucket.renderOrder;
+        roads.renderOrder = bucket.renderOrder;
         mapGroup.add(roads);
       });
       const bp: number[] = [],
         bi: number[] = [],
         bc: number[] = [],
-        bu: number[] = [],
-        bs: number[] = [],
         buildingPalette = [
           0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
-        ],
-        appearanceFor = (b: any) => {
-          const profile = realCampus
-            ? REAL_BUILDING_BY_KEY.get(`${b.osmType}/${b.osmId}`) ?? REAL_LANDMARK_BY_KEY.get(`${b.osmType}/${b.osmId}`)
-            : undefined;
-          if (profile) {
-            const totalHeight = profile.heightMeters * buildingMeterScale,
-              customBodyRatio = profile.signature === "domed-auditorium"
-                ? 0.38
-                : profile.signature === "central-main"
-                  ? 0.46
-                  : profile.signature === "twin-towers"
-                    ? 0.28
-                    : 1,
-              roofHeight = customBodyRatio < 1 ? 0 : ("roofMeters" in profile ? profile.roofMeters : 0) * buildingMeterScale;
-            return {
-              totalHeight,
-              wallHeight: Math.max(0.09, totalHeight * customBodyRatio - roofHeight),
-              roofHeight,
-              roof: profile.roof as string,
-              wallTone: new THREE.Color(profile.facadeColor),
-              roofTone: new THREE.Color(profile.roofColor),
-              profile,
-            };
-          }
-          if (realCampus) {
-            const use = String(b.building || b.amenity || ""),
-              fallbackLevels = /apartments|residential|dormitory/.test(use) ? 6 : /commercial|office|retail/.test(use) ? 8 : /industrial|warehouse/.test(use) ? 3 : /house|detached/.test(use) ? 2 : 4,
-              metres = b.height || (b.levels || fallbackLevels) * 3.35,
-              totalHeight = THREE.MathUtils.clamp(metres * buildingMeterScale, 0.08, 2.6),
-              taggedColor = /^#?[0-9a-f]{6}$/i.test(b.colour || "") ? (b.colour.startsWith("#") ? b.colour : `#${b.colour}`) : null,
-              wallTone = new THREE.Color(taggedColor || (/industrial|warehouse/.test(use) ? "#9aa09d" : /commercial|office|retail/.test(use) ? "#91a0a4" : /house|detached/.test(use) ? "#a6907e" : "#a7a49b")),
-              roofTone = new THREE.Color(/^#?[0-9a-f]{6}$/i.test(b.roofColour || "") ? (b.roofColour.startsWith("#") ? b.roofColour : `#${b.roofColour}`) : /industrial|commercial|office/.test(use) ? "#727a79" : "#77736c"),
-              roof = ["gabled","hipped","pyramidal"].includes(b.roofShape) ? b.roofShape : "flat",
-              roofHeight = roof === "flat" ? 0 : Math.min(0.11, totalHeight * 0.18);
-            return { totalHeight, wallHeight: Math.max(0.07, totalHeight - roofHeight), roofHeight, roof, wallTone, roofTone, profile: undefined };
-          }
-          const totalHeight = b.levels
-              ? Math.min(7, b.levels * 0.58)
-              : 0.95 + (b.osmId % 6) * 0.17,
-            tone = new THREE.Color(
-              buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
-            );
-          return {
-            totalHeight,
-            wallHeight: totalHeight,
-            roofHeight: 0,
-            roof: "flat" as string,
-            wallTone: tone.clone().multiplyScalar(0.78),
-            roofTone: tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26),
-            profile: undefined,
-          };
-        };
+        ];
       let bv = 0;
       for (const b of gameplayBuildings(r)) {
         const pts = b.points.filter(
@@ -2150,239 +1686,61 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          centerBase = terrainHeight(r, x, z),
-          base = realCampus
-            ? Math.max(centerBase, ...pts.map((point: number[]) => terrainHeight(r, point[0], point[1])))
-            : centerBase,
-          appearance = appearanceFor(b),
-          h = appearance.wallHeight,
+          base = terrainHeight(r, x, z),
+          h = b.levels
+            ? Math.min(7, b.levels * 0.58)
+            : 0.95 + (b.osmId % 6) * 0.17,
           start = bv,
-          wallTone = appearance.wallTone,
-          roofTone = appearance.roofTone;
-        if (realCampus && (appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate")) continue;
-        let facadeDistance = 0;
-        for (let pointIndex = 0; pointIndex < pts.length; pointIndex++) {
-          const p = pts[pointIndex];
-          if (pointIndex) facadeDistance += Math.hypot(p[0] - pts[pointIndex - 1][0], p[1] - pts[pointIndex - 1][1]);
-          bp.push(p[0], realCampus ? terrainHeight(r, p[0], p[1]) : base, p[1], p[0], base + h, p[1]);
-          bu.push(facadeDistance * 12, 0, facadeDistance * 12, Math.max(1, h * 40));
-          bs.push(0, 0);
+          tone = new THREE.Color(
+            buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
+          ),
+          wallTone = tone.clone().multiplyScalar(0.78),
+          roofTone = tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26);
+        for (const p of pts) {
+          bp.push(p[0], base, p[1], p[0], base + h, p[1]);
           bc.push(
             wallTone.r,
             wallTone.g,
             wallTone.b,
-            realCampus ? wallTone.r : roofTone.r,
-            realCampus ? wallTone.g : roofTone.g,
-            realCampus ? wallTone.b : roofTone.b,
+            roofTone.r,
+            roofTone.g,
+            roofTone.b,
           );
           bv += 2;
         }
-        const roofStart = bv;
-        if (realCampus) for (const point of pts) {
-          bp.push(point[0], base + h, point[1]);
-          bu.push(point[0] * 1.35, point[1] * 1.35);
-          bc.push(roofTone.r, roofTone.g, roofTone.b);
-          bs.push(1);
-          bv++;
-        }
-        const roofVertex = (index: number) => realCampus ? roofStart + index : start + index * 2 + 1;
         for (let i = 0; i < pts.length; i++) {
           const j = (i + 1) % pts.length,
             a = start + i * 2,
             c = start + j * 2;
           bi.push(a, c, a + 1, a + 1, c, c + 1);
         }
-        if (appearance.roofHeight > 0) {
-          if (appearance.roof === "gabled") {
-            const xs=pts.map((p:number[])=>p[0]),zs=pts.map((p:number[])=>p[1]),alongX=Math.max(...xs)-Math.min(...xs)>=Math.max(...zs)-Math.min(...zs),extent=(alongX?Math.max(...xs)-Math.min(...xs):Math.max(...zs)-Math.min(...zs))*.36,
-              ridgeStart=bv,ridgeA=[x+(alongX?-extent:0),z+(alongX?0:-extent)],ridgeB=[x+(alongX?extent:0),z+(alongX?0:extent)];
-            for(const ridge of [ridgeA,ridgeB]){bp.push(ridge[0],base+h+appearance.roofHeight,ridge[1]);bu.push(ridge[0]*1.35,ridge[1]*1.35);bc.push(roofTone.r,roofTone.g,roofTone.b);bs.push(1);bv++;}
-            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length,mid=(alongX?(pts[i][0]+pts[j][0])/2-x:(pts[i][1]+pts[j][1])/2-z);bi.push(roofVertex(i),roofVertex(j),ridgeStart+(mid>0?1:0));}
-          } else {
-            const apex=bv;bp.push(x,base+h+appearance.roofHeight,z);bu.push(x*1.35,z*1.35);bc.push(roofTone.r,roofTone.g,roofTone.b);bs.push(1);bv++;
-            for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;bi.push(roofVertex(i),roofVertex(j),apex);}
-          }
-        } else for (const face of THREE.ShapeUtils.triangulateShape(
-            pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
-            [],
-          ))
-            bi.push(
-              roofVertex(face[0]),
-              roofVertex(face[1]),
-              roofVertex(face[2]),
-            );
+        for (const face of THREE.ShapeUtils.triangulateShape(
+          pts.map((p: number[]) => new THREE.Vector2(p[0], p[1])),
+          [],
+        ))
+          bi.push(
+            start + face[0] * 2 + 1,
+            start + face[1] * 2 + 1,
+            start + face[2] * 2 + 1,
+          );
       }
       const bg = new THREE.BufferGeometry();
       bg.setAttribute("position", new THREE.Float32BufferAttribute(bp, 3));
       bg.setAttribute("color", new THREE.Float32BufferAttribute(bc, 3));
-      bg.setAttribute("uv", new THREE.Float32BufferAttribute(bu, 2));
-      bg.setAttribute("campusRoofFactor", new THREE.Float32BufferAttribute(bs, 1));
       bg.setIndex(bi);
       bg.computeVertexNormals();
-      const facadeBuildingMaterial = applyCampusBuildingSurface(new THREE.MeshStandardMaterial({
+      const buildings = new THREE.Mesh(
+        bg,
+        new THREE.MeshStandardMaterial({
           vertexColors: true,
-          map: campusTextures?.facade ?? null,
-          roughnessMap: campusTextures?.facadeRoughness ?? null,
           roughness: 0.82,
           side: THREE.DoubleSide,
           flatShading: true,
-        }));
-      const buildings = new THREE.Mesh(
-        bg,
-        facadeBuildingMaterial,
+        }),
       );
-      facadeBuildingMaterial.emissive.set(0x26384b);
-      facadeBuildingMaterial.emissiveIntensity = 0;
-      buildingSurfaceMaterials.push(facadeBuildingMaterial);
       buildings.receiveShadow = false;
       buildings.castShadow = true;
-      buildings.frustumCulled = false;
       mapGroup.add(buildings);
-      if (realCampus) {
-        type AccentKind = "box" | "column" | "dome" | "roof";
-        type Accent = { matrix: THREE.Matrix4; color: THREE.Color };
-        const accents: Record<AccentKind, Accent[]> = { box: [], column: [], dome: [], roof: [] },
-          dummy = new THREE.Object3D(),
-          footprintByKey = new Map(gameplayBuildings(r).map((building: any) => [`${building.osmType}/${building.osmId}`, building])),
-          push = (kind: AccentKind, x: number, y: number, z: number, sx: number, sy: number, sz: number, color: string, rotation = 0) => {
-            dummy.position.set(x, y, z);
-            dummy.scale.set(sx, sy, sz);
-            dummy.rotation.set(0, rotation, 0);
-            dummy.updateMatrix();
-            accents[kind].push({ matrix: dummy.matrix.clone(), color: new THREE.Color(color) });
-          };
-        for (const landmark of REAL_LANDMARK_BY_SITE.values()) {
-          const site = gameRef.current.sites[landmark.siteId];
-          if (!site) continue;
-          const building: any = footprintByKey.get(landmark.key),
-            points: number[][] = building?.points ?? [],
-            centerX = points.length ? points.reduce((sum, point) => sum + point[0], 0) / points.length : site.x,
-            centerZ = points.length ? points.reduce((sum, point) => sum + point[1], 0) / points.length : site.z;
-          let angle = 0;
-          if (points.length > 1) {
-            let longest = 0;
-            for (let index = 0; index < points.length; index++) {
-              const next = points[(index + 1) % points.length], dx = next[0] - points[index][0], dz = next[1] - points[index][1], distance = Math.hypot(dx, dz);
-              if (distance > longest) { longest = distance; angle = Math.atan2(dz, dx); }
-            }
-          }
-          if (landmark.entranceDirection != null) angle = landmark.entranceDirection * Math.PI / 180;
-          const axisX = Math.cos(angle), axisZ = Math.sin(angle), sideX = -axisZ, sideZ = axisX,
-            projections = points.length ? points.map(point => ({ along: (point[0] - centerX) * axisX + (point[1] - centerZ) * axisZ, side: (point[0] - centerX) * sideX + (point[1] - centerZ) * sideZ })) : [{ along: -0.3, side: -0.08 }, { along: 0.3, side: 0.08 }],
-            length = Math.max(0.24, Math.max(...projections.map(value => value.along)) - Math.min(...projections.map(value => value.along))),
-            depth = Math.max(0.12, Math.max(...projections.map(value => value.side)) - Math.min(...projections.map(value => value.side))),
-            base = Math.max(terrainHeight(r, centerX, centerZ), ...points.map(point => terrainHeight(r, point[0], point[1]))), height = landmark.heightMeters * buildingMeterScale,
-            facade = landmark.facadeColor, trim = landmark.secondaryColor, roof = landmark.roofColor,
-            rotation = -angle,
-            entranceRadians = landmark.entranceDirection == null ? null : landmark.entranceDirection * Math.PI / 180,
-            entranceX = entranceRadians == null ? sideX : Math.sin(entranceRadians),
-            entranceZ = entranceRadians == null ? sideZ : -Math.cos(entranceRadians),
-            frontSign = sideX * entranceX + sideZ * entranceZ >= 0 ? 1 : -1,
-            at = (along: number, side: number) => [centerX + axisX * along + sideX * side * frontSign, centerZ + axisZ * along + sideZ * side * frontSign] as const,
-            boxAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = facade) => { const [x, z] = at(along, side); push("box", x, y, z, sx, sy, sz, color, rotation); },
-            columnAt = (along: number, side: number, y: number, radius: number, sy: number, color = trim) => { const [x, z] = at(along, side); push("column", x, y, z, radius, sy, radius, color, rotation); },
-            roofAt = (along: number, side: number, y: number, sx: number, sy: number, sz: number, color = roof) => { const [x, z] = at(along, side); push("roof", x, y, z, sx, sy, sz, color, rotation); };
-          switch (landmark.signature) {
-            case "chinese-gate":
-              for (const along of [-0.31,-0.11,0.11,0.31]) boxAt(along, 0, base + height * 0.38, 0.075, height * 0.68, Math.max(0.1, depth), facade);
-              boxAt(0, 0, base + height * 0.78, Math.max(0.62, length * 1.08), height * 0.16, Math.max(0.11, depth * 1.06), trim);
-              roofAt(0, 0, base + height + 0.035, Math.max(0.7, length * 1.16), 0.07, Math.max(0.18, depth * 1.5));
-              break;
-            case "white-arch-gate":
-              for (const along of [-0.31,-0.11,0.11,0.31]) boxAt(along, 0, base + height * 0.4, 0.07, height * 0.72, Math.max(0.1, depth), facade);
-              for (const along of [-0.31, -0.11, 0.11, 0.31]) columnAt(along, depth * 0.54, base + height * 0.42, 0.018, height * 0.68);
-              boxAt(0, 0, base + height * 0.78, Math.max(0.62, length), height * 0.15, Math.max(0.1, depth), facade);
-              boxAt(0, 0, base + height * 0.88, Math.max(0.5, length * 0.8), 0.035, Math.max(0.08, depth * 0.85), trim);
-              break;
-            case "pagoda":
-              boxAt(0, 0, base + height * 0.48, Math.max(0.12, length * 0.56), height * 0.9, Math.max(0.12, depth * 0.56), facade);
-              for (let tier = 0; tier < 9; tier++) { const fraction = (tier + 1) / 10, scale = 1 - tier * 0.055; roofAt(0, 0, base + height * fraction, Math.max(0.24, length * 1.45 * scale), 0.035, Math.max(0.24, depth * 1.45 * scale)); }
-              roofAt(0, 0, base + height + 0.06, Math.max(0.16, length), 0.12, Math.max(0.16, depth));
-              break;
-            case "pku-library": {
-              boxAt(0, depth * 0.51, base + height * 0.32, length * 0.22, height * 0.42, 0.02, "#395d67");
-              break;
-            }
-            case "xuetang":
-              roofAt(0, 0, base + height + 0.025, length * 0.92, 0.05, depth * 0.74);
-              boxAt(0, depth * 0.52, base + height * 0.32, length * 0.2, height * 0.48, 0.02, trim);
-              for (const along of [-length * 0.09, length * 0.09]) columnAt(along, depth * 0.59, base + height * 0.48, 0.014, height * 0.75);
-              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.28, 0.025, 0.03, trim);
-              break;
-            case "domed-auditorium": {
-              const body = height * 0.5, domeRadius = Math.min(length, depth) * 0.36;
-              columnAt(0, 0, base + body + domeRadius * 0.12, domeRadius * 0.64, domeRadius * 0.24, roof);
-              push("dome", centerX, base + body + domeRadius * 0.08, centerZ, domeRadius * 1.7, Math.max(0.12, (height - body) * 0.58), domeRadius * 1.7, roof, rotation);
-              for (const along of [-length * 0.24, -length * 0.08, length * 0.08, length * 0.24]) columnAt(along, depth * 0.56, base + body * 0.52, 0.014, body * 0.9);
-              boxAt(0, depth * 0.55, base + body * 0.96, length * 0.7, 0.025, 0.03, trim);
-              break;
-            }
-            case "central-main": {
-              const body = height * 0.46, lowerWidth = Math.min(length * 0.22, 0.5), lowerDepth = Math.min(depth * 0.34, 0.38), upperHeight = height - body;
-              boxAt(0, 0, base + body + upperHeight * 0.34, lowerWidth, upperHeight * 0.68, lowerDepth, facade);
-              boxAt(0, 0, base + body + upperHeight * 0.78, lowerWidth * 0.72, upperHeight * 0.26, lowerDepth * 0.72, trim);
-              boxAt(0, depth * 0.52, base + body * 0.22, length * 0.12, body * 0.24, 0.025, "#3e514f");
-              for (const along of [-length * 0.075, -length * 0.025, length * 0.025, length * 0.075]) columnAt(along, depth * 0.57, base + body * 0.45, 0.011, body * 0.66);
-              roofAt(0, 0, base + height + 0.025, lowerWidth * 0.72, 0.05, lowerDepth * 0.72);
-              break;
-            }
-            case "historic-library":
-              for (const along of [-length * 0.31, 0, length * 0.31]) roofAt(along, 0, base + height + 0.022, length * 0.27, 0.045, depth * 0.56);
-              for (const along of [-length * 0.075, length * 0.075]) columnAt(along, depth * 0.58, base + height * 0.48, 0.012, height * 0.68);
-              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.22, 0.025, 0.03, trim);
-              break;
-            case "historic-science":
-              roofAt(0, 0, base + height + 0.022, length * 0.9, 0.045, depth * 0.78);
-              for (const along of [-length * 0.075, length * 0.075]) columnAt(along, depth * 0.58, base + height * 0.48, 0.012, height * 0.68);
-              boxAt(0, depth * 0.58, base + height * 0.82, length * 0.22, 0.025, 0.03, trim);
-              break;
-            case "modern-auditorium":
-              boxAt(0, depth * 0.51, base + height * 0.4, length * 0.18, height * 0.52, 0.02, "#3d5963");
-              break;
-            case "museum":
-              for (const along of [-0.35, -0.21, -0.07, 0.07, 0.21, 0.35].map(value => value * length)) boxAt(along, depth * 0.51, base + height * 0.53, length * 0.018, height * 0.88, 0.015, "#765337");
-              boxAt(0, depth * 0.58, base + height * 0.18, length * 0.32, height * 0.24, 0.02, "#272a29");
-              break;
-            case "twin-towers": {
-              const podium = height * 0.28;
-              for (const along of [-length * 0.26, length * 0.26]) boxAt(along, 0, base + podium + (height - podium) * 0.46, length * 0.34, (height - podium) * 0.92, depth * 0.62, facade);
-              boxAt(0, depth * 0.51, base + podium * 0.46, length * 0.25, podium * 0.62, 0.02, "#355663");
-              break;
-            }
-            case "dormitory":
-              boxAt(0, depth * 0.52, base + Math.min(0.055, height * 0.25), Math.min(0.12, length * 0.18), Math.min(0.09, height * 0.36), 0.018, trim);
-              break;
-            case "dining-hall":
-              boxAt(0, depth * 0.56, base + Math.min(0.16, height * 0.45), Math.min(0.42, length * 0.52), 0.03, Math.min(0.14, depth * 0.3), trim);
-              break;
-            default:
-              boxAt(0, depth * 0.52, base + Math.min(0.14, height * 0.38), Math.min(0.22, length * 0.3), Math.min(0.18, height * 0.54), 0.018, trim);
-          }
-        }
-        const geometries: Record<AccentKind, THREE.BufferGeometry> = {
-            box: new THREE.BoxGeometry(1, 1, 1),
-            column: new THREE.CylinderGeometry(0.5, 0.56, 1, 10),
-            dome: new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-            roof: new THREE.ConeGeometry(0.5, 1, 4),
-          },
-          accentMaterials: Record<AccentKind, THREE.MeshStandardMaterial> = {
-            box: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.facade ?? null, roughnessMap: campusTextures?.facadeRoughness ?? null, roughness: 0.84 }),
-            column: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.facade ?? null, roughnessMap: campusTextures?.facadeRoughness ?? null, roughness: 0.88 }),
-            dome: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.roof ?? null, roughnessMap: campusTextures?.roofRoughness ?? null, roughness: 0.86, metalness: 0.03 }),
-            roof: new THREE.MeshStandardMaterial({ color: 0xffffff, map: campusTextures?.roof ?? null, roughnessMap: campusTextures?.roofRoughness ?? null, roughness: 0.9 }),
-          };
-        geometries.roof.rotateY(Math.PI / 4);
-        for (const [kind, instances] of Object.entries(accents) as [AccentKind, Accent[]][]) {
-          if (!instances.length) continue;
-          const mesh = new THREE.InstancedMesh(geometries[kind], accentMaterials[kind], instances.length);
-          instances.forEach((instance, index) => { mesh.setMatrixAt(index, instance.matrix); mesh.setColorAt(index, instance.color); });
-          mesh.instanceMatrix.needsUpdate = true;
-          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-          mesh.castShadow = true;
-          mesh.frustumCulled = false;
-          mapGroup.add(mesh);
-        }
-      }
       const outline = new THREE.LineSegments(
         new THREE.EdgesGeometry(bg, 32),
         new THREE.LineBasicMaterial({
@@ -2392,17 +1750,12 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         }),
       );
       outline.renderOrder = 5;
-      buildingOutlineObjects.push(outline);
       mapGroup.add(outline);
-      const windowInstances: {matrix:THREE.Matrix4;x:number;y:number;z:number}[] = [],
+      const windowMatrices: THREE.Matrix4[] = [],
         doorMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
-        windowLimit = r === regions.main ? realCampus ? 48000 : 18000 : 2600,
-        detailedBuildings = [...gameplayBuildings(r)].sort((a: any, b: any) => {
-          const ap = REAL_BUILDING_BY_KEY.get(`${a.osmType}/${a.osmId}`), bp = REAL_BUILDING_BY_KEY.get(`${b.osmType}/${b.osmId}`);
-          return Number(bp?.siteId != null) - Number(ap?.siteId != null) || Number(!!bp) - Number(!!ap);
-        });
-      for (const b of detailedBuildings) {
+        windowLimit = r === regions.main ? 13500 : 2600;
+      for (const b of gameplayBuildings(r)) {
         const pts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
@@ -2422,19 +1775,15 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          centerBase = terrainHeight(r, x, z),
-          base = realCampus
-            ? Math.max(centerBase, ...pts.map((point: number[]) => terrainHeight(r, point[0], point[1])))
-            : centerBase,
-          appearance = appearanceFor(b),
-          h = appearance.wallHeight,
-          rows = Math.min(8, Math.max(1, appearance.profile && "levels" in appearance.profile ? appearance.profile.levels : Math.floor(h / 0.48))),
-          omitWindows = appearance.profile?.signature === "pagoda" || appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate";
-        if (appearance.profile?.signature === "chinese-gate" || appearance.profile?.signature === "white-arch-gate") continue;
+          base = terrainHeight(r, x, z),
+          h = b.levels
+            ? Math.min(7, b.levels * 0.58)
+            : 0.95 + (b.osmId % 6) * 0.17,
+          rows = Math.min(4, Math.max(1, Math.floor(h / 0.48)));
         let longest: { a: number[]; c: number[]; len: number } | null = null;
         for (
           let i = 0;
-          i < pts.length && windowInstances.length < windowLimit;
+          i < pts.length && windowMatrices.length < windowLimit;
           i++
         ) {
           const a = pts[i],
@@ -2443,92 +1792,76 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             dz = c[1] - a[1],
             len = Math.hypot(dx, dz);
           if (!longest || len > longest.len) longest = { a, c, len };
-          if (len < (realCampus ? 0.12 : 0.42)) continue;
-          if (omitWindows) continue;
-          const cols = Math.min(8, Math.max(1, Math.floor(len / (realCampus ? 0.12 : 0.34)))),
-            angle = Math.atan2(-dz, dx) + (outwardSign < 0 ? Math.PI : 0),
+          if (len < 0.42) continue;
+          const cols = Math.min(5, Math.max(1, Math.floor(len / 0.42))),
+            angle = Math.atan2(-dz, dx),
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           for (
             let row = 0;
-            row < rows && windowInstances.length < windowLimit;
+            row < rows && windowMatrices.length < windowLimit;
             row++
           )
             for (
               let col = 0;
-              col < cols && windowInstances.length < windowLimit;
+              col < cols && windowMatrices.length < windowLimit;
               col++
             ) {
               const t = (col + 1) / (cols + 1);
               detailDummy.position.set(
-                a[0] + dx * t + nx * (realCampus ? 0.006 : 0.025),
+                a[0] + dx * t + nx * 0.025,
                 base + (h * (row + 1)) / (rows + 1),
-                a[1] + dz * t + nz * (realCampus ? 0.006 : 0.025),
+                a[1] + dz * t + nz * 0.025,
               );
               detailDummy.rotation.set(0, angle, 0);
               detailDummy.scale.set(
-                Math.min(realCampus ? 0.045 : 0.18, (len / (cols + 1)) * 0.5),
-                realCampus ? 0.035 : 0.12,
+                Math.min(0.18, (len / (cols + 1)) * 0.5),
+                0.12,
                 1,
               );
               detailDummy.updateMatrix();
-              windowInstances.push({matrix:detailDummy.matrix.clone(),x:detailDummy.position.x,y:detailDummy.position.y,z:detailDummy.position.z});
+              windowMatrices.push(detailDummy.matrix.clone());
             }
         }
-        if (longest && longest.len > (realCampus ? 0.12 : 0.45)) {
+        if (longest && longest.len > 0.45) {
           const dx = longest.c[0] - longest.a[0],
             dz = longest.c[1] - longest.a[1],
             len = longest.len,
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           detailDummy.position.set(
-            (longest.a[0] + longest.c[0]) / 2 + nx * (realCampus ? 0.007 : 0.03),
-            base + (realCampus ? 0.055 : 0.17),
-            (longest.a[1] + longest.c[1]) / 2 + nz * (realCampus ? 0.007 : 0.03),
+            (longest.a[0] + longest.c[0]) / 2 + nx * 0.03,
+            base + 0.17,
+            (longest.a[1] + longest.c[1]) / 2 + nz * 0.03,
           );
-          detailDummy.rotation.set(0, Math.atan2(-dz, dx) + (outwardSign < 0 ? Math.PI : 0), 0);
-          detailDummy.scale.set(realCampus ? 0.07 : 0.23, realCampus ? 0.11 : 0.34, 1);
+          detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
+          detailDummy.scale.set(0.23, 0.34, 1);
           detailDummy.updateMatrix();
           doorMatrices.push(detailDummy.matrix.clone());
         }
       }
-      const darkWindowMaterial = new THREE.MeshStandardMaterial({
-        color: 0x31566a,
-        roughness: 0.28,
-        metalness: 0.08,
-        side: THREE.FrontSide,
-        depthTest: true,
-        depthWrite: true,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -2,
-      }),
-        windowMaterial = new THREE.MeshStandardMaterial({
+      const windowMaterial = new THREE.MeshStandardMaterial({
         color: 0x31566a,
         emissive: 0xffc45e,
         emissiveIntensity: 0,
         roughness: 0.28,
         metalness: 0.08,
-        side: THREE.FrontSide,
-        depthTest: true,
-        depthWrite: true,
+        side: THREE.DoubleSide,
         polygonOffset: true,
-        polygonOffsetFactor: -1,
+        polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
       });
       windowMaterials.push(windowMaterial);
-      const windowGeometry=new THREE.PlaneGeometry(1,1),windowCells=new Map<string,typeof windowInstances>();
-      for(const instance of windowInstances){const key=realCampus?`${Math.floor(instance.x/16)}/${Math.floor(instance.z/16)}`:"classic",bucket=windowCells.get(key);if(bucket)bucket.push(instance);else windowCells.set(key,[instance]);}
-      for(const [key,instances] of windowCells){
-        const groups=realCampus?[
-          {material:darkWindowMaterial,instances:instances.filter(instance=>{const hash=(Math.imul(Math.round(instance.x*1000),73856093)^Math.imul(Math.round(instance.y*1000),83492791)^Math.imul(Math.round(instance.z*1000),19349663))>>>0;return hash%100>=18;})},
-          {material:windowMaterial,instances:instances.filter(instance=>{const hash=(Math.imul(Math.round(instance.x*1000),73856093)^Math.imul(Math.round(instance.y*1000),83492791)^Math.imul(Math.round(instance.z*1000),19349663))>>>0;return hash%100<18;})},
-        ]:[{material:windowMaterial,instances}];
-        for(const group of groups){if(!group.instances.length)continue;const windows=new THREE.InstancedMesh(windowGeometry,group.material,group.instances.length);group.instances.forEach((instance,index)=>windows.setMatrixAt(index,instance.matrix));windows.instanceMatrix.needsUpdate=true;windows.renderOrder=6;
-          if(realCampus){windows.userData.campusWindowCenter={x:group.instances.reduce((sum,instance)=>sum+instance.x,0)/group.instances.length,z:group.instances.reduce((sum,instance)=>sum+instance.z,0)/group.instances.length};windows.userData.campusWindowLit=group.material===windowMaterial;}
-          windowDetailMeshes.push(windows);mapGroup.add(windows);
-        }
-      }
+      const windows = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        windowMaterial,
+        windowMatrices.length,
+      );
+      windowMatrices.forEach((m, i) => windows.setMatrixAt(i, m));
+      windows.instanceMatrix.needsUpdate = true;
+      windows.renderOrder = 6;
+      windowDetailMeshes.push(windows);
+      mapGroup.add(windows);
       const doors = new THREE.InstancedMesh(
         new THREE.PlaneGeometry(1, 1),
         new THREE.MeshStandardMaterial({
@@ -2545,44 +1878,22 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       doors.instanceMatrix.needsUpdate = true;
       doors.renderOrder = 6;
       mapGroup.add(doors);
-      const waterMat = applyCampusMacro(new THREE.MeshStandardMaterial({
-        color: realCampus ? 0xc1cfcb : 0x478ca5,
-        map: realCampus ? campusTextures?.water ?? null : null,
-        emissive: 0x10282b,
-        emissiveIntensity: realCampus ? 0.12 : 0.28,
-        normalMap: campusTextures?.waterNormal ?? null,
-        normalScale: new THREE.Vector2(realCampus ? 0.14 : 0.22, realCampus ? 0.14 : 0.22),
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x478ca5,
         transparent: true,
-        opacity: realCampus ? 0.88 : 0.83,
-        roughness: realCampus ? 0.34 : 0.42,
-        metalness: realCampus ? 0.04 : 0,
+        opacity: 0.83,
+        roughness: 0.24,
+        metalness: 0.1,
         side: THREE.DoubleSide,
-      }), realCampus ? 0.08 : 0);
-      const bankPositions: number[] = [], bankIndices: number[] = [];
-      let bankVertex = 0;
-      for (const water of waterVisualAreas) {
+      });
+      for (const water of r.waters) {
         if (water.points.length < 3) continue;
         const wm = new THREE.Mesh(
-          realCampus ? surfaceGeometry(r, water.points, 0, () => water.level, water.holes) : surfaceGeometry(r, water.points, 0.15),
+          surfaceGeometry(r, water.points, 0.15),
           waterMat,
         );
         wm.renderOrder = 4;
         mapGroup.add(wm);
-        if (realCampus) for (const shore of [water.points, ...water.holes]) for (let index = 0; index < shore.length; index++) {
-          const point = shore[index], next = shore[(index + 1) % shore.length], topA = Math.min(terrainHeight(r, point[0], point[1]), water.level + 0.035), topB = Math.min(terrainHeight(r, next[0], next[1]), water.level + 0.035);
-          bankPositions.push(point[0], water.level - 0.015, point[1], point[0], topA, point[1], next[0], water.level - 0.015, next[1], next[0], topB, next[1]);
-          bankIndices.push(bankVertex, bankVertex + 2, bankVertex + 1, bankVertex + 1, bankVertex + 2, bankVertex + 3);
-          bankVertex += 4;
-        }
-      }
-      if (bankPositions.length) {
-        const bankGeometry = new THREE.BufferGeometry();
-        bankGeometry.setAttribute("position", new THREE.Float32BufferAttribute(bankPositions, 3));
-        bankGeometry.setIndex(bankIndices);
-        bankGeometry.computeVertexNormals();
-        const banks = new THREE.Mesh(bankGeometry, new THREE.MeshStandardMaterial({ color: 0x667658, roughness: 1, side: THREE.DoubleSide }));
-        banks.receiveShadow = true;
-        mapGroup.add(banks);
       }
     };
     addRegion(regions.main);
@@ -2602,25 +1913,18 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       siteHitProxies: THREE.Mesh[] = [],
       siteHitGeometry = new THREE.CylinderGeometry(1.15, 1.15, 2.8, 12),
       siteHitMaterial = new THREE.MeshBasicMaterial({ visible: false });
-    buildingGroup.visible = true;
     scene.add(buildingGroup);
     const siteNodeBatchGroup = new THREE.Group();
-    siteNodeBatchGroup.visible = true;
     scene.add(siteNodeBatchGroup);
     const unitGroup = new THREE.Group();
-    unitGroup.visible = !reviewSite;
     scene.add(unitGroup);
     const commandGroup = new THREE.Group();
-    commandGroup.visible = !reviewSite;
     scene.add(commandGroup);
     const combatGroup = new THREE.Group();
-    combatGroup.visible = !reviewSite;
     scene.add(combatGroup);
     const battleAlertGroup = new THREE.Group();
-    battleAlertGroup.visible = !reviewSite;
     scene.add(battleAlertGroup);
     const territoryGroup = new THREE.Group();
-    territoryGroup.visible = !reviewSite;
     territoryGroup.visible = false;
     scene.add(territoryGroup);
     const siteObjects = new Map<number, THREE.Group>();
@@ -3564,7 +2868,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           batch.sites.forEach((site, index) => {
             siteNodeDummy.position.set(
               site.x,
-              terrainHeight(regionForX(site.x), site.x, site.z) + (realCampus ? 0.35 : 1.75),
+              terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
               site.z,
             );
             siteNodeDummy.quaternion.copy(camera.quaternion);
@@ -3806,13 +3110,11 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           labelTexture.colorSpace = THREE.SRGBColorSpace;
           const labelScaleX = isTarget ? 4.6 : 3.7,
             labelScaleY = isTarget ? 0.82 : 0.68,
-            labelY = realCampus ? 1.05 : 2.75 + (site.id % 3) * 0.42,
+            labelY = 2.75 + (site.id % 3) * 0.42,
             countCanvas = document.createElement("canvas");
           labelSprite.scale.set(labelScaleX, labelScaleY, 1);
           labelSprite.position.y = labelY;
           labelSprite.renderOrder = 30;
-          labelSprite.frustumCulled = false;
-          labelSprite.userData.markerRole = "label";
           countCanvas.width = 128;
           countCanvas.height = 64;
           const countContext = countCanvas.getContext("2d")!,
@@ -3831,8 +3133,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           countSprite.scale.set(0.68, 0.34, 1);
           countSprite.position.y = 1.5;
           countSprite.renderOrder = 31;
-          countSprite.frustumCulled = false;
-          countSprite.userData.markerRole = "count";
           g.add(
             routeHighlight,
             hoverHighlight,
@@ -4660,32 +3960,14 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
     scene.add(treeGroup);
     let seed = 91723;
     const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-    const tg = new THREE.CylinderGeometry(realCampus ? 0.012 : 0.07, realCampus ? 0.018 : 0.11, realCampus ? 0.24 : 0.86, 7),
+    const tg = new THREE.CylinderGeometry(0.07, 0.11, 0.86, 7),
       tm = new THREE.MeshStandardMaterial({ color: 0x61412f, roughness: 1 }),
-      crownGeometries = realCampus
-        ? [new THREE.DodecahedronGeometry(0.13, 1), new THREE.SphereGeometry(0.12, 12, 9), new THREE.ConeGeometry(0.14, 0.32, 11), new THREE.SphereGeometry(0.12, 12, 9)]
-        : [new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8), new THREE.SphereGeometry(0.52, 10, 8)],
-      crownMaterials = (realCampus ? [0x8d9e80, 0x9ba17c, 0x778c72, 0x87977d] : [0x315d36, 0x467648, 0x5b8a4e]).map(
-        (color) => new THREE.MeshStandardMaterial({ color, map: realCampus ? campusTextures?.leaf ?? null : null, roughnessMap: realCampus ? campusTextures?.leafRoughness ?? null : null, roughness: 0.9 }),
+      cg = new THREE.SphereGeometry(0.52, 10, 8),
+      cms = [0x315d36, 0x467648, 0x5b8a4e].map(
+        (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92 }),
       ),
-      treePositions: { x: number; y: number; z: number; variant: number; scale: number }[] = [];
-    if (realCampus) {
-      const campusPolygons=regions.main.campuses.filter((campus:any)=>campus.name==="北京大学"||campus.name==="清华大学"),seen=new Set<string>(),
-        insideCampus=(x:number,z:number)=>campusPolygons.some((campus:any)=>pointInPolygon(x,z,campus.points)),
-        waterBounds=regions.main.waters.map((water:any)=>({minX:Math.min(...water.points.map((point:number[])=>point[0]))-.32,maxX:Math.max(...water.points.map((point:number[])=>point[0]))+.32,minZ:Math.min(...water.points.map((point:number[])=>point[1]))-.32,maxZ:Math.max(...water.points.map((point:number[])=>point[1]))+.32})),
-        pushTree=(x:number,z:number,preferredVariant?:number)=>{
-          const key=`${Math.round(x/.08)}/${Math.round(z/.08)}`;
-          if(treePositions.length>=2600||seen.has(key)||!insideCampus(x,z)||insideObstacle(x,z)||gameRef.current.sites.some(site=>Math.hypot(site.x-x,site.z-z)<.22))return;
-          const besideWater=waterBounds.some((water:any)=>x>=water.minX&&x<=water.maxX&&z>=water.minZ&&z<=water.maxZ),hash=Math.abs(Math.round(x*100)*31+Math.round(z*100)*17),variant=besideWater?3:preferredVariant??hash%3;
-          seen.add(key);treePositions.push({x,y:terrainHeight(regions.main,x,z),z,variant,scale:.82+(hash%7)*.05});
-        };
-      for(const campus of ["pku","thu"] as const){const candidates=SATELLITE_TREE_POINTS[campus],target=campus==="pku"?650:1100,threshold=Math.min(1,target/candidates.length);for(const point of candidates){const x=Math.round(point[0]*1000),z=Math.round(point[1]*1000),hash=(Math.imul(x,73856093)^Math.imul(z,19349663))>>>0;if(hash/4294967296<threshold)pushTree(point[0],point[1]);}}
-      for(const [x,z] of regions.main.trees??[])pushTree(x,z);
-      for(const [rowIndex,row] of (regions.main.treeRows??[]).entries())for(let segment=1;segment<row.length;segment++){
-        const a=row[segment-1],b=row[segment],dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),count=Math.max(1,Math.floor(length/.26));
-        for(let index=0;index<=count;index++){const t=index/count;pushTree(a[0]+dx*t,a[1]+dz*t,rowIndex%2);}
-      }
-    } else for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
+      treePositions: { x: number; y: number; z: number }[] = [];
+    for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
       for (let i = 0; i < count; i++) {
         const x = r.offsetX - r.width / 2 + rnd() * r.width,
           z = -r.depth / 2 + rnd() * r.depth;
@@ -4700,112 +3982,79 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           )
         )
           continue;
-        treePositions.push({ x, y: terrainHeight(r, x, z), z, variant: 0, scale: 1 });
+        treePositions.push({ x, y: terrainHeight(r, x, z), z });
       }
     }
     const treeTrunks = new THREE.InstancedMesh(tg, tm, treePositions.length),
-      variantPositions = crownGeometries.map((_,variant)=>realCampus?treePositions.filter(position=>position.variant===variant):treePositions),
-      treeCrowns = crownGeometries.map((geometry, variant) => new THREE.InstancedMesh(geometry, crownMaterials[variant], variantPositions[variant].length)),
-      treeCrownClusters = realCampus ? crownGeometries.map((geometry, variant) => new THREE.InstancedMesh(geometry, crownMaterials[variant], variantPositions[variant].length * 2)) : [],
+      treeCrowns = cms.map(
+        (material) =>
+          new THREE.InstancedMesh(cg, material, treePositions.length),
+      ),
       treeDummy = new THREE.Object3D();
     treePositions.forEach((position, index) => {
-      treeDummy.position.set(position.x, position.y + (realCampus ? 0.12 : 0.43), position.z);
-      treeDummy.rotation.set(0, 0, 0);
-      treeDummy.scale.set(position.scale * .82, position.scale, position.scale * .82);
+      treeDummy.position.set(position.x, position.y + 0.43, position.z);
+      treeDummy.scale.set(1, 1, 1);
       treeDummy.updateMatrix();
       treeTrunks.setMatrixAt(index, treeDummy.matrix);
-    });
-    treeCrowns.forEach((mesh, variant) => variantPositions[variant].forEach((position, index) => {
-      treeDummy.position.set(position.x, position.y + (realCampus ? variant === 2 ? 0.27 : 0.24 : 0.92 + variant * 0.32), position.z);
-      treeDummy.rotation.set(0, ((index * 37 + variant * 19) % 360) * Math.PI / 180, 0);
-      const width = realCampus ? variant === 1 ? .72 : variant === 2 ? .88 : variant === 3 ? 1.08 : 1 : 1.1 - variant * .18,
-        height = realCampus ? variant === 0 ? .82 : variant === 1 ? 1.22 : variant === 2 ? 1.08 : 1.38 : .65;
-      treeDummy.scale.set(position.scale * width, position.scale * height, position.scale * width);
-      treeDummy.updateMatrix();
-      mesh.setMatrixAt(index, treeDummy.matrix);
-    }));
-    treeCrownClusters.forEach((mesh, variant) => variantPositions[variant].forEach((position, index) => {
-      for (let layer = 0; layer < 2; layer++) {
-        const angle = ((index * 137 + variant * 53 + layer * 167) % 360) * Math.PI / 180,
-          radial = variant === 2 ? 0.018 : 0.052 + layer * 0.012,
-          baseY = variant === 2 ? 0.27 : 0.24,
-          vertical = variant === 2 ? 0.035 + layer * 0.055 : variant === 1 ? -0.035 + layer * 0.09 : variant === 3 ? -0.045 + layer * 0.025 : -0.025 + layer * 0.055,
-          clusterScale = variant === 2 ? 0.62 - layer * 0.08 : 0.62 + layer * 0.05;
-        treeDummy.position.set(position.x + Math.cos(angle) * radial, position.y + baseY + vertical, position.z + Math.sin(angle) * radial);
-        treeDummy.rotation.set(0, angle, 0);
-        treeDummy.scale.set(position.scale * clusterScale, position.scale * clusterScale * (variant === 1 ? 1.18 : variant === 3 ? 1.12 : 0.88), position.scale * clusterScale);
+      treeCrowns.forEach((mesh, layer) => {
+        treeDummy.position.y = position.y + 0.92 + layer * 0.32;
+        treeDummy.scale.set(1.1 - layer * 0.18, 0.65, 1.1 - layer * 0.18);
         treeDummy.updateMatrix();
-        mesh.setMatrixAt(index * 2 + layer, treeDummy.matrix);
-      }
-    }));
+        mesh.setMatrixAt(index, treeDummy.matrix);
+      });
+    });
     treeTrunks.instanceMatrix.needsUpdate = true;
     treeCrowns.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
-    treeCrownClusters.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
     treeTrunks.castShadow = true;
     treeCrowns.forEach((mesh) => (mesh.castShadow = true));
-    treeCrownClusters.forEach((mesh) => (mesh.castShadow = false));
-    treeGroup.add(treeTrunks, ...treeCrowns, ...treeCrownClusters);
-    const lampPositions: { x: number; z: number; glowX: number; glowZ: number; r: any }[] = [],
+    treeGroup.add(treeTrunks, ...treeCrowns);
+    const lampPositions: { x: number; z: number; r: any }[] = [],
       lampSeen = new Set<string>();
     for (const r of [regions.main]) {
       const cap = r === regions.main ? 650 : 90,
-        pushLamp = (x: number, z: number, glowX = x, glowZ = z) => {
-          const precision = realCampus ? 4 : 2,
-            key = `${Math.round(x * precision)}/${Math.round(z * precision)}`;
+        pushLamp = (x: number, z: number) => {
+          const key = `${Math.round(x * 2)}/${Math.round(z * 2)}`;
           if (
             lampSeen.has(key) ||
-            lampPositions.length >= cap ||
-            (realCampus && insideObstacle(x, z))
+            lampPositions.filter((p) => p.r === r).length >= cap
           )
             return;
           lampSeen.add(key);
-          lampPositions.push({ x, z, glowX, glowZ, r });
+          lampPositions.push({ x, z, r });
         };
       for (const [x, z] of r.lamps ?? []) pushLamp(x, z);
-      const campusAreas = realCampus
-          ? r.campuses.filter((campus: any) => campus.name === "北京大学" || campus.name === "清华大学")
-          : [],
-        insideCampus = (x: number, z: number) => !realCampus || campusAreas.some((campus: any) => pointInPolygon(x, z, campus.points)),
-        spacing = realCampus ? 0.72 : 3.1;
       for (const road of r.roads) {
         if (
-          ["steps", "corridor", "track", "motorway", "motorway_link", "trunk", "trunk_link"].includes(road.kind) ||
-          road.lit === "no" ||
-          (realCampus && !road.points.some((point: number[]) => insideCampus(point[0], point[1])))
+          ["footway", "path", "steps", "corridor", "track"].includes(road.kind)
         )
           continue;
-        let distanceUntilNext = spacing * 0.5,
-          sampleIndex = 0;
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
             [x2, z2] = road.points[k],
             dx = x2 - x1,
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
-          if (len < 0.01) continue;
-          let travelled = 0;
-          while (travelled + distanceUntilNext <= len) {
-            travelled += distanceUntilNext;
-            const t = travelled / len,
-              nx = -dz / len,
-              nz = dx / len,
-              side = (sampleIndex++ + k) % 2 ? 1 : -1,
-              offset = road.width / 2 + (realCampus ? 0.07 : 0.16);
-            const roadX = x1 + dx * t,
-              roadZ = z1 + dz * t;
-            pushLamp(roadX + nx * offset * side, roadZ + nz * offset * side, roadX, roadZ);
-            distanceUntilNext = spacing;
+          if (len < 1.8) continue;
+          const count = Math.floor(len / 3.1),
+            nx = -dz / len,
+            nz = dx / len;
+          for (let n = 1; n <= count; n++) {
+            const t = n / (count + 1),
+              side = (n + k) % 2 ? 1 : -1;
+            pushLamp(
+              x1 + dx * t + nx * (road.width / 2 + 0.16) * side,
+              z1 + dz * t + nz * (road.width / 2 + 0.16) * side,
+            );
           }
-          distanceUntilNext -= len - travelled;
         }
       }
     }
-    const poleGeometry = new THREE.CylinderGeometry(realCampus ? 0.006 : 0.025, realCampus ? 0.009 : 0.038, realCampus ? 0.14 : 0.82, 6),
+    const poleGeometry = new THREE.CylinderGeometry(0.025, 0.038, 0.82, 6),
       poleMaterial = new THREE.MeshStandardMaterial({
         color: 0x303735,
         roughness: 0.76,
       }),
-      bulbGeometry = new THREE.SphereGeometry(realCampus ? 0.016 : 0.065, 8, 6),
+      bulbGeometry = new THREE.SphereGeometry(0.065, 8, 6),
       lampBulbMaterial = new THREE.MeshStandardMaterial({
         color: 0xffe3a6,
         emissive: 0xffb23f,
@@ -4822,41 +4071,29 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         lampBulbMaterial,
         lampPositions.length,
       ),
-      lampGlowCanvas = document.createElement("canvas"),
-      lampGlowContext = lampGlowCanvas.getContext("2d")!,
-      lampGlowGradient = (lampGlowCanvas.width = lampGlowCanvas.height = 64, lampGlowContext.createRadialGradient(32, 32, 2, 32, 32, 31)),
-      lampGlowTexture = (lampGlowGradient.addColorStop(0, "rgba(255,211,124,.82)"), lampGlowGradient.addColorStop(0.38, "rgba(255,186,74,.36)"), lampGlowGradient.addColorStop(1, "rgba(255,164,48,0)"), lampGlowContext.fillStyle = lampGlowGradient, lampGlowContext.fillRect(0, 0, 64, 64), new THREE.CanvasTexture(lampGlowCanvas)),
-      lampGlowGeometry = new THREE.CircleGeometry(realCampus ? 0.4 : 1.15, 20),
-      lampGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffc66f, map: lampGlowTexture, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }),
-      lampGlows = new THREE.InstancedMesh(lampGlowGeometry, lampGlowMaterial, lampPositions.length),
       lampDummy = new THREE.Object3D();
     lampPositions.forEach((p, i) => {
       const base = terrainHeight(p.r, p.x, p.z);
-      lampDummy.rotation.set(0, 0, 0);
-      lampDummy.position.set(p.x, base + (realCampus ? 0.07 : 0.41), p.z);
+      lampDummy.position.set(p.x, base + 0.41, p.z);
       lampDummy.updateMatrix();
       poles.setMatrixAt(i, lampDummy.matrix);
-      lampDummy.position.y = base + (realCampus ? 0.15 : 0.86);
+      lampDummy.position.y = base + 0.86;
       lampDummy.updateMatrix();
       bulbs.setMatrixAt(i, lampDummy.matrix);
-      lampDummy.position.set(p.glowX, terrainHeight(p.r, p.glowX, p.glowZ) + 0.012, p.glowZ);
-      lampDummy.rotation.set(-Math.PI / 2, 0, 0);
-      lampDummy.updateMatrix();
-      lampGlows.setMatrixAt(i, lampDummy.matrix);
     });
     poles.instanceMatrix.needsUpdate = true;
     bulbs.instanceMatrix.needsUpdate = true;
-    lampGlows.instanceMatrix.needsUpdate = true;
-    lampGlows.renderOrder = 7;
-    lampGlows.visible = !realCampus;
-    scene.add(poles, bulbs, lampGlows);
-    const lights: THREE.PointLight[] = Array.from({ length: Math.min(8, lampPositions.length) }, () => {
-      const light = new THREE.PointLight(0xffc66f, 0, realCampus ? 0.9 : 5, 2);
-      light.userData.hasLamp = false;
-      scene.add(light);
-      return light;
-    });
-    let lastLampLightUpdateAt = -Infinity;
+    scene.add(poles, bulbs);
+    const lights: THREE.PointLight[] = [];
+    lampPositions
+      .filter((_, i) => i % 41 === 0)
+      .slice(0, 22)
+      .forEach((p) => {
+        const l = new THREE.PointLight(0xffc66f, 0, 5, 2);
+        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.9, p.z);
+        scene.add(l);
+        lights.push(l);
+      });
     const ray = new THREE.Raycaster(),
       mouse = new THREE.Vector2(),
       projectedSiteNode = new THREE.Vector3(),
@@ -4866,7 +4103,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       siteNodeWorldPosition = (site: SiteState, target = new THREE.Vector3()) =>
         target.set(
           site.x,
-          terrainHeight(regionForX(site.x), site.x, site.z) + (realCampus ? 0.35 : 1.75),
+          terrainHeight(regionForX(site.x), site.x, site.z) + 1.75,
           site.z,
         );
     let down: {
@@ -5268,8 +4505,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         z = units.reduce((sum, unit) => sum + unit.z, 0) / units.length;
       return new THREE.Vector3(x, terrainHeight(regionForX(x), x, z) + 1.35, z);
     };
-    let hoveredSiteId: number | null = null,
-      hoveredRoadName = "";
+    let hoveredSiteId: number | null = null;
     const setHoveredSite = (siteId: number | null) => {
       if (hoveredSiteId != null) {
         const previous = siteObjects.get(hoveredSiteId)?.userData
@@ -5387,13 +4623,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       }
       if (!down) {
         updateCommandLabelHover(e);
-        if (realCampus && !mobileClient && hitSite(e) == null) {
-          const point = groundAt(e), road = point ? namedRoadAt(point.x, point.z) : undefined;
-          if (road && road.name !== hoveredRoadName) {
-            hoveredRoadName = road.name;
-            setNotice(`${road.name} · ${road.kind} · 2026真实校园`);
-          } else if (!road) hoveredRoadName = "";
-        }
         return;
       }
       hideCommandLabels();
@@ -5570,12 +4799,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         setSelected(down.site);
         const site = gameRef.current.sites[down.site];
         setRenameDraft(site?.displayName ?? site?.name ?? "");
-      }
-      if (realCampus && !moved && down.site == null) {
-        const point = groundAt(e), feature = point ? obstaclesAt(point.x, point.z).find(area=>area.name) : undefined, road = point && !feature ? namedRoadAt(point.x, point.z) : undefined;
-        if (feature?.name)
-          setNotice(`${feature.name} · 2026真实校园 · ${feature.osmKey ?? "校园资料"}`);
-        else if(road) setNotice(`${road.name} · ${road.kind} · 2026真实校园`);
       }
       if (
         moved &&
@@ -6968,9 +6191,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             unit.transportModel = undefined;
           });
       };
-    const benchmarkParams = new URLSearchParams(window.location.search),
-      aiBenchmarkScenario = benchmarkParams.get("ai-benchmark"),
-      renderBenchmark = benchmarkParams.has("render-benchmark"),
+    const aiBenchmarkScenario = new URLSearchParams(window.location.search).get(
+        "ai-benchmark",
+      ),
       aiBenchmarkDifficulties = (() => {
         if (!aiBenchmarkScenario) return null;
         const result: Partial<Record<Team, AiDifficulty>> = {};
@@ -9524,7 +8747,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       lastShadowUpdateAt = 0,
       nextStuckCheckAt = 0,
       nextLodRefreshAt = 0,
-      nextMapDetailLodAt = 0,
       nextUnitSimulationAt = 0,
       lastUnitSimulationAt = last,
       unitSimulationTick = 0,
@@ -9552,18 +8774,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       const rawDelta = (now - last) / 1000,
         dt = Math.min(backgroundServerTick ? 0.25 : 0.05, rawDelta);
       last = now;
-      if (!backgroundServerTick && now >= nextMapDetailLodAt) {
-        nextMapDetailLodAt = now + 240;
-        const distance = camera.position.distanceTo(controls.target),
-          daytime = gameRef.current.timeOfDay >= 6 && gameRef.current.timeOfDay <= 19;
-        windowDetailMeshes.forEach((mesh) => {
-          const center=mesh.userData.campusWindowCenter as {x:number;z:number}|undefined,
-            localDistance=center?Math.hypot(center.x-camera.position.x,center.z-camera.position.z):0;
-          mesh.visible=activeQualityProfile.windowDetails&&(!realCampus||distance<18&&localDistance<12&&(daytime||mesh.userData.campusWindowLit));
-        });
-        sportDetailMeshes.forEach((mesh) => (mesh.visible = !realCampus || distance < 16));
-        buildingOutlineObjects.forEach((mesh) => (mesh.visible = !realCampus));
-      }
       if (!backgroundServerTick && rawDelta < 0.2) {
         performanceFrameTime += rawDelta;
         performanceFrameCount++;
@@ -9615,6 +8825,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
               ? pathfindingSpentMs / pathfindingSamples
               : 0,
         });
+        windowDetailMeshes.forEach(
+          (mesh) => (mesh.visible = activeQualityProfile.windowDetails),
+        );
         performanceWindowAt = now;
         performanceFrameTime = 0;
         performanceFrameCount = 0;
@@ -9624,7 +8837,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         pathfindingSamples = 0;
       }
       const g = gameRef.current;
-      if (reviewSite && Number.isFinite(forcedReviewHour) && forcedReviewHour >= 0 && forcedReviewHour < 24) g.timeOfDay = forcedReviewHour;
       if (screenRef.current === "home") {
         if (!backgroundServerTick) {
           controls.update();
@@ -9871,7 +9083,6 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         if (autoDayRef.current)
           g.timeOfDay = (8 + g.campaign.elapsedHours) % 24;
       }
-      if (reviewSite && Number.isFinite(forcedReviewHour) && forcedReviewHour >= 0 && forcedReviewHour < 24) g.timeOfDay = forcedReviewHour;
       const angle = ((g.timeOfDay - 6) / 24) * Math.PI * 2,
         day = THREE.MathUtils.smoothstep(Math.sin(angle), -0.12, 0.35),
         night = 1 - day;
@@ -9895,40 +9106,22 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
         renderer.shadowMap.needsUpdate = true;
       }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
-      moon.intensity = night * 1.25;
-      nightFill.intensity = realCampus ? night * 1.45 : 0;
-      hemi.intensity = 0.72 + day * 1.18;
-      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x7890a5);
-      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x303a4b);
+      moon.intensity = night * 0.9;
+      hemi.intensity = 0.36 + day * 1.54;
+      hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x486795);
+      hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x182437);
       const sky = new THREE.Color(0x07101f).lerp(
         new THREE.Color(0x9fc5d8),
         day,
       );
       scene.background = sky;
       (scene.fog as THREE.FogExp2).color.copy(sky);
-      (scene.fog as THREE.FogExp2).density = realCampus ? 0.007 + night * 0.015 : 0.007;
-      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 0.36));
-      buildingSurfaceMaterials.forEach((m) => (m.emissiveIntensity = night * 0.24));
-      campusNightRoadMaterials.forEach((material) => (material.opacity = night * 0.2));
+      windowMaterials.forEach((m) => (m.emissiveIntensity = night * 3.2));
       sportMaterials.forEach(
         (material) =>
           (material.emissiveIntensity = 0.025 + night * 0.16),
       );
       lampBulbMaterial.emissiveIntensity = 0.08 + night * 4.8;
-      lampGlowMaterial.opacity = night * (realCampus ? 0.26 : 0.14);
-      if (now - lastLampLightUpdateAt > 500) {
-        lastLampLightUpdateAt = now;
-        const nearestLamps = lampPositions
-          .map((lamp) => ({ lamp, distance: Math.hypot(lamp.x - controls.target.x, lamp.z - controls.target.z) }))
-          .sort((a, b) => a.distance - b.distance)
-          .slice(0, lights.length);
-        lights.forEach((light, index) => {
-          const candidate = nearestLamps[index];
-          light.userData.hasLamp = !!candidate;
-          if (!candidate) return;
-          light.position.set(candidate.lamp.x, terrainHeight(candidate.lamp.r, candidate.lamp.x, candidate.lamp.z) + (realCampus ? 0.17 : 0.9), candidate.lamp.z);
-        });
-      }
       unitBodyMaterials.pku.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.ustc.emissiveIntensity = 0.035 + night * 0.24;
@@ -9939,9 +9132,9 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       lights.forEach(
         (light, index) =>
           (light.intensity =
-            light.userData.hasLamp && index < activeQualityProfile.dynamicLights ? night * (realCampus ? 3.2 : 5.5) : 0),
+            index < activeQualityProfile.dynamicLights ? night * 5.5 : 0),
       );
-      renderer.toneMappingExposure = 0.9 + day * 0.2;
+      renderer.toneMappingExposure = 0.72 + day * 0.38;
       commandAnimations.forEach((animation) => {
         animation.movers.forEach((mover, index) => {
           const t = (now * 0.00016 + animation.phase + index / 4) % 1;
@@ -10360,10 +9553,8 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           0.45,
           1.9,
         ),
-        showSiteLabels = (!!reviewSite && !reviewWide) || markerCameraDistance <= (realCampus ? 18 : 27);
+        showSiteLabels = markerCameraDistance <= 27;
       updateSiteNodeBatches(fixedRingScale);
-      camera.updateMatrixWorld();
-      siteNodeCameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
       siteObjects.forEach((object, id) => {
         const selectionHighlight = object.userData.routeHighlight as
           THREE.Object3D | undefined;
@@ -10383,27 +9574,11 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
             }[]
           | undefined;
         icons?.forEach((icon) => {
-          const markerRole = icon.object.userData.markerRole as string | undefined;
-          const iconScale =
-            realCampus && markerRole === "label"
-              ? fixedRingScale * 0.48
-              : realCampus && markerRole === "count"
-                ? fixedRingScale * 0.9
-                : fixedRingScale;
-          if (realCampus && markerRole) {
-            const offset =
-              (markerRole === "label" ? 2.1 : -1.25) * fixedRingScale;
-            icon.object.position.x = siteNodeCameraRight.x * offset;
-            icon.object.position.z = siteNodeCameraRight.z * offset;
-            icon.object.position.y = 0.35;
-          } else {
-            icon.object.position.x = icon.x * fixedRingScale;
-            icon.object.position.z = 0;
-            icon.object.position.y = 1.75 + (icon.y - 1.75) * fixedRingScale;
-          }
+          icon.object.position.x = icon.x * fixedRingScale;
+          icon.object.position.y = 1.75 + (icon.y - 1.75) * fixedRingScale;
           icon.object.scale.set(
-            icon.scaleX * iconScale,
-            icon.scaleY * iconScale,
+            icon.scaleX * fixedRingScale,
+            icon.scaleY * fixedRingScale,
             1,
           );
         });
@@ -10466,7 +9641,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
           }
         }
       }
-      if (!backgroundServerTick && (!aiBenchmarkScenario || renderBenchmark))
+      if (!backgroundServerTick && !aiBenchmarkScenario)
         renderer.render(scene, camera);
     };
     let serverClockWorker: Worker | null = null;
@@ -10579,19 +9754,12 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       setLayers: (sites, control) => {
         buildingGroup.visible = sites;
         siteNodeBatchGroup.visible = sites;
-        territoryGroup.visible = control && !reviewSite;
+        territoryGroup.visible = control;
       },
-      setPerspective: (team) => {
+      setPerspective: (_team) => {
         const target = controls.target.clone(),
           height = portraitViewport ? 36 : 24,
-          depth =
-            team === "thu"
-              ? portraitViewport
-                ? -36
-                : -22
-              : portraitViewport
-                ? 36
-                : 22;
+          depth = portraitViewport ? 36 : 22;
         camera.position.set(target.x, height, target.z + depth);
         camera.lookAt(target);
         controls.update();
@@ -10648,7 +9816,7 @@ roughnessFactor = mix(roughnessFactor, campusRoofRoughness, step(0.5, vCampusRoo
       },
     };
     sceneApi.current.setLayers(showSites, showControl);
-    if (!reviewSite) sceneApi.current.setPerspective(playerTeamRef.current);
+    sceneApi.current.setPerspective(playerTeamRef.current);
     applyMaterials(
       customMaterialsRef.current.unit,
       customMaterialsRef.current.site,

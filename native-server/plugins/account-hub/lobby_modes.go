@@ -36,7 +36,7 @@ func (s *hubServer) cancelPVPQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *hubServer) queueStatusLocked(id string) map[string]any {
-	for key, queue := range map[string]**queueEntry{"standard/real-campus-v1": &s.waitingReal, "blitz/real-campus-v1": &s.waitingBlitzReal} {
+	for pace, queue := range map[string]**queueEntry{"standard": &s.waiting, "blitz": &s.waitingBlitz} {
 		if *queue == nil || (*queue).UserID != id {
 			continue
 		}
@@ -45,24 +45,20 @@ func (s *hubServer) queueStatusLocked(id string) map[string]any {
 			*queue = nil
 			break
 		}
-		pace, mapProfile := "standard", "real-campus-v1"
-		if key == "blitz/real-campus-v1" {
-			pace = "blitz"
-		}
-		return map[string]any{"queued": true, "pace": pace, "mapProfile": mapProfile, "waitedSeconds": int(elapsed.Seconds())}
+		return map[string]any{"queued": true, "pace": pace, "waitedSeconds": int(elapsed.Seconds())}
 	}
 	return map[string]any{"queued": false, "creating": s.creating[id]}
 }
 
-func (s *hubServer) queueFor(pace, mapProfile string) **queueEntry {
+func (s *hubServer) queueFor(pace string) **queueEntry {
 	if pace == "blitz" {
-		return &s.waitingBlitzReal
+		return &s.waitingBlitz
 	}
-	return &s.waitingReal
+	return &s.waiting
 }
 
 func (s *hubServer) clearUserQueuesLocked(id string) {
-	for _, queue := range []**queueEntry{&s.waiting, &s.waitingBlitz, &s.waitingReal, &s.waitingBlitzReal} {
+	for _, queue := range []**queueEntry{&s.waiting, &s.waitingBlitz} {
 		if *queue != nil && (*queue).UserID == id {
 			*queue = nil
 		}

@@ -12,14 +12,13 @@ const regions=regionSpecs.map(spec=>{
   for(let j=0;j<spec.tiles[0];j++)for(let i=0;i<spec.tiles[1];i++)boxes.push([s+(n-s)*j/spec.tiles[0],w+(e-w)*i/spec.tiles[1],s+(n-s)*(j+1)/spec.tiles[0],w+(e-w)*(i+1)/spec.tiles[1]]);
   return {...spec,depth,boxes};
 });
-const highwayWidthMetres={motorway:24,trunk:20,primary:16,secondary:12,tertiary:10,residential:8,service:5,living_street:6,pedestrian:4,footway:2,path:1.5,cycleway:3,track:3,steps:2,corridor:2};
+const highwayWidth={motorway:1.3,trunk:1.15,primary:1,secondary:.86,tertiary:.72,residential:.55,service:.38,living_street:.46,pedestrian:.34,footway:.22,path:.18,cycleway:.24,track:.28,steps:.2,corridor:.16};
 const osmApiEndpoints=['https://api.openstreetmap.org/api/0.6/map','https://www.openstreetmap.org/api/0.6/map'];
 
 function project(lat,lon,r){
   const [s,w,n,e]=r.bbox,lat0=(s+n)/2*Math.PI/180,metresPerLon=111320*Math.cos(lat0),metresPerLat=110574,scale=r.width/((e-w)*metresPerLon);
   return [r.offsetX+(lon-(w+e)/2)*metresPerLon*scale,-(lat-(s+n)/2)*metresPerLat*scale];
 }
-function metresToWorld(value,r){const [s,w,n,e]=r.bbox,lat0=(s+n)/2*Math.PI/180,metresWide=(e-w)*111320*Math.cos(lat0);return value*r.width/metresWide;}
 function rect(r){return {minX:r.offsetX-r.width/2,maxX:r.offsetX+r.width/2,minZ:-r.depth/2,maxZ:r.depth/2};}
 function inside([x,z],b){return x>=b.minX-.001&&x<=b.maxX+.001&&z>=b.minZ-.001&&z<=b.maxZ+.001;}
 function clipSegment(a,b,box){
@@ -40,16 +39,15 @@ function clipPolygon(points,box){
   return out.filter((p,i,a)=>!i||Math.hypot(p[0]-a[i-1][0],p[1]-a[i-1][1])>.001);
 }
 function sameGeo(a,b){return Math.abs(a.lat-b.lat)<1e-7&&Math.abs(a.lon-b.lon)<1e-7;}
-function geometrySets(el,role='outer'){
-  if(el.geometry?.length)return role==='outer'?[el.geometry]:[];
-  const segments=(el.members||[]).filter(m=>(role==='inner'?m.role==='inner':!m.role||m.role==='outer')&&m.geometry?.length).map(m=>m.geometry.slice()),rings=[];
+function geometrySets(el){
+  if(el.geometry?.length)return [el.geometry];
+  const segments=(el.members||[]).filter(m=>(!m.role||m.role==='outer')&&m.geometry?.length).map(m=>m.geometry.slice()),rings=[];
   while(segments.length){const ring=segments.shift();let joined=true;while(joined&&segments.length){joined=false;for(let i=0;i<segments.length;i++){const s=segments[i];if(sameGeo(ring.at(-1),s[0]))ring.push(...s.slice(1));else if(sameGeo(ring.at(-1),s.at(-1)))ring.push(...s.reverse().slice(1));else if(sameGeo(ring[0],s.at(-1)))ring.unshift(...s.slice(0,-1));else if(sameGeo(ring[0],s[0]))ring.unshift(...s.reverse().slice(0,-1));else continue;segments.splice(i,1);joined=true;break;}}if(ring.length>=3)rings.push(ring);}
   return rings;
 }
 function decodeXml(value=''){return value.replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCodePoint(parseInt(n,16)));}
 function attributes(source=''){const out={};for(const match of source.matchAll(/([\w:-]+)="([^"]*)"/g))out[match[1]]=decodeXml(match[2]);return out;}
 function parseTags(body=''){const out={};for(const match of body.matchAll(/<tag\b([^>]*)\/>/g)){const a=attributes(match[1]);if(a.k)out[a.k]=a.v||'';}return out;}
-function metric(value=''){const match=String(value).match(/-?\d+(?:\.\d+)?/);return match?Number(match[0]):0;}
 function parseOsm(xml){
   const nodes=[],ways=[],relations=[];for(const match of xml.matchAll(/<node\b([^>]*?)(?:\/>|>([\s\S]*?)<\/node>)/g)){const a=attributes(match[1]);nodes.push({id:Number(a.id),lat:Number(a.lat),lon:Number(a.lon),tags:parseTags(match[2])});}
   for(const match of xml.matchAll(/<way\b([^>]*)>([\s\S]*?)<\/way>/g)){const a=attributes(match[1]),body=match[2],refs=[...body.matchAll(/<nd\b[^>]*ref="(\d+)"[^>]*\/>/g)].map(x=>Number(x[1]));ways.push({id:Number(a.id),refs,tags:parseTags(body)});}
@@ -67,61 +65,28 @@ async function fetchOsm(r){
   for(const relation of relations.values()){const members=relation.members.map(member=>{const way=ways.get(member.ref);if(member.type!=='way'||!way)return null;const geometry=way.refs.map(id=>nodes.get(id)).filter(Boolean).map(n=>({lat:n.lat,lon:n.lon}));return geometry.length?{...member,geometry}:null;}).filter(Boolean),all=members.flatMap(m=>m.geometry);if(!all.length)continue;const lats=all.map(p=>p.lat),lons=all.map(p=>p.lon);elements.push({type:'relation',id:relation.id,tags:relation.tags,members,center:{lat:(Math.min(...lats)+Math.max(...lats))/2,lon:(Math.min(...lons)+Math.max(...lons))/2}});}
   return {elements};
 }
-async function fetchTerrain(r,cols=72,rows=72){
+async function fetchTerrain(r,cols=20,rows=15){
   const [s,w,n,e]=r.bbox, coords=[];
   for(let j=0;j<rows;j++)for(let i=0;i<cols;i++)coords.push([s+(n-s)*j/(rows-1),w+(e-w)*i/(cols-1)]);
-  const sampled=Array(coords.length).fill(null);let failedSamples=0;
-  for(let k=0;k<coords.length;k+=80){const chunk=coords.slice(k,k+80),lat=chunk.map(x=>x[0]).join(','),lon=chunk.map(x=>x[1]).join(',');let values=null;
-    for(let attempt=0;attempt<4&&!values;attempt++)try{const res=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);if(!res.ok)throw new Error(`elevation ${res.status}`);const data=await res.json();if(!Array.isArray(data.elevation)||data.elevation.length!==chunk.length||data.elevation.some(value=>!Number.isFinite(value)))throw new Error('invalid elevation payload');values=data.elevation;}catch{if(attempt<3)await new Promise(resolve=>setTimeout(resolve,180*(attempt+1)));}
-    if(values)for(let index=0;index<values.length;index++)sampled[k+index]=values[index];else failedSamples+=chunk.length;
-    await new Promise(resolve=>setTimeout(resolve,35));
-  }
-  if(sampled.every(value=>value==null))sampled.fill(0);
-  for(let pass=0;pass<cols+rows&&sampled.some(value=>value==null);pass++){
-    const next=sampled.slice();
-    for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){const index=j*cols+i;if(sampled[index]!=null)continue;const nearby=[];for(const [dx,dz] of [[-1,0],[1,0],[0,-1],[0,1]]){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows&&sampled[z*cols+x]!=null)nearby.push(sampled[z*cols+x]);}if(nearby.length)next[index]=nearby.reduce((sum,value)=>sum+value,0)/nearby.length;}
-    sampled.splice(0,sampled.length,...next);
-  }
-  const heights=sampled.map(value=>value??0);if(failedSamples)console.warn(r.id,`${failedSamples} elevation samples interpolated`);
-  for(let pass=0;pass<2;pass++){
-    const next=heights.slice();
-    for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){
-      let sum=heights[j*cols+i]*4,weight=4;
-      for(const [dx,dz] of [[-1,0],[1,0],[0,-1],[0,1]]){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows){sum+=heights[z*cols+x];weight++;}}
-      next[j*cols+i]=sum/weight;
-    }
-    heights.splice(0,heights.length,...next);
-  }
-  for(let pass=0;pass<2;pass++){
-    const next=heights.slice();
-    for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){
-      const nearby=[];for(let dz=-3;dz<=3;dz++)for(let dx=-3;dx<=3;dx++){const x=i+dx,z=j+dz;if(x>=0&&x<cols&&z>=0&&z<rows)nearby.push(heights[z*cols+x]);}
-      nearby.sort((a,b)=>a-b);const median=nearby[Math.floor(nearby.length/2)],value=heights[j*cols+i];next[j*cols+i]=Math.max(median-3,Math.min(median+3,value));
-    }
-    heights.splice(0,heights.length,...next);
-  }
+  const heights=[];
+  for(let k=0;k<coords.length;k+=80){const chunk=coords.slice(k,k+80),lat=chunk.map(x=>x[0]).join(','),lon=chunk.map(x=>x[1]).join(',');
+    try{const res=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);const data=await res.json();heights.push(...data.elevation);}catch{heights.push(...chunk.map(()=>0));}}
   const min=Math.min(...heights), normalized=heights.map(h=>Number(((h-min)*(r.id==='main'?.025:.08)).toFixed(3)));
   return {cols,rows,heights:normalized};
 }
 const result={};
 for(const r of regions){
-  const data=await fetchOsm(r),roads=[],buildings=[],waters=[],campuses=[],landcovers=[],hardscapes=[],trees=[],treeRows=[],lamps=[],landmarks=[],box=rect(r),landmarkKeys=new Set();
+  const data=await fetchOsm(r),roads=[],buildings=[],waters=[],campuses=[],lamps=[],landmarks=[],box=rect(r),landmarkKeys=new Set();
   for(const el of data.elements||[]){const tag=el.tags||{},key=`${el.type}/${el.id}`,center=el.lat!=null?[el.lat,el.lon]:el.center?[el.center.lat,el.center.lon]:null;
     if(tag.name&&center){const [x,z]=project(center[0],center[1],r);if(inside([x,z],box)&&!landmarkKeys.has(key)){landmarkKeys.add(key);landmarks.push({name:tag.name,osmType:el.type,osmId:el.id,x:Number(x.toFixed(3)),z:Number(z.toFixed(3))});}}
     if(el.type==='node'&&tag.highway==='street_lamp'&&center){const [x,z]=project(center[0],center[1],r);if(inside([x,z],box))lamps.push([Number(x.toFixed(3)),Number(z.toFixed(3))]);}
-    if(el.type==='node'&&tag.natural==='tree'&&center){const [x,z]=project(center[0],center[1],r);if(inside([x,z],box))trees.push([Number(x.toFixed(3)),Number(z.toFixed(3))]);}
-    const sets=geometrySets(el);
-    if(el.type==='way'&&tag.natural==='tree_row'){for(const raw of sets)for(const points of clipPolyline(raw.map(p=>project(p.lat,p.lon,r)),box))treeRows.push(points.map(p=>p.map(v=>Number(v.toFixed(3)))));continue;}
-    const areaHighway=tag.highway&&el.type==='way'&&(tag.area==='yes'||tag.highway==='pedestrian'&&sets.some(raw=>raw.length>3&&sameGeo(raw[0],raw.at(-1))));
-    if(tag.highway&&el.type==='way'&&!areaHighway){for(const raw of sets){const projected=raw.map(p=>project(p.lat,p.lon,r));for(const points of clipPolyline(projected,box)){const taggedWidth=metric(tag.width);roads.push({name:tag.name||'',kind:tag.highway,width:taggedWidth?metresToWorld(taggedWidth,r):metresToWorld(highwayWidthMetres[tag.highway]||3,r),surface:tag.surface||'',lanes:metric(tag.lanes),lit:tag.lit||'',bridge:tag.bridge||'',tunnel:tag.tunnel||'',sidewalk:tag.sidewalk||'',cycleway:tag.cycleway||'',kerb:tag.kerb||'',points:points.map(p=>p.map(v=>Number(v.toFixed(3))))});}}continue;}
-    const landcoverKind=tag.leisure==='park'||tag.leisure==='garden'||tag.landuse==='grass'||tag.landuse==='forest'||tag.natural==='wood'||tag.leisure==='pitch'?(tag.leisure||tag.landuse||tag.natural):'';
-    const hardscapeKind=areaHighway?tag.highway:tag.place==='square'?'square':tag.amenity==='parking'?'parking':'';
-    const destination=tag.building?buildings:(tag.natural==='water'||tag.landuse==='reservoir')?waters:tag.amenity==='university'?campuses:landcoverKind?landcovers:hardscapeKind?hardscapes:null;if(!destination)continue;
-    for(const raw of sets){const points=clipPolygon(raw.map(p=>project(p.lat,p.lon,r)),box);if(points.length<3)continue;const xs=points.map(p=>p[0]),zs=points.map(p=>p[1]),bw=Math.max(...xs)-Math.min(...xs),bd=Math.max(...zs)-Math.min(...zs);if(bw<.08||bd<.08)continue;const common={name:tag.name||'',osmType:el.type,osmId:el.id,points:points.map(p=>p.map(v=>Number(v.toFixed(3))))};if(destination===buildings)destination.push({...common,building:tag.building||'',levels:metric(tag['building:levels']),height:metric(tag.height),minHeight:metric(tag.min_height),material:tag['building:material']||'',colour:tag['building:colour']||tag.colour||'',roofShape:tag['roof:shape']||'',roofHeight:metric(tag['roof:height']),roofLevels:metric(tag['roof:levels']),roofMaterial:tag['roof:material']||'',roofColour:tag['roof:colour']||'',startDate:tag.start_date||'',amenity:tag.amenity||'',memberWayIds:el.type==='relation'?(el.members||[]).filter(member=>member.type==='way'&&(!member.role||member.role==='outer')).map(member=>member.ref):[]});else if(destination===landcovers)destination.push({...common,kind:landcoverKind});else if(destination===hardscapes)destination.push({...common,kind:hardscapeKind,surface:tag.surface||''});else if(destination===waters)destination.push({...common,holes:el.type==='relation'?geometrySets(el,'inner').map(hole=>clipPolygon(hole.map(p=>project(p.lat,p.lon,r)),box)).filter(hole=>hole.length>=3).map(hole=>hole.map(p=>p.map(v=>Number(v.toFixed(3))))):[]});else destination.push(common);}
+    const sets=geometrySets(el);if(tag.highway&&el.type==='way'){for(const raw of sets){const projected=raw.map(p=>project(p.lat,p.lon,r));for(const points of clipPolyline(projected,box))roads.push({name:tag.name||'',kind:tag.highway,width:highwayWidth[tag.highway]||.3,points:points.map(p=>p.map(v=>Number(v.toFixed(3))))});}continue;}
+    const destination=tag.building?buildings:(tag.natural==='water'||tag.landuse==='reservoir')?waters:tag.amenity==='university'?campuses:null;if(!destination)continue;
+    for(const raw of sets){const points=clipPolygon(raw.map(p=>project(p.lat,p.lon,r)),box);if(points.length<3)continue;const xs=points.map(p=>p[0]),zs=points.map(p=>p[1]),bw=Math.max(...xs)-Math.min(...xs),bd=Math.max(...zs)-Math.min(...zs);if(bw<.08||bd<.08)continue;destination.push({name:tag.name||'',osmType:el.type,osmId:el.id,levels:Number(tag['building:levels']||0)||0,points:points.map(p=>p.map(v=>Number(v.toFixed(3))))});}
   }
   roads.sort((a,b)=>b.points.length-a.points.length);buildings.sort((a,b)=>b.points.length-a.points.length);
-  result[r.id]={label:r.label,bbox:r.bbox,width:r.width,depth:r.depth,offsetX:r.offsetX,roads,buildings,waters,campuses,landcovers,hardscapes,trees,treeRows,lamps,landmarks,terrain:await fetchTerrain(r)};
+  result[r.id]={label:r.label,bbox:r.bbox,width:r.width,depth:r.depth,offsetX:r.offsetX,roads,buildings,waters,campuses,lamps,landmarks,terrain:await fetchTerrain(r)};
   console.log(r.id,`${roads.length} roads`,`${buildings.length} buildings`,`${waters.length} water`,`${lamps.length} mapped lamps`,`${landmarks.length} landmarks`);
 }
 await fs.mkdir('src',{recursive:true});
-await fs.writeFile('src/osm-map-data-real.ts',`// Generated ${new Date().toISOString()} from OpenStreetMap (ODbL) and Open-Meteo elevation data.\n// WGS84 equirectangular projection; full unclipped feature counts are preserved inside each declared bbox.\nexport const osmRegions = ${JSON.stringify(result)} as const;\n`);
+await fs.writeFile('src/osm-map-data.ts',`// Generated ${new Date().toISOString()} from OpenStreetMap (ODbL) and Open-Meteo elevation data.\n// WGS84 equirectangular projection; full unclipped feature counts are preserved inside each declared bbox.\nexport const osmRegions = ${JSON.stringify(result)} as const;\n`);

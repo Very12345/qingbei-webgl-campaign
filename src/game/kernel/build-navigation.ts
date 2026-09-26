@@ -80,12 +80,7 @@ export function buildKernelNavGrid(region: any): KernelNavGrid {
           for (let gx = x0; gx <= x1; gx++) {
             const x = minX + (gx + 0.5) * cell,
               z = minZ + (gz + 0.5) * cell;
-            if (
-              pointInPolygon(x, z, polygon.points) &&
-              !(polygon.holes ?? []).some((hole: number[][]) =>
-                pointInPolygon(x, z, hole),
-              )
-            ) {
+            if (pointInPolygon(x, z, polygon.points)) {
               blocked[gz * cols + gx] = 1;
               mask[gz * cols + gx] = 1;
             }

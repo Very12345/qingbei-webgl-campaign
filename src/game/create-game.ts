@@ -1,4 +1,4 @@
-import {DEFAULT_MAP_PROFILE,MAP_GEOMETRY_VERSION,mapRegionsFor,type MapProfile} from "./map-profile";
+import { osmRegions } from "../osm-map-data";
 import type { GameData, SiteState, Team, UnitState } from "./types";
 import { defaultResearchState } from "./research";
 
@@ -156,8 +156,8 @@ const auditedOsmIds: Record<string, string> = {
   理科三号楼: "relation/11975585",
   北京大学承泽园: "relation/17308238",
 };
-function geolocateSeed(seed: Omit<SiteState, "id" | "stance" | "supply">, region: any) {
-  const
+function geolocateSeed(seed: Omit<SiteState, "id" | "stance" | "supply">) {
+  const region = osmRegions.main,
     landmarks = region.landmarks as readonly any[],
     audited = auditedOsmIds[seed.name];
   let hit = audited
@@ -197,9 +197,8 @@ export function pointInPolygon(
 
 function generatedPkuDormSites(
   existing: Omit<SiteState, "id" | "stance" | "supply">[],
-  main: any,
 ) {
-  const typedMain = main as unknown as {
+  const main = osmRegions.main as unknown as {
       campuses: readonly {
         name: string;
         points: readonly (readonly number[])[];
@@ -218,17 +217,17 @@ function generatedPkuDormSites(
         z: number;
       }[];
     },
-    campus = typedMain.campuses.find((item) => item.name === "北京大学");
+    campus = main.campuses.find((item) => item.name === "北京大学");
   if (!campus) return [];
   const buildingKeys = new Set(
-      typedMain.buildings.map((item) => `${item.osmType}/${item.osmId}`),
+      main.buildings.map((item) => `${item.osmType}/${item.osmId}`),
     ),
     usedKeys = new Set(existing.map((site) => site.osmKey).filter(Boolean)),
     usedPoints = existing.map((site) => [site.x, site.z] as const),
     dormPattern =
       /^(?:1[9]|2[0-4]|2[8-9]|3[0-9]|4[0-8])楼$|^(?:34A、34B|36、37|38、39|40、41、42)楼$|学生宿舍|学生公寓|宿舍楼|勺园.*楼/,
     generated: Omit<SiteState, "id" | "stance" | "supply">[] = [];
-  for (const item of typedMain.landmarks) {
+  for (const item of main.landmarks) {
     const key = `${item.osmType}/${item.osmId}`;
     if (
       !buildingKeys.has(key) ||
@@ -261,9 +260,8 @@ function generatedPkuDormSites(
 
 function generatedTsinghuaSites(
   existing: Omit<SiteState, "id" | "stance" | "supply">[],
-  main: any,
 ) {
-  const typedMain = main as unknown as {
+  const main = osmRegions.main as unknown as {
       campuses: readonly {
         name: string;
         points: readonly (readonly number[])[];
@@ -282,10 +280,10 @@ function generatedTsinghuaSites(
         z: number;
       }[];
     },
-    campus = typedMain.campuses.find((item) => item.name === "清华大学");
+    campus = main.campuses.find((item) => item.name === "清华大学");
   if (!campus) return [];
   const buildingKeys = new Set(
-      typedMain.buildings.map((item) => `${item.osmType}/${item.osmId}`),
+      main.buildings.map((item) => `${item.osmType}/${item.osmId}`),
     ),
     usedNames = new Set(existing.map((site) => site.name)),
     usedPoints = existing.map((site) => [site.x, site.z] as const),
@@ -294,7 +292,7 @@ function generatedTsinghuaSites(
     excluded =
       /食堂|餐厅|商店|超市|邮局|浴室|快递|宾馆|停车|游泳馆|故居|咖啡|服务台/,
     generated: Omit<SiteState, "id" | "stance" | "supply">[] = [];
-  const candidates = typedMain.landmarks
+  const candidates = main.landmarks
     .filter((item) => buildingKeys.has(`${item.osmType}/${item.osmId}`))
     .filter(
       (item) =>
@@ -339,10 +337,9 @@ function generatedTsinghuaSites(
   return generated;
 }
 
-export function makeFreshGame(mapProfile: MapProfile = DEFAULT_MAP_PROFILE): GameData {
-  const main = mapRegionsFor(mapProfile).main;
+export function makeFreshGame(): GameData {
   const locatedMain = seeds
-    .map((seed) => ({ seed, located: geolocateSeed(seed, main) }))
+    .map((seed) => ({ seed, located: geolocateSeed(seed) }))
     .filter(({ seed, located }) => seed.x < 100 && located.osmKey)
     .map(({ located }) => ({
       ...located,
@@ -350,8 +347,8 @@ export function makeFreshGame(mapProfile: MapProfile = DEFAULT_MAP_PROFILE): Gam
     }));
   const sites: SiteState[] = [
     ...locatedMain,
-    ...generatedPkuDormSites(locatedMain, main),
-    ...generatedTsinghuaSites(locatedMain, main),
+    ...generatedPkuDormSites(locatedMain),
+    ...generatedTsinghuaSites(locatedMain),
   ].map((located, id) => ({
     ...located,
     id,
@@ -393,8 +390,6 @@ export function makeFreshGame(mapProfile: MapProfile = DEFAULT_MAP_PROFILE): Gam
     sites,
     units,
     campaign: {
-      mapProfile,
-      mapGeometryVersion: mapProfile === "real-campus-v1" ? MAP_GEOMETRY_VERSION : 0,
       rulesVersion: 3,
       startDateISO: "2026-08-16T08:00:00+08:00",
       elapsedHours: 0,

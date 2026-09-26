@@ -14,7 +14,6 @@ import {
   type QualityMode,
 } from "../src/performance-controller";
 import { isMobileClient } from "../src/mobile-support";
-import {DEFAULT_MAP_PROFILE,MAP_GEOMETRY_VERSION,type MapProfile} from "../src/game/map-profile";
 import type {
   AcademicYearOutcome,
   AiDifficulty,
@@ -209,7 +208,6 @@ import SaveWorker from "../src/save-worker.ts?worker&inline";
 import ServerClockWorker from "../src/game/server-clock-worker.ts?worker&inline";
 
 export default function Game3D() {
-  const renderBenchmark = new URLSearchParams(location.search).has("render-benchmark");
   const hostRef = useRef<HTMLDivElement>(null);
   const mobileClientRef = useRef(isMobileClient());
   const performanceControllerRef = useRef(
@@ -398,15 +396,13 @@ export default function Game3D() {
     Record<Team, AiDifficulty>
   >({ pku: "standard", thu: "standard" });
   const [qualityMode, setQualityMode] = useState<QualityMode>(() =>
-    (new URLSearchParams(location.search).get("quality") as QualityMode) ||
     (localStorage.getItem("qingbei-quality-mode") as QualityMode) || "auto",
   );
-  const [mapProfile, setMapProfile] = useState<MapProfile>(DEFAULT_MAP_PROFILE);
   const [eventPopupEnabled, setEventPopupEnabled] = useState(
-    () => !renderBenchmark && localStorage.getItem(EVENT_POPUP_SETTING_KEY) !== "false",
+    () => localStorage.getItem(EVENT_POPUP_SETTING_KEY) !== "false",
   );
   const eventPopupEnabledRef = useRef(eventPopupEnabled);
-  const [showPerformance, setShowPerformance] = useState(renderBenchmark);
+  const [showPerformance, setShowPerformance] = useState(false);
   const [performanceMetrics, setPerformanceMetrics] =
     useState<PerformanceMetrics>(performanceControllerRef.current.metrics);
   const [unitMaterialUrl, setUnitMaterialUrl] = useState<string | null>(null);
@@ -1065,7 +1061,7 @@ export default function Game3D() {
         mapSavedAt == null
           ? undefined
           : readSaves().find((save) => save.savedAt === mapSavedAt),
-      fresh = makeFreshGame(mapProfile),
+      fresh = makeFreshGame(),
       server: ServerRecord = {
         id: createId(),
         name: name.trim().slice(0, 24) || "清北联机服务器",
@@ -1215,7 +1211,6 @@ export default function Game3D() {
     save: Snapshot,
     team: Team = playerTeam,
     serverId: string | null = null,
-    mapOverride?: MapProfile,
   ) => {
     setAiObserverMode(false);
     aiObserverModeRef.current = false;
@@ -1252,11 +1247,6 @@ export default function Game3D() {
         normalizedCampaign: CampaignState = {
           ...defaults,
           ...campaign,
-          mapProfile: DEFAULT_MAP_PROFILE,
-          mapGeometryVersion:
-            campaign.mapProfile === DEFAULT_MAP_PROFILE
-              ? campaign.mapGeometryVersion ?? MAP_GEOMETRY_VERSION
-              : 0,
           rulesVersion: 3,
           startDateISO: campaign.startDateISO || defaults.startDateISO,
           elapsedHours: Number.isFinite(campaign.elapsedHours)
@@ -1466,7 +1456,7 @@ export default function Game3D() {
         campaign: normalizedCampaign,
       };
     } else {
-      const fresh = makeFreshGame(DEFAULT_MAP_PROFILE),
+      const fresh = makeFreshGame(),
         oldSiteById = new Map(save.sites.map((s) => [s.id, s])),
         freshByName = new Map(fresh.sites.map((s) => [s.name, s]));
       fresh.sites.forEach((site) => {
@@ -1508,7 +1498,6 @@ export default function Game3D() {
       fresh.deaths = save.deaths;
       gameRef.current = fresh;
     }
-    setMapProfile(DEFAULT_MAP_PROFILE);
     sceneApi.current?.sync();
     sceneApi.current?.clearUnitSelection();
     setSelected(null);
@@ -1528,7 +1517,6 @@ export default function Game3D() {
     team: Team = playerTeam,
     observeBothAi = false,
     observerDifficulties = observerAiDifficulty,
-    selectedMapProfile: MapProfile = mapProfile,
   ) => {
     clearUnfinishedGame();
     activePlayerSaveRef.current = null;
@@ -1538,8 +1526,7 @@ export default function Game3D() {
     playerTeamRef.current = team;
     setAiObserverMode(observeBothAi);
     aiObserverModeRef.current = observeBothAi;
-    gameRef.current = makeFreshGame(DEFAULT_MAP_PROFILE);
-    setMapProfile(DEFAULT_MAP_PROFILE);
+    gameRef.current = makeFreshGame();
     gameRef.current.campaign.ai.difficulty = aiDifficulty;
     gameRef.current.campaign.ai.difficultyByTeam = {
       pku: observeBothAi ? observerDifficulties.pku : aiDifficulty,
@@ -1555,30 +1542,12 @@ export default function Game3D() {
     setScreen("game");
   };
   useEffect(() => {
-    const params = new URLSearchParams(location.search),
-      scenario = params.get("ai-benchmark"),
-      reviewSite = params.get("review-site");
-    if ((!scenario && reviewSite == null) || aiBenchmarkAutostartedRef.current) return;
+    const scenario = new URLSearchParams(location.search).get("ai-benchmark");
+    if (!scenario || aiBenchmarkAutostartedRef.current) return;
     aiBenchmarkAutostartedRef.current = true;
-    if (reviewSite != null) {
-      setSaveName(`建筑验收-${reviewSite}`);
-      newGame("pku", false, observerAiDifficulty, DEFAULT_MAP_PROFILE);
-      const reviewHour = params.has("review-hour") ? Number(params.get("review-hour")) : Number.NaN;
-      if (Number.isFinite(reviewHour) && reviewHour >= 0 && reviewHour < 24)
-        gameRef.current.timeOfDay = reviewHour;
-      timeScaleRef.current = 0;
-      setTimeScale(0);
-      return;
-    }
-    if (!scenario) return;
     const humanTeam: Team = scenario.startsWith("pku-") ? "thu" : "pku";
     setSaveName(`AI基准-${scenario}`);
-    newGame(
-      humanTeam,
-      false,
-      observerAiDifficulty,
-      DEFAULT_MAP_PROFILE,
-    );
+    newGame(humanTeam);
   }, []);
   const stanceText = useMemo(
     () => ({
@@ -4091,9 +4060,7 @@ export default function Game3D() {
           newGame={newGame}
           autosave={autosave}
           saves={saves}
-          loadGame={(save, team, mapOverride) =>
-            loadGame(save, team, null, mapOverride)
-          }
+          loadGame={loadGame}
           clearUnfinishedGame={clearUnfinishedGame}
           deleteSave={deleteSave}
           exportSave={exportSave}

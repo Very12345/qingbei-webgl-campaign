@@ -59,22 +59,18 @@ func newJSKernelRuntime() (*jsKernelRuntime, error) {
 	return &jsKernelRuntime{vm: vm, exports: exports.ToObject(vm), engine: "goja"}, nil
 }
 
-func loadKernelSeed(profile ...string) (map[string]any, map[string]any, error) {
+func loadKernelSeed() (map[string]any, map[string]any, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(kernelSeed))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open embedded kernel seed: %w", err)
 	}
 	defer reader.Close()
 	var payload struct {
-		State       map[string]any
-		NavGrid     map[string]any
-		NavGridReal map[string]any
+		State   map[string]any
+		NavGrid map[string]any
 	}
 	if err := json.NewDecoder(reader).Decode(&payload); err != nil {
 		return nil, nil, fmt.Errorf("decode embedded kernel seed: %w", err)
-	}
-	if len(profile) > 0 && profile[0] == "real-campus-v1" && payload.NavGridReal != nil {
-		return payload.State, payload.NavGridReal, nil
 	}
 	return payload.State, payload.NavGrid, nil
 }

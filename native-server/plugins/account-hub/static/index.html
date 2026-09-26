@@ -3632,7 +3632,6 @@
                     </select></label
                   >
                 </div>
-                <p class="queue-state">校园地图 · 2026真实校园</p>
                 <div class="reward-line">
                   <span id="winReward"></span><span id="lossReward"></span>
                 </div>
@@ -4311,7 +4310,6 @@
         battleMode = "pvp",
         selectedTeam = "any",
         difficulty = "standard",
-        mapProfile = "real-campus-v1",
         poll = null,
         queueBusy = false,
         toastTimer;
@@ -4412,9 +4410,6 @@
           );
         });
         updateReward();
-      }
-      function setMapProfile(next) {
-        mapProfile = "real-campus-v1";
       }
       function updateReward() {
         $("winReward").textContent = "经验 = 击杀人数 + 占点次数 + 胜利 100";
@@ -4614,7 +4609,6 @@
           const state = await api("api/lobby/status");
           if (queueBusy || (!state.queued && !state.creating)) return;
           setBattleMode(state.pace === "blitz" ? "blitz-pvp" : "pvp");
-          setMapProfile(state.mapProfile);
           setView("deployment");
           watchQueue();
         } catch {} // Profile remains usable while lobby status is unavailable.
@@ -4632,7 +4626,6 @@
               body: JSON.stringify({
                 difficulty: battleMode.startsWith("blitz-") ? "standard" : difficulty,
                 pace: battleMode.startsWith("blitz-") ? "blitz" : "standard",
-                mapProfile,
                 team: selectedTeam,
                 card: battleMode.startsWith("blitz-") ? "" : $("speedCard").value,
               }),
@@ -4642,7 +4635,7 @@
           }
           const result = await api("api/lobby/pvp", {
             method: "POST",
-            body: JSON.stringify({ preferredTeam: selectedTeam, pace: battleMode.startsWith("blitz-") ? "blitz" : "standard", mapProfile }),
+            body: JSON.stringify({ preferredTeam: selectedTeam, pace: battleMode.startsWith("blitz-") ? "blitz" : "standard" }),
           });
           if (result.joinUrl) {
             location.href = result.joinUrl;
@@ -4726,7 +4719,6 @@
       $("autoTeam").onclick = () => selectTeam("any");
       $("shopTeam").onchange = () => { if (careerProfile) renderShop(careerProfile); };
       $("battleAction").onclick = beginBattle;
-      setMapProfile(mapProfile);
       setBattleMode("pvp");
       refresh();
     </script>

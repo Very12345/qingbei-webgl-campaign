@@ -39,7 +39,6 @@ jobs:
       - run: npm run test:events-routes-blitz
       - run: npm run test:field-encounters
       - run: npm run test:mobile-support
-      - run: npm run test:real-campus
       - run: npm run build:kernel
       - run: npm run verify:ai
       - run: npm run build

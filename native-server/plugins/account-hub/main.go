@@ -25,7 +25,7 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-const pluginVersion = "0.4.4"
+const pluginVersion = "0.4.5"
 
 type userRecord struct {
 	SchoolCoins       map[string]int             `json:"schoolCoins,omitempty"`
@@ -46,7 +46,6 @@ type matchRecord struct {
 	PendingWinner  string                 `json:"pendingWinner,omitempty"`
 	PendingReason  string                 `json:"pendingReason,omitempty"`
 	Pace           string                 `json:"pace,omitempty"`
-	MapProfile     string                 `json:"mapProfile,omitempty"`
 	Stats          *battleStats           `json:"stats,omitempty"`
 	Rewards        map[string]matchReward `json:"rewards,omitempty"`
 	RoomCode       string                 `json:"roomCode"`
@@ -82,29 +81,26 @@ type loginAttempt struct {
 }
 
 type queueEntry struct {
-	UserID     string
-	Preferred  string
-	MapProfile string
-	JoinedAt   time.Time
+	UserID    string
+	Preferred string
+	JoinedAt  time.Time
 }
 
 type hubServer struct {
-	mu               sync.Mutex
-	pluginID         string
-	pluginSecret     string
-	serverOrigin     string
-	dataFile         string
-	data             persistedData
-	sessions         map[string]sessionRecord
-	loginAttempts    map[string]loginAttempt
-	waiting          *queueEntry
-	waitingBlitz     *queueEntry
-	waitingReal      *queueEntry
-	waitingBlitzReal *queueEntry
-	ready            map[string]map[string]string
-	client           *http.Client
-	creating         map[string]bool
-	presence         map[string]string
+	mu            sync.Mutex
+	pluginID      string
+	pluginSecret  string
+	serverOrigin  string
+	dataFile      string
+	data          persistedData
+	sessions      map[string]sessionRecord
+	loginAttempts map[string]loginAttempt
+	waiting       *queueEntry
+	waitingBlitz  *queueEntry
+	ready         map[string]map[string]string
+	client        *http.Client
+	creating      map[string]bool
+	presence      map[string]string
 }
 
 func main() {
@@ -463,7 +459,6 @@ func (server *hubServer) matchViewLocked(userID string, match *matchRecord) map[
 		"mode":         match.Mode,
 		"difficulty":   match.Difficulty,
 		"pace":         match.Pace,
-		"mapProfile":   match.MapProfile,
 		"reward":       match.Rewards[userID],
 		"team":         team,
 		"completed":    match.Completed,
@@ -485,7 +480,6 @@ func (server *hubServer) matchViewLocked(userID string, match *matchRecord) map[
 func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		Pace       string `json:"pace"`
-		MapProfile string `json:"mapProfile"`
 		Difficulty string `json:"difficulty"`
 		Team       string `json:"team"`
 		Card       string `json:"card"`
@@ -496,14 +490,6 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 	if input.Pace == "" {
 		input.Pace = "standard"
 	}
-	if input.MapProfile == "" {
-		input.MapProfile = "real-campus-v1"
-	}
-	if input.MapProfile != "classic" && input.MapProfile != "real-campus-v1" {
-		writeError(writer, http.StatusBadRequest, "校园地图无效")
-		return
-	}
-	input.MapProfile = "real-campus-v1"
 	if input.Pace != "standard" && input.Pace != "blitz" {
 		writeError(writer, http.StatusBadRequest, "对局节奏无效")
 		return
@@ -571,7 +557,6 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 	spec := map[string]any{"name": "人机挑战 · " + input.Difficulty, "mode": "ai", "difficulty": input.Difficulty, "difficultyByTeam": map[string]string{"pku": input.Difficulty, "thu": input.Difficulty}, "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "metadata": map[string]any{"owner": userID, "playerTeam": input.Team}}
 	spec["humanTeams"], spec["serverOpening"] = []string{input.Team}, input.Pace
 	spec["fieldEncounters"] = "light-v1"
-	spec["mapProfile"] = input.MapProfile
 	if input.Pace == "blitz" {
 		spec["name"] = "极速 · 标准人机"
 	}
@@ -582,7 +567,7 @@ func (server *hubServer) createAILobby(writer http.ResponseWriter, request *http
 		return
 	}
 	server.mu.Lock()
-	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "ai", Pace: input.Pace, MapProfile: input.MapProfile, Difficulty: input.Difficulty, Participants: map[string]string{userID: input.Team}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
+	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "ai", Pace: input.Pace, Difficulty: input.Difficulty, Participants: map[string]string{userID: input.Team}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
 	if err := server.saveLocked(); err != nil {
 		delete(server.data.Matches, room)
 		server.mu.Unlock()
@@ -599,7 +584,6 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	var input struct {
 		PreferredTeam string `json:"preferredTeam"`
 		Pace          string `json:"pace"`
-		MapProfile    string `json:"mapProfile"`
 	}
 	if !decodeJSON(writer, request, &input) {
 		return
@@ -607,14 +591,6 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	if input.Pace == "" {
 		input.Pace = "standard"
 	}
-	if input.MapProfile == "" {
-		input.MapProfile = "real-campus-v1"
-	}
-	if input.MapProfile != "classic" && input.MapProfile != "real-campus-v1" {
-		writeError(writer, http.StatusBadRequest, "校园地图无效")
-		return
-	}
-	input.MapProfile = "real-campus-v1"
 	if input.Pace != "standard" && input.Pace != "blitz" {
 		writeError(writer, http.StatusBadRequest, "对局节奏无效")
 		return
@@ -646,23 +622,23 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusConflict, "战局正在创建，请稍候")
 		return
 	}
-	queue := server.queueFor(input.Pace, input.MapProfile)
-	otherQueue := server.queueFor("blitz", input.MapProfile)
+	queue := server.queueFor(input.Pace)
+	otherQueue := server.queueFor("blitz")
 	if input.Pace == "blitz" {
-		otherQueue = server.queueFor("standard", input.MapProfile)
+		otherQueue = server.queueFor("standard")
 	}
 	if *otherQueue != nil && (*otherQueue).UserID == user.ID {
 		*otherQueue = nil
 	}
 	if *queue == nil || (*queue).UserID == user.ID || time.Since((*queue).JoinedAt) > 10*time.Minute {
-		*queue = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, MapProfile: input.MapProfile, JoinedAt: time.Now()}
+		*queue = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, JoinedAt: time.Now()}
 		server.mu.Unlock()
 		writeJSON(writer, http.StatusAccepted, map[string]any{"queued": true})
 		return
 	}
 	first := *queue
 	if server.creating[first.UserID] || server.activeMatchForUserLocked(first.UserID) != nil {
-		*queue = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, MapProfile: input.MapProfile, JoinedAt: time.Now()}
+		*queue = &queueEntry{UserID: user.ID, Preferred: input.PreferredTeam, JoinedAt: time.Now()}
 		server.mu.Unlock()
 		writeJSON(writer, http.StatusAccepted, map[string]any{"queued": true})
 		return
@@ -686,7 +662,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 	if input.Pace == "blitz" {
 		timeScale, name = 4, "极速 · 玩家对战"
 	}
-	room, err := server.createBattle(map[string]any{"name": name, "mode": "pvp", "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "humanTeams": []string{"pku", "thu"}, "serverOpening": input.Pace, "fieldEncounters": "light-v1", "mapProfile": input.MapProfile})
+	room, err := server.createBattle(map[string]any{"name": name, "mode": "pvp", "timeScale": timeScale, "maxPlayers": 2, "allowSameTeam": false, "authPlugin": server.pluginID, "humanTeams": []string{"pku", "thu"}, "serverOpening": input.Pace, "fieldEncounters": "light-v1"})
 	if err != nil {
 		server.mu.Lock()
 		if *queue == nil {
@@ -697,7 +673,7 @@ func (server *hubServer) joinPVPQueue(writer http.ResponseWriter, request *http.
 		return
 	}
 	server.mu.Lock()
-	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "pvp", Pace: input.Pace, MapProfile: input.MapProfile, Participants: map[string]string{first.UserID: firstTeam, secondID: secondTeam}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
+	server.data.Matches[room] = &matchRecord{RoomCode: room, Mode: "pvp", Pace: input.Pace, Participants: map[string]string{first.UserID: firstTeam, secondID: secondTeam}, CreatedAt: time.Now(), JoinDeadline: time.Now().Add(2 * time.Minute)}
 	server.ready[first.UserID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, firstTeam)}
 	server.ready[secondID] = map[string]string{"roomCode": room, "joinUrl": server.joinURL(room, secondTeam)}
 	if err := server.saveLocked(); err != nil {
