@@ -60,6 +60,7 @@ https://github.com/Very12345/qingbei-webgl-campaign/releases/latest/download/qin
 - 高程采样来自 Open-Meteo Elevation API。
 - 主战场覆盖 WGS84 `39.974,116.284,40.027,116.353`，完整导入边界内所有带 `highway` 的 OSM 道路，不做数量截断。
 - 坐标统一采用 WGS84 等距近似投影；x/z 使用同一米制比例，不混用 GCJ-02。
+- 建筑高度与地图平面使用同一米制比例，保留 v0.4.4 的 925 栋校园建筑高度资料及其 OSM/估算标记；其他建筑按层数和 3.35 米层高估算，缺失层数时按四层估算。经典地图轮廓不变，门窗随高度比例同步调整。
 - `src/osm-map-data.ts` 是生成产物；运行 `node work/fetch-osm.mjs` 可从当前地图数据重新生成。
 
 北大东门、北大图书馆、清华西门等易混淆地标通过 OSM 对象 ID 锁定。车站和公交站不会被当作实体校门。

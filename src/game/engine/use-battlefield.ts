@@ -68,6 +68,7 @@ import type { NetworkChannel } from "../local-relay";
 import ServerClockWorker from "../server-clock-worker.ts?worker&inline";
 import type { PlayerCommandSelection } from "../player-commands";
 import { createSportMarkings, type GroundMarking } from "./sport-markings";
+import { buildingHeightMetres, buildingMetreScale, FLOOR_HEIGHT_METRES } from "./building-dimensions";
 
 type VictoryBroadcast = {
   winner: Team;
@@ -1664,7 +1665,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         roads.renderOrder = bucket.renderOrder;
         mapGroup.add(roads);
       });
-      const bp: number[] = [],
+      const metreScale = buildingMetreScale(r),
+        bp: number[] = [],
         bi: number[] = [],
         bc: number[] = [],
         buildingPalette = [
@@ -1687,9 +1689,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
           base = terrainHeight(r, x, z),
-          h = b.levels
-            ? Math.min(7, b.levels * 0.58)
-            : 0.95 + (b.osmId % 6) * 0.17,
+          h = buildingHeightMetres(b) * metreScale,
           start = bv,
           tone = new THREE.Color(
             buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
@@ -1776,10 +1776,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
           base = terrainHeight(r, x, z),
-          h = b.levels
-            ? Math.min(7, b.levels * 0.58)
-            : 0.95 + (b.osmId % 6) * 0.17,
-          rows = Math.min(4, Math.max(1, Math.floor(h / 0.48)));
+          h = buildingHeightMetres(b) * metreScale,
+          rows = Math.min(4, Math.max(1, Math.round(h / (FLOOR_HEIGHT_METRES * metreScale))));
         let longest: { a: number[]; c: number[]; len: number } | null = null;
         for (
           let i = 0;
@@ -1809,14 +1807,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             ) {
               const t = (col + 1) / (cols + 1);
               detailDummy.position.set(
-                a[0] + dx * t + nx * 0.025,
+                a[0] + dx * t + nx * metreScale * 0.1,
                 base + (h * (row + 1)) / (rows + 1),
-                a[1] + dz * t + nz * 0.025,
+                a[1] + dz * t + nz * metreScale * 0.1,
               );
               detailDummy.rotation.set(0, angle, 0);
               detailDummy.scale.set(
-                Math.min(0.18, (len / (cols + 1)) * 0.5),
-                0.12,
+                Math.min(1.6 * metreScale, (len / (cols + 1)) * 0.5),
+                Math.min(1.4 * metreScale, h / (rows + 1) * 0.6),
                 1,
               );
               detailDummy.updateMatrix();
@@ -1830,12 +1828,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           detailDummy.position.set(
-            (longest.a[0] + longest.c[0]) / 2 + nx * 0.03,
-            base + 0.17,
-            (longest.a[1] + longest.c[1]) / 2 + nz * 0.03,
+            (longest.a[0] + longest.c[0]) / 2 + nx * metreScale * 0.12,
+            base + Math.min(2.2 * metreScale, h * 0.85) / 2,
+            (longest.a[1] + longest.c[1]) / 2 + nz * metreScale * 0.12,
           );
           detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
-          detailDummy.scale.set(0.23, 0.34, 1);
+          detailDummy.scale.set(Math.min(1.4 * metreScale, len * 0.5), Math.min(2.2 * metreScale, h * 0.85), 1);
           detailDummy.updateMatrix();
           doorMatrices.push(detailDummy.matrix.clone());
         }
