@@ -275,9 +275,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       sportMaterials: THREE.MeshStandardMaterial[] = [];
     const terrainMeshes: THREE.Mesh[] = [];
     const regionForX = (_x: number) => regions.main,
+      pkuCampus = regions.main.campuses?.find(
+        (campus: { name: string }) => campus.name === "北京大学",
+      ),
       tsinghuaCampus = regions.main.campuses?.find(
         (campus: { name: string }) => campus.name === "清华大学",
       ),
+      insidePkuCampus = (x: number, z: number) =>
+        !!pkuCampus && pointInPolygon(x, z, pkuCampus.points),
       insideTsinghuaCampus = (x: number, z: number) =>
         !!tsinghuaCampus && pointInPolygon(x, z, tsinghuaCampus.points);
     const footprintArea = (points: readonly (readonly number[])[]) =>
@@ -298,6 +303,150 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       });
       gameplayBuildingCache.set(r, filtered);
       return filtered;
+    };
+    const visualBuildingCache = new WeakMap<object, any[]>();
+    const visualBuildings = (r: any) => {
+      const cached = visualBuildingCache.get(r);
+      if (cached) return cached;
+      const all = gameplayBuildings(r),
+        boxes = all.map((building: any) => ({
+          minX: Math.min(...building.points.map((p: number[]) => p[0])),
+          maxX: Math.max(...building.points.map((p: number[]) => p[0])),
+          minZ: Math.min(...building.points.map((p: number[]) => p[1])),
+          maxZ: Math.max(...building.points.map((p: number[]) => p[1])),
+          area: footprintArea(building.points),
+        })),
+        insideWithTolerance = (x: number, z: number, points: number[][]) => {
+          const eps = 0.004;
+          if (pointInPolygon(x, z, points)) return true;
+          return (
+            pointInPolygon(x + eps, z, points) &&
+            pointInPolygon(x - eps, z, points) &&
+            pointInPolygon(x, z + eps, points) &&
+            pointInPolygon(x, z - eps, points)
+          );
+        },
+        filtered = all.filter((building: any, index: number) => {
+          const mine = boxes[index];
+          for (let other = 0; other < all.length; other++) {
+            if (other === index) continue;
+            const container = boxes[other];
+            if (
+              container.area < mine.area ||
+              mine.minX < container.minX ||
+              mine.maxX > container.maxX ||
+              mine.minZ < container.minZ ||
+              mine.maxZ > container.maxZ
+            )
+              continue;
+            const host = all[other];
+            if (
+              buildingHeightMetres(building) >
+                buildingHeightMetres(host) + 0.5 ||
+              (building.name && !host.name)
+            )
+              continue;
+            if (
+              building.points.every((p: number[]) =>
+                insideWithTolerance(p[0], p[1], host.points),
+              )
+            )
+              return false;
+          }
+          return true;
+        });
+      visualBuildingCache.set(r, filtered);
+      return filtered;
+    };
+    const insetFootprint = (pts: number[][], amount: number) => {
+      if (pts.length < 3) return pts;
+      const cx = pts.reduce((sum, p) => sum + p[0], 0) / pts.length,
+        cz = pts.reduce((sum, p) => sum + p[1], 0) / pts.length;
+      return pts.map((p) => {
+        const dx = cx - p[0],
+          dz = cz - p[1],
+          length = Math.hypot(dx, dz);
+        if (length < 1e-6) return p;
+        const shift = Math.min(amount, length * 0.12);
+        return [p[0] + (dx / length) * shift, p[1] + (dz / length) * shift];
+      });
+    };
+    const convexHull = (points: number[][]) => {
+      const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      if (sorted.length <= 3) return sorted;
+      const cross = (o: number[], a: number[], b: number[]) =>
+          (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]),
+        lower: number[][] = [],
+        upper: number[][] = [];
+      for (const p of sorted) {
+        while (
+          lower.length >= 2 &&
+          cross(lower.at(-2)!, lower.at(-1)!, p) <= 0
+        )
+          lower.pop();
+        lower.push(p);
+      }
+      for (const p of [...sorted].reverse()) {
+        while (
+          upper.length >= 2 &&
+          cross(upper.at(-2)!, upper.at(-1)!, p) <= 0
+        )
+          upper.pop();
+        upper.push(p);
+      }
+      lower.pop();
+      upper.pop();
+      return [...lower, ...upper];
+    };
+    const islandHolesFor = (
+      water: { points: number[][] },
+      buildings: any[],
+    ) => {
+      const inside = buildings.filter((building: any) => {
+        const pts = building.points;
+        return (
+          pts.length >= 3 &&
+          pts.every((p: number[]) => pointInPolygon(p[0], p[1], water.points))
+        );
+      });
+      if (!inside.length) return [];
+      const parent = inside.map((_, i) => i),
+        find = (i: number): number => {
+          while (parent[i] !== i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+          }
+          return i;
+        },
+        link = (a: number, b: number) => {
+          parent[find(a)] = find(b);
+        };
+      for (let i = 0; i < inside.length; i++)
+        for (let j = i + 1; j < inside.length; j++) {
+          const close = inside[i].points.some((a: number[]) =>
+            inside[j].points.some(
+              (b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.9,
+            ),
+          );
+          if (close) link(i, j);
+        }
+      const clusters = new Map<number, number[][]>();
+      inside.forEach((building: any, index: number) => {
+        const root = find(index),
+          bucket = clusters.get(root) ?? [];
+        bucket.push(...building.points);
+        clusters.set(root, bucket);
+      });
+      const holes: number[][][] = [];
+      for (const points of clusters.values()) {
+        const hull = insetFootprint(convexHull(points), -0.08);
+        if (
+          hull.length >= 3 &&
+          hull.every((p) => pointInPolygon(p[0], p[1], water.points))
+        )
+          holes.push(hull);
+      }
+      return holes;
     };
     const terrainVerticalScale = 6,
       terrainHeight = (r: any, x: number, z: number) => {
@@ -975,6 +1124,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       points: number[][],
       lift: number,
       heightResolver?: (x: number, z: number) => number,
+      holes?: number[][][],
     ) => {
       const clean = points.filter(
         (p, i, a) =>
@@ -989,12 +1139,16 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       )
         clean.pop();
       const contour = clean.map((p) => new THREE.Vector2(p[0], p[1])),
-        faces = THREE.ShapeUtils.triangulateShape(contour, []),
+        holeContours = (holes ?? [])
+          .filter((hole) => hole.length > 2)
+          .map((hole) => hole.map((p) => new THREE.Vector2(p[0], p[1]))),
+        faces = THREE.ShapeUtils.triangulateShape(contour, holeContours),
+        allPoints = [...clean, ...(holes ?? []).filter((hole) => hole.length > 2).flat()],
         g = new THREE.BufferGeometry();
       g.setAttribute(
         "position",
         new THREE.Float32BufferAttribute(
-          clean.flatMap((p) => [
+          allPoints.flatMap((p) => [
             p[0],
             (heightResolver?.(p[0], p[1]) ??
               terrainHeight(r, p[0], p[1])) + lift,
@@ -1003,10 +1157,125 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           3,
         ),
       );
+      g.setAttribute(
+        "uv",
+        new THREE.Float32BufferAttribute(
+          allPoints.flatMap((p) => [p[0] / 5.2, p[1] / 5.2]),
+          2,
+        ),
+      );
       g.setIndex(faces.flat());
       g.computeVertexNormals();
       return g;
     };
+    const makeTileableNoiseTexture = (
+        size: number,
+        baseCells: number,
+        octaves: number,
+        seedBase: number,
+        center: number,
+        amplitude: number,
+        tint = 0,
+      ) => {
+        let s = seedBase;
+        const rand = () =>
+            (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296,
+          layers: { cells: number; values: Float32Array; amp: number }[] = [];
+        let amp = 1,
+          totalAmp = 0;
+        for (let octave = 0; octave < octaves; octave++) {
+          const cells = baseCells * (1 << octave),
+            values = new Float32Array(cells * cells);
+          for (let i = 0; i < values.length; i++) values[i] = rand();
+          layers.push({ cells, values, amp });
+          totalAmp += amp;
+          amp *= 0.5;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext("2d")!,
+          image = ctx.createImageData(size, size),
+          sample = (px: number, py: number) => {
+            let value = 0;
+            for (const layer of layers) {
+              const fx = (px / size) * layer.cells,
+                fy = (py / size) * layer.cells,
+                ix = Math.floor(fx),
+                iy = Math.floor(fy),
+                tx = fx - ix,
+                ty = fy - iy,
+                sx = tx * tx * (3 - 2 * tx),
+                sy = ty * ty * (3 - 2 * ty),
+                cx = ((ix % layer.cells) + layer.cells) % layer.cells,
+                cy = ((iy % layer.cells) + layer.cells) % layer.cells,
+                at = (xx: number, yy: number) =>
+                  layer.values[
+                    ((cy + yy) % layer.cells) * layer.cells +
+                      ((cx + xx) % layer.cells)
+                  ];
+              value +=
+                THREE.MathUtils.lerp(
+                  THREE.MathUtils.lerp(at(0, 0), at(1, 0), sx),
+                  THREE.MathUtils.lerp(at(0, 1), at(1, 1), sx),
+                  sy,
+                ) * layer.amp;
+            }
+            return value / totalAmp;
+          };
+        for (let y = 0; y < size; y++)
+          for (let x = 0; x < size; x++) {
+            const value = sample(x, y),
+              shade = THREE.MathUtils.clamp(
+                center + (value - 0.5) * amplitude,
+                0,
+                255,
+              ),
+              warm = tint * (sample(x + size * 0.37, y + size * 0.61) - 0.5),
+              offset = (y * size + x) * 4;
+            image.data[offset] = THREE.MathUtils.clamp(shade + warm, 0, 255);
+            image.data[offset + 1] = shade;
+            image.data[offset + 2] = THREE.MathUtils.clamp(
+              shade - warm * 0.8,
+              0,
+              255,
+            );
+            image.data[offset + 3] = 255;
+          }
+        ctx.putImageData(image, 0, 0);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+      },
+      groundDetailTexture = makeTileableNoiseTexture(256, 5, 4, 20260916, 238, 58, 16),
+      roadDetailTexture = makeTileableNoiseTexture(256, 5, 4, 771177, 222, 76),
+      waterDetailTexture = makeTileableNoiseTexture(256, 4, 3, 551199, 235, 34),
+      makeWorldNoise = (seedBase: number, period: number, cells: number) => {
+        let s = seedBase;
+        const rand = () =>
+            (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296,
+          values = new Float32Array(cells * cells);
+        for (let i = 0; i < values.length; i++) values[i] = rand();
+        return (x: number, z: number) => {
+          const fx = ((((x / period) % 1) + 1) % 1) * cells,
+            fy = ((((z / period) % 1) + 1) % 1) * cells,
+            ix = Math.floor(fx),
+            iy = Math.floor(fy),
+            tx = fx - ix,
+            ty = fy - iy,
+            sx = tx * tx * (3 - 2 * tx),
+            sy = ty * ty * (3 - 2 * ty),
+            at = (xx: number, yy: number) =>
+              values[((iy + yy) % cells) * cells + ((ix + xx) % cells)];
+          return THREE.MathUtils.lerp(
+            THREE.MathUtils.lerp(at(0, 0), at(1, 0), sx),
+            THREE.MathUtils.lerp(at(0, 1), at(1, 1), sx),
+            sy,
+          );
+        };
+      },
+      macroNoiseA = makeWorldNoise(4177, 47, 5),
+      macroNoiseB = makeWorldNoise(9151, 19, 6);
     const sportSurfaces: {
       name: string;
       track?: boolean;
@@ -1047,6 +1316,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const { cols, rows, heights } = r.terrain,
         pos: number[] = [],
         terrainColors: number[] = [],
+        terrainUvs: number[] = [],
         idx: number[] = [];
       const scaledHeights = heights.map(
           (height: number) => height * terrainVerticalScale,
@@ -1054,9 +1324,11 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         minimumHeight = Math.min(...scaledHeights),
         maximumHeight = Math.max(...scaledHeights),
         heightRange = Math.max(0.001, maximumHeight - minimumHeight),
-        lowlandColor = new THREE.Color(0x587d49),
-        highlandColor = new THREE.Color(0x9a9866),
+        lowlandColor = new THREE.Color(0x557a40),
+        highlandColor = new THREE.Color(0x8f8f60),
+        dryPatchColor = new THREE.Color(0x7d8a4e),
         terrainTone = new THREE.Color(),
+        detailTileWorld = 9,
         heightAt = (i: number, j: number) =>
           scaledHeights[
             THREE.MathUtils.clamp(j, 0, rows - 1) * cols +
@@ -1072,12 +1344,18 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               heightAt(i + 1, j) - heightAt(i - 1, j),
               heightAt(i, j + 1) - heightAt(i, j - 1),
             ),
-            slopeShade = THREE.MathUtils.clamp(1 - gradient * 0.13, 0.72, 1);
+            slopeShade = THREE.MathUtils.clamp(1 - gradient * 0.13, 0.72, 1),
+            macro = macroNoiseA(x, z) * 0.62 + macroNoiseB(x, z) * 0.38;
           pos.push(x, height, z);
+          terrainUvs.push(
+            (i / (cols - 1)) * (r.width / detailTileWorld),
+            (j / (rows - 1)) * (r.depth / detailTileWorld),
+          );
           terrainTone
             .copy(lowlandColor)
             .lerp(highlandColor, normalizedHeight * 0.82)
-            .multiplyScalar(slopeShade);
+            .lerp(dryPatchColor, Math.max(0, macro - 0.55) * 0.45)
+            .multiplyScalar(slopeShade * (0.94 + macro * 0.12));
           terrainColors.push(terrainTone.r, terrainTone.g, terrainTone.b);
         }
       for (let j = 0; j < rows - 1; j++)
@@ -1094,12 +1372,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         "color",
         new THREE.Float32BufferAttribute(terrainColors, 3),
       );
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(terrainUvs, 2));
       geo.setIndex(idx);
       geo.computeVertexNormals();
       const terrain = new THREE.Mesh(
         geo,
         new THREE.MeshStandardMaterial({
           vertexColors: true,
+          map: groundDetailTexture,
           roughness: 0.98,
           side: THREE.FrontSide,
         }),
@@ -1351,36 +1631,44 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         }
       type RoadBucket = {
         positions: number[];
+        uvs: number[];
         indices: number[];
         vertexIndex: number;
         color: number;
         lift: number;
         renderOrder: number;
+        uvTile: number;
       };
       const roadBuckets: Record<"asphalt" | "path" | "dirt", RoadBucket> = {
           asphalt: {
             positions: [],
+            uvs: [],
             indices: [],
             vertexIndex: 0,
-            color: 0x303840,
+            color: 0x39434b,
             lift: 0.035,
             renderOrder: 2,
+            uvTile: 3.4,
           },
           dirt: {
             positions: [],
+            uvs: [],
             indices: [],
             vertexIndex: 0,
-            color: 0x9a805a,
+            color: 0xb2966a,
             lift: 0.042,
             renderOrder: 3,
+            uvTile: 5,
           },
           path: {
             positions: [],
+            uvs: [],
             indices: [],
             vertexIndex: 0,
-            color: 0xb9ad91,
+            color: 0xd6caa9,
             lift: 0.048,
             renderOrder: 4,
+            uvTile: 2.4,
           },
         },
         waterAreas = r.waters.map((water: any) => ({
@@ -1422,9 +1710,14 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               0.004,
             centerIndex = bucket.vertexIndex;
           bucket.positions.push(x, flatY, z);
+          bucket.uvs.push(x / bucket.uvTile, z / bucket.uvTile);
           bucket.vertexIndex++;
           ring.forEach(([edgeX, edgeZ], step) => {
             bucket.positions.push(edgeX, flatY, edgeZ);
+            bucket.uvs.push(
+              edgeX / bucket.uvTile,
+              edgeZ / bucket.uvTile,
+            );
             bucket.vertexIndex++;
             if (step > 0)
               bucket.indices.push(
@@ -1500,6 +1793,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
               rightX,
               terrainHeight(r, rightX, rightZ) + bucket.lift,
               rightZ,
+            );
+            bucket.uvs.push(
+              leftX / bucket.uvTile,
+              leftZ / bucket.uvTile,
+              rightX / bucket.uvTile,
+              rightZ / bucket.uvTile,
             );
             bucket.vertexIndex += 2;
             if (index > 0) {
@@ -1648,12 +1947,17 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           "position",
           new THREE.Float32BufferAttribute(bucket.positions, 3),
         );
+        geometry.setAttribute(
+          "uv",
+          new THREE.Float32BufferAttribute(bucket.uvs, 2),
+        );
         geometry.setIndex(bucket.indices);
         geometry.computeVertexNormals();
         const roads = new THREE.Mesh(
           geometry,
           new THREE.MeshStandardMaterial({
             color: bucket.color,
+            map: roadDetailTexture,
             roughness: 0.94,
             metalness: 0,
             polygonOffset: true,
@@ -1665,40 +1969,161 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         roads.renderOrder = bucket.renderOrder;
         mapGroup.add(roads);
       });
+      const lanePositions: number[] = [],
+        laneIndices: number[] = [];
+      let laneVertex = 0;
+      const emitLaneDash = (
+        ax: number,
+        az: number,
+        bx: number,
+        bz: number,
+      ) => {
+        const dx = bx - ax,
+          dz = bz - az,
+          len = Math.hypot(dx, dz);
+        if (len < 0.03 || inWater((ax + bx) / 2, (az + bz) / 2)) return;
+        const nx = (-dz / len) * 0.014,
+          nz = (dx / len) * 0.014,
+          y1 = terrainHeight(r, ax, az) + 0.056,
+          y2 = terrainHeight(r, bx, bz) + 0.056;
+        lanePositions.push(
+          ax + nx, y1, az + nz,
+          ax - nx, y1, az - nz,
+          bx + nx, y2, bz + nz,
+          bx - nx, y2, bz - nz,
+        );
+        laneIndices.push(
+          laneVertex, laneVertex + 1, laneVertex + 2,
+          laneVertex + 1, laneVertex + 3, laneVertex + 2,
+        );
+        laneVertex += 4;
+      };
+      for (const road of r.roads) {
+        if (pedestrianKinds.has(road.kind) || road.width < 0.36) continue;
+        let mode: "dash" | "gap" = "dash",
+          left = 0.22;
+        for (let k = 1; k < road.points.length; k++) {
+          const [cx, cz] = road.points[k - 1],
+            [tx, tz] = road.points[k],
+            segLen = Math.hypot(tx - cx, tz - cz);
+          if (segLen < 0.02) continue;
+          let consumed = 0;
+          while (consumed < segLen) {
+            const step = Math.min(left, segLen - consumed),
+              sx = cx + ((tx - cx) * consumed) / segLen,
+              sz = cz + ((tz - cz) * consumed) / segLen,
+              ex = cx + ((tx - cx) * (consumed + step)) / segLen,
+              ez = cz + ((tz - cz) * (consumed + step)) / segLen;
+            if (mode === "dash") emitLaneDash(sx, sz, ex, ez);
+            consumed += step;
+            left -= step;
+            if (left <= 0) {
+              mode = mode === "dash" ? "gap" : "dash";
+              left = mode === "dash" ? 0.22 : 0.18;
+            }
+          }
+        }
+      }
+      if (lanePositions.length) {
+        const laneGeometry = new THREE.BufferGeometry();
+        laneGeometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(lanePositions, 3),
+        );
+        laneGeometry.setIndex(laneIndices);
+        laneGeometry.computeVertexNormals();
+        const laneLines = new THREE.Mesh(
+          laneGeometry,
+          new THREE.MeshStandardMaterial({
+            color: 0xcfcfb4,
+            roughness: 0.85,
+            metalness: 0,
+            side: THREE.DoubleSide,
+            polygonOffset: true,
+            polygonOffsetFactor: -5,
+            polygonOffsetUnits: -5,
+          }),
+        );
+        laneLines.renderOrder = 5;
+        mapGroup.add(laneLines);
+      }
       const metreScale = buildingMetreScale(r),
         bp: number[] = [],
         bi: number[] = [],
         bc: number[] = [],
-        buildingPalette = [
-          0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
-        ];
+        buildingStylePalettes = {
+          pku: {
+            walls: [
+              0xd2cbbb, 0xc4bcab, 0x9e5648, 0xb9b2a4, 0x9aa0a0, 0xd8d3c6,
+            ],
+            roofs: [0x646e78, 0x707880, 0x756c62, 0x5c6670],
+          },
+          thu: {
+            walls: [
+              0xa9644c, 0xb07055, 0xc9bda6, 0xd8d4ca, 0xb87b5e, 0xc2b49e,
+            ],
+            roofs: [0x686e74, 0x7e5a4a, 0x61676d, 0x8a6350],
+          },
+          outer: {
+            walls: [
+              0x9aa7a3, 0xaca99f, 0xa49a90, 0x93a2aa, 0xb1a58f, 0x9da69a,
+            ],
+            roofs: [0x7a7e80, 0x8a8378, 0x6e787e, 0x80746a],
+          },
+        };
       let bv = 0;
-      for (const b of gameplayBuildings(r)) {
-        const pts = b.points.filter(
+      for (const b of visualBuildings(r)) {
+        const rawPts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
         );
         if (
-          pts.length > 2 &&
-          Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) <
-            0.001
+          rawPts.length > 2 &&
+          Math.hypot(
+            rawPts[0][0] - rawPts.at(-1)[0],
+            rawPts[0][1] - rawPts.at(-1)[1],
+          ) < 0.001
         )
-          pts.pop();
-        if (pts.length < 3) continue;
+          rawPts.pop();
+        if (rawPts.length < 3) continue;
+        const pts = insetFootprint(rawPts, 0.0045 + (Math.abs(b.osmId) % 5) * 0.0009);
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          base = terrainHeight(r, x, z),
+          base = Math.max(
+            ...pts.map((p) => terrainHeight(r, p[0], p[1])),
+          ),
           h = buildingHeightMetres(b) * metreScale,
           start = bv,
-          tone = new THREE.Color(
-            buildingPalette[Math.abs(b.osmId) % buildingPalette.length],
+          stylePalette = insidePkuCampus(x, z)
+            ? buildingStylePalettes.pku
+            : insideTsinghuaCampus(x, z)
+              ? buildingStylePalettes.thu
+              : buildingStylePalettes.outer,
+          styleId = Math.abs(b.osmId),
+          wallTone = new THREE.Color(
+            stylePalette.walls[styleId % stylePalette.walls.length],
           ),
-          wallTone = tone.clone().multiplyScalar(0.78),
-          roofTone = tone.clone().lerp(new THREE.Color(0xd0b09b), 0.26);
+          roofTone = new THREE.Color(
+            stylePalette.roofs[(styleId >> 2) % stylePalette.roofs.length],
+          );
         for (const p of pts) {
-          bp.push(p[0], base, p[1], p[0], base + h, p[1]);
+          const ground = terrainHeight(r, p[0], p[1]);
+          bp.push(
+            p[0],
+            ground,
+            p[1],
+            p[0],
+            base + h,
+            p[1],
+            p[0],
+            base + h,
+            p[1],
+          );
           bc.push(
+            wallTone.r,
+            wallTone.g,
+            wallTone.b,
             wallTone.r,
             wallTone.g,
             wallTone.b,
@@ -1706,12 +2131,12 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             roofTone.g,
             roofTone.b,
           );
-          bv += 2;
+          bv += 3;
         }
         for (let i = 0; i < pts.length; i++) {
           const j = (i + 1) % pts.length,
-            a = start + i * 2,
-            c = start + j * 2;
+            a = start + i * 3,
+            c = start + j * 3;
           bi.push(a, c, a + 1, a + 1, c, c + 1);
         }
         for (const face of THREE.ShapeUtils.triangulateShape(
@@ -1719,9 +2144,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           [],
         ))
           bi.push(
-            start + face[0] * 2 + 1,
-            start + face[1] * 2 + 1,
-            start + face[2] * 2 + 1,
+            start + face[0] * 3 + 2,
+            start + face[1] * 3 + 2,
+            start + face[2] * 3 + 2,
           );
       }
       const bg = new THREE.BufferGeometry();
@@ -1744,9 +2169,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const outline = new THREE.LineSegments(
         new THREE.EdgesGeometry(bg, 32),
         new THREE.LineBasicMaterial({
-          color: 0x65706e,
+          color: 0x4d5654,
           transparent: true,
-          opacity: 0.48,
+          opacity: 0.34,
         }),
       );
       outline.renderOrder = 5;
@@ -1755,18 +2180,21 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         doorMatrices: THREE.Matrix4[] = [],
         detailDummy = new THREE.Object3D(),
         windowLimit = r === regions.main ? 13500 : 2600;
-      for (const b of gameplayBuildings(r)) {
-        const pts = b.points.filter(
+      for (const b of visualBuildings(r)) {
+        const rawPts = b.points.filter(
           (p: number[], i: number, a: number[][]) =>
             !i || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 0.001,
         );
         if (
-          pts.length > 2 &&
-          Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) <
-            0.001
+          rawPts.length > 2 &&
+          Math.hypot(
+            rawPts[0][0] - rawPts.at(-1)[0],
+            rawPts[0][1] - rawPts.at(-1)[1],
+          ) < 0.001
         )
-          pts.pop();
-        if (pts.length < 3) continue;
+          rawPts.pop();
+        if (rawPts.length < 3) continue;
+        const pts = insetFootprint(rawPts, 0.0045 + (Math.abs(b.osmId) % 5) * 0.0009);
         const signedArea = pts.reduce((sum: number, p: number[], i: number) => {
             const next = pts[(i + 1) % pts.length];
             return sum + p[0] * next[1] - next[0] * p[1];
@@ -1775,7 +2203,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         const x =
             pts.reduce((a: number, p: number[]) => a + p[0], 0) / pts.length,
           z = pts.reduce((a: number, p: number[]) => a + p[1], 0) / pts.length,
-          base = terrainHeight(r, x, z),
+          base = Math.max(
+            ...pts.map((p) => terrainHeight(r, p[0], p[1])),
+          ),
           h = buildingHeightMetres(b) * metreScale,
           rows = Math.min(4, Math.max(1, Math.round(h / (FLOOR_HEIGHT_METRES * metreScale))));
         let longest: { a: number[]; c: number[]; len: number } | null = null;
@@ -1807,9 +2237,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             ) {
               const t = (col + 1) / (cols + 1);
               detailDummy.position.set(
-                a[0] + dx * t + nx * metreScale * 0.1,
+                a[0] + dx * t + nx * metreScale * 0.22,
                 base + (h * (row + 1)) / (rows + 1),
-                a[1] + dz * t + nz * metreScale * 0.1,
+                a[1] + dz * t + nz * metreScale * 0.22,
               );
               detailDummy.rotation.set(0, angle, 0);
               detailDummy.scale.set(
@@ -1828,9 +2258,9 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
             nx = (-dz / len) * outwardSign,
             nz = (dx / len) * outwardSign;
           detailDummy.position.set(
-            (longest.a[0] + longest.c[0]) / 2 + nx * metreScale * 0.12,
+            (longest.a[0] + longest.c[0]) / 2 + nx * metreScale * 0.24,
             base + Math.min(2.2 * metreScale, h * 0.85) / 2,
-            (longest.a[1] + longest.c[1]) / 2 + nz * metreScale * 0.12,
+            (longest.a[1] + longest.c[1]) / 2 + nz * metreScale * 0.24,
           );
           detailDummy.rotation.set(0, Math.atan2(-dz, dx), 0);
           detailDummy.scale.set(Math.min(1.4 * metreScale, len * 0.5), Math.min(2.2 * metreScale, h * 0.85), 1);
@@ -1877,17 +2307,50 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       doors.renderOrder = 6;
       mapGroup.add(doors);
       const waterMat = new THREE.MeshStandardMaterial({
-        color: 0x478ca5,
+        color: 0x2f7189,
+        emissive: 0x0b2836,
+        emissiveIntensity: 0.4,
         transparent: true,
-        opacity: 0.83,
-        roughness: 0.24,
-        metalness: 0.1,
+        opacity: 0.88,
+        roughness: 0.2,
+        metalness: 0.18,
+        map: waterDetailTexture,
         side: THREE.DoubleSide,
       });
+      const shoreMat = new THREE.MeshStandardMaterial({
+        color: 0x2b5a62,
+        roughness: 0.55,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+      });
+      const regionBuildingsForIslands = visualBuildings(r);
       for (const water of r.waters) {
         if (water.points.length < 3) continue;
+        const islandHoles = islandHolesFor(water, regionBuildingsForIslands),
+          cx =
+            water.points.reduce((sum: number, p: number[]) => sum + p[0], 0) /
+            water.points.length,
+          cz =
+            water.points.reduce((sum: number, p: number[]) => sum + p[1], 0) /
+            water.points.length,
+          radius = Math.max(
+            ...water.points.map((p: number[]) =>
+              Math.hypot(p[0] - cx, p[1] - cz),
+            ),
+          ),
+          ringScale = (radius + 0.26) / Math.max(radius, 0.01),
+          shorePoints = water.points.map((p: number[]) => [
+            cx + (p[0] - cx) * ringScale,
+            cz + (p[1] - cz) * ringScale,
+          ]),
+          shore = new THREE.Mesh(
+            surfaceGeometry(r, shorePoints, 0.1, undefined, islandHoles),
+            shoreMat,
+          );
+        shore.renderOrder = 3;
+        mapGroup.add(shore);
         const wm = new THREE.Mesh(
-          surfaceGeometry(r, water.points, 0.15),
+          surfaceGeometry(r, water.points, 0.15, undefined, islandHoles),
           waterMat,
         );
         wm.renderOrder = 4;
@@ -1899,7 +2362,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       const apron = new THREE.Mesh(
         new THREE.BoxGeometry(r.width + 34, 0.12, r.depth + 34),
         new THREE.MeshStandardMaterial({
-          color: r.offsetX ? 0x617c4f : 0x668351,
+          color: r.offsetX ? 0x5b774e : 0x5f7d4e,
+          map: groundDetailTexture,
           roughness: 1,
         }),
       );
@@ -3958,25 +4422,50 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
     scene.add(treeGroup);
     let seed = 91723;
     const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-    const tg = new THREE.CylinderGeometry(0.07, 0.11, 0.86, 7),
-      tm = new THREE.MeshStandardMaterial({ color: 0x61412f, roughness: 1 }),
-      cg = new THREE.SphereGeometry(0.52, 10, 8),
-      cms = [0x315d36, 0x467648, 0x5b8a4e].map(
-        (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92 }),
+    const tg = new THREE.CylinderGeometry(0.045, 0.085, 1, 6),
+      tm = new THREE.MeshStandardMaterial({ color: 0x54402c, roughness: 1 }),
+      canopyGeoA = new THREE.SphereGeometry(0.55, 9, 7),
+      canopyGeoB = new THREE.SphereGeometry(0.38, 8, 6),
+      canopyMatA = new THREE.MeshStandardMaterial({ roughness: 0.95 }),
+      canopyMatB = new THREE.MeshStandardMaterial({ roughness: 0.95 }),
+      canopyPalette = [0x2f5c33, 0x3f7040, 0x528248, 0x6b8f4e].map((c) =>
+        new THREE.Color(c),
       ),
       treePositions: { x: number; y: number; z: number }[] = [];
-    for (const [r, count] of [[regions.main, 340]] as [any, number][]) {
+    for (const [r, count] of [[regions.main, 3400]] as [any, number][]) {
+      const regionBuildings = gameplayBuildings(r),
+        roadPointGrid = new Map<string, [number, number][]>();
+      for (const road of r.roads)
+        for (const p of road.points) {
+          const key = `${Math.floor(p[0])}/${Math.floor(p[1])}`,
+            cell = roadPointGrid.get(key);
+          if (cell) cell.push([p[0], p[1]]);
+          else roadPointGrid.set(key, [[p[0], p[1]]]);
+        }
+      const nearRoad = (x: number, z: number) => {
+        const gx = Math.floor(x),
+          gz = Math.floor(z);
+        for (let dz = -1; dz <= 1; dz++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const cell = roadPointGrid.get(`${gx + dx}/${gz + dz}`);
+            if (
+              cell?.some(([px, pz]) => Math.hypot(px - x, pz - z) < 0.22)
+            )
+              return true;
+          }
+        return false;
+      };
       for (let i = 0; i < count; i++) {
         const x = r.offsetX - r.width / 2 + rnd() * r.width,
           z = -r.depth / 2 + rnd() * r.depth;
         if (
           gameRef.current.sites.some(
-            (s) => Math.hypot(s.x - x, s.z - z) < 3.2,
+            (s) => Math.hypot(s.x - x, s.z - z) < 1.6,
           ) ||
-          r.roads.some((road: any) =>
-            road.points.some(
-              (p: number[]) => Math.hypot(p[0] - x, p[1] - z) < 0.5,
-            ),
+          nearRoad(x, z) ||
+          r.waters.some((water: any) => pointInPolygon(x, z, water.points)) ||
+          regionBuildings.some((building: any) =>
+            pointInPolygon(x, z, building.points),
           )
         )
           continue;
@@ -3984,75 +4473,183 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       }
     }
     const treeTrunks = new THREE.InstancedMesh(tg, tm, treePositions.length),
-      treeCrowns = cms.map(
-        (material) =>
-          new THREE.InstancedMesh(cg, material, treePositions.length),
+      treeCrownsA = new THREE.InstancedMesh(
+        canopyGeoA,
+        canopyMatA,
+        treePositions.length,
       ),
-      treeDummy = new THREE.Object3D();
+      treeCrownsB = new THREE.InstancedMesh(
+        canopyGeoB,
+        canopyMatB,
+        treePositions.length,
+      ),
+      treeDummy = new THREE.Object3D(),
+      treeColor = new THREE.Color();
     treePositions.forEach((position, index) => {
-      treeDummy.position.set(position.x, position.y + 0.43, position.z);
-      treeDummy.scale.set(1, 1, 1);
+      const scale = 0.14 + rnd() * 0.14,
+        baseTone = canopyPalette[Math.floor(rnd() * canopyPalette.length)];
+      treeDummy.position.set(
+        position.x,
+        position.y + 0.5 * scale,
+        position.z,
+      );
+      treeDummy.scale.set(scale, scale, scale);
       treeDummy.updateMatrix();
       treeTrunks.setMatrixAt(index, treeDummy.matrix);
-      treeCrowns.forEach((mesh, layer) => {
-        treeDummy.position.y = position.y + 0.92 + layer * 0.32;
-        treeDummy.scale.set(1.1 - layer * 0.18, 0.65, 1.1 - layer * 0.18);
-        treeDummy.updateMatrix();
-        mesh.setMatrixAt(index, treeDummy.matrix);
-      });
+      treeDummy.position.set(
+        position.x,
+        position.y + 1.02 * scale,
+        position.z,
+      );
+      treeDummy.scale.set(1.15 * scale, 0.8 * scale, 1.15 * scale);
+      treeDummy.updateMatrix();
+      treeCrownsA.setMatrixAt(index, treeDummy.matrix);
+      treeCrownsA.setColorAt(
+        index,
+        treeColor.copy(baseTone).multiplyScalar(0.8 + rnd() * 0.28),
+      );
+      treeDummy.position.set(
+        position.x + (rnd() - 0.5) * 0.5 * scale,
+        position.y + 1.38 * scale,
+        position.z + (rnd() - 0.5) * 0.5 * scale,
+      );
+      treeDummy.scale.set(0.85 * scale, 0.7 * scale, 0.85 * scale);
+      treeDummy.updateMatrix();
+      treeCrownsB.setMatrixAt(index, treeDummy.matrix);
+      treeCrownsB.setColorAt(
+        index,
+        treeColor
+          .copy(baseTone)
+          .lerp(new THREE.Color(0xffffff), 0.14)
+          .multiplyScalar(0.85 + rnd() * 0.3),
+      );
     });
     treeTrunks.instanceMatrix.needsUpdate = true;
-    treeCrowns.forEach((mesh) => (mesh.instanceMatrix.needsUpdate = true));
+    treeCrownsA.instanceMatrix.needsUpdate = true;
+    treeCrownsB.instanceMatrix.needsUpdate = true;
+    if (treeCrownsA.instanceColor) treeCrownsA.instanceColor.needsUpdate = true;
+    if (treeCrownsB.instanceColor) treeCrownsB.instanceColor.needsUpdate = true;
     treeTrunks.castShadow = true;
-    treeCrowns.forEach((mesh) => (mesh.castShadow = true));
-    treeGroup.add(treeTrunks, ...treeCrowns);
+    treeCrownsA.castShadow = true;
+    treeCrownsB.castShadow = true;
+    treeGroup.add(treeTrunks, treeCrownsA, treeCrownsB);
     const lampPositions: { x: number; z: number; r: any }[] = [],
       lampSeen = new Set<string>();
     for (const r of [regions.main]) {
-      const cap = r === regions.main ? 650 : 90,
-        pushLamp = (x: number, z: number) => {
-          const key = `${Math.round(x * 2)}/${Math.round(z * 2)}`;
+      const cap = r === regions.main ? 9000 : 90,
+        lampSkipKinds = new Set([
+          "footway",
+          "path",
+          "steps",
+          "corridor",
+          "track",
+          "pedestrian",
+          "cycleway",
+        ]),
+        lampRoadCell = 3,
+        lampRoadSegments: {
+          x1: number;
+          z1: number;
+          x2: number;
+          z2: number;
+          radius: number;
+        }[] = [],
+        lampRoadIndex = new Map<string, number[]>();
+      for (const road of r.roads) {
+        if (lampSkipKinds.has(road.kind)) continue;
+        const radius = Math.max(road.width, 0.24) / 2 + 0.05;
+        for (let k = 1; k < road.points.length; k++) {
+          const [x1, z1] = road.points[k - 1],
+            [x2, z2] = road.points[k],
+            segmentIndex = lampRoadSegments.length;
+          lampRoadSegments.push({ x1, z1, x2, z2, radius });
+          for (
+            let gx = Math.floor((Math.min(x1, x2) - radius) / lampRoadCell);
+            gx <= Math.floor((Math.max(x1, x2) + radius) / lampRoadCell);
+            gx++
+          )
+            for (
+              let gz = Math.floor((Math.min(z1, z2) - radius) / lampRoadCell);
+              gz <= Math.floor((Math.max(z1, z2) + radius) / lampRoadCell);
+              gz++
+            ) {
+              const key = `${gx}/${gz}`,
+                bucket = lampRoadIndex.get(key);
+              if (bucket) bucket.push(segmentIndex);
+              else lampRoadIndex.set(key, [segmentIndex]);
+            }
+        }
+      }
+      const onLampRoadSurface = (x: number, z: number) =>
+        (
+          lampRoadIndex.get(
+            `${Math.floor(x / lampRoadCell)}/${Math.floor(z / lampRoadCell)}`,
+          ) ?? []
+        ).some((index) => {
+          const segment = lampRoadSegments[index],
+            dx = segment.x2 - segment.x1,
+            dz = segment.z2 - segment.z1,
+            lengthSquared = dx * dx + dz * dz,
+            t = lengthSquared
+              ? THREE.MathUtils.clamp(
+                  ((x - segment.x1) * dx + (z - segment.z1) * dz) /
+                    lengthSquared,
+                  0,
+                  1,
+                )
+              : 0;
+          return (
+            Math.hypot(
+              x - (segment.x1 + dx * t),
+              z - (segment.z1 + dz * t),
+            ) <= segment.radius
+          );
+        });
+      const pushLamp = (x: number, z: number, offRoadOnly = false) => {
+          const key = `${Math.round(x * 3)}/${Math.round(z * 3)}`;
           if (
             lampSeen.has(key) ||
-            lampPositions.filter((p) => p.r === r).length >= cap
+            lampPositions.length >= cap ||
+            (offRoadOnly && onLampRoadSurface(x, z))
           )
             return;
           lampSeen.add(key);
           lampPositions.push({ x, z, r });
         };
       for (const [x, z] of r.lamps ?? []) pushLamp(x, z);
+      const lampSpacing = 1.05;
+      let carry = lampSpacing * 0.5;
       for (const road of r.roads) {
-        if (
-          ["footway", "path", "steps", "corridor", "track"].includes(road.kind)
-        )
-          continue;
+        if (lampSkipKinds.has(road.kind)) continue;
+        let d = carry;
         for (let k = 1; k < road.points.length; k++) {
           const [x1, z1] = road.points[k - 1],
             [x2, z2] = road.points[k],
             dx = x2 - x1,
             dz = z2 - z1,
             len = Math.hypot(dx, dz);
-          if (len < 1.8) continue;
-          const count = Math.floor(len / 3.1),
-            nx = -dz / len,
-            nz = dx / len;
-          for (let n = 1; n <= count; n++) {
-            const t = n / (count + 1),
-              side = (n + k) % 2 ? 1 : -1;
-            pushLamp(
-              x1 + dx * t + nx * (road.width / 2 + 0.16) * side,
-              z1 + dz * t + nz * (road.width / 2 + 0.16) * side,
-            );
+          if (len < 0.05) continue;
+          const nx = -dz / len,
+            nz = dx / len,
+            offset = Math.max(road.width / 2, 0.16) + 0.09;
+          while (d <= len) {
+            const x = x1 + (dx * d) / len,
+              z = z1 + (dz * d) / len;
+            pushLamp(x + nx * offset, z + nz * offset, true);
+            pushLamp(x - nx * offset, z - nz * offset, true);
+            d += lampSpacing;
           }
+          d -= len;
         }
+        carry = d;
       }
     }
-    const poleGeometry = new THREE.CylinderGeometry(0.025, 0.038, 0.82, 6),
+    const poleGeometry = new THREE.CylinderGeometry(0.011, 0.017, 0.26, 5),
       poleMaterial = new THREE.MeshStandardMaterial({
         color: 0x303735,
         roughness: 0.76,
       }),
-      bulbGeometry = new THREE.SphereGeometry(0.065, 8, 6),
+      bulbGeometry = new THREE.SphereGeometry(0.03, 8, 6),
       lampBulbMaterial = new THREE.MeshStandardMaterial({
         color: 0xffe3a6,
         emissive: 0xffb23f,
@@ -4072,23 +4669,58 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
       lampDummy = new THREE.Object3D();
     lampPositions.forEach((p, i) => {
       const base = terrainHeight(p.r, p.x, p.z);
-      lampDummy.position.set(p.x, base + 0.41, p.z);
+      lampDummy.position.set(p.x, base + 0.13, p.z);
       lampDummy.updateMatrix();
       poles.setMatrixAt(i, lampDummy.matrix);
-      lampDummy.position.y = base + 0.86;
+      lampDummy.position.y = base + 0.275;
       lampDummy.updateMatrix();
       bulbs.setMatrixAt(i, lampDummy.matrix);
     });
     poles.instanceMatrix.needsUpdate = true;
     bulbs.instanceMatrix.needsUpdate = true;
     scene.add(poles, bulbs);
+    const lampPoolCanvas = document.createElement("canvas");
+    lampPoolCanvas.width = lampPoolCanvas.height = 128;
+    const lampPoolCtx = lampPoolCanvas.getContext("2d")!,
+      lampPoolGradient = lampPoolCtx.createRadialGradient(
+        64, 64, 4, 64, 64, 62,
+      );
+    lampPoolGradient.addColorStop(0, "rgba(255,192,112,0.85)");
+    lampPoolGradient.addColorStop(0.45, "rgba(255,170,80,0.26)");
+    lampPoolGradient.addColorStop(1, "rgba(255,160,70,0)");
+    lampPoolCtx.fillStyle = lampPoolGradient;
+    lampPoolCtx.fillRect(0, 0, 128, 128);
+    const lampPoolTexture = new THREE.CanvasTexture(lampPoolCanvas),
+      lampPoolMaterial = new THREE.MeshBasicMaterial({
+        map: lampPoolTexture,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+      lampPools = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        lampPoolMaterial,
+        lampPositions.length,
+      );
+    lampPositions.forEach((p, i) => {
+      lampDummy.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.06, p.z);
+      lampDummy.rotation.set(-Math.PI / 2, 0, 0);
+      lampDummy.scale.set(0.85, 0.85, 1);
+      lampDummy.updateMatrix();
+      lampPools.setMatrixAt(i, lampDummy.matrix);
+    });
+    lampDummy.rotation.set(0, 0, 0);
+    lampPools.instanceMatrix.needsUpdate = true;
+    lampPools.renderOrder = 7;
+    scene.add(lampPools);
     const lights: THREE.PointLight[] = [];
     lampPositions
-      .filter((_, i) => i % 41 === 0)
-      .slice(0, 22)
+      .filter((_, i) => i % 34 === 0)
+      .slice(0, 26)
       .forEach((p) => {
-        const l = new THREE.PointLight(0xffc66f, 0, 5, 2);
-        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.9, p.z);
+        const l = new THREE.PointLight(0xffc66f, 0, 3.2, 2);
+        l.position.set(p.x, terrainHeight(p.r, p.x, p.z) + 0.3, p.z);
         scene.add(l);
         lights.push(l);
       });
@@ -9089,7 +9721,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         Math.max(-4, Math.sin(angle) * 55),
         25,
       );
-      sun.intensity = day * 3.4;
+      sun.intensity = day * 3.7;
       const shouldCastSunShadow =
         day > 0.08 && activeQualityProfile.dynamicLights > 0;
       if (sun.castShadow !== shouldCastSunShadow) {
@@ -9104,8 +9736,8 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
         renderer.shadowMap.needsUpdate = true;
       }
       moon.position.set(-sun.position.x, Math.max(10, -sun.position.y), -25);
-      moon.intensity = night * 0.9;
-      hemi.intensity = 0.36 + day * 1.54;
+      moon.intensity = night * 1.15;
+      hemi.intensity = 0.52 + day * 1.16;
       hemi.color.set(day > 0.35 ? 0xcfe8ff : 0x486795);
       hemi.groundColor.set(day > 0.35 ? 0x324226 : 0x182437);
       const sky = new THREE.Color(0x07101f).lerp(
@@ -9120,6 +9752,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           (material.emissiveIntensity = 0.025 + night * 0.16),
       );
       lampBulbMaterial.emissiveIntensity = 0.08 + night * 4.8;
+      lampPoolMaterial.opacity = night * 0.5;
       unitBodyMaterials.pku.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.thu.emissiveIntensity = 0.035 + night * 0.24;
       unitBodyMaterials.ustc.emissiveIntensity = 0.035 + night * 0.24;
@@ -9132,7 +9765,7 @@ export function useBattlefieldEngine(context: BattlefieldEngineContext) {
           (light.intensity =
             index < activeQualityProfile.dynamicLights ? night * 5.5 : 0),
       );
-      renderer.toneMappingExposure = 0.72 + day * 0.38;
+      renderer.toneMappingExposure = 0.8 + day * 0.3;
       commandAnimations.forEach((animation) => {
         animation.movers.forEach((mover, index) => {
           const t = (now * 0.00016 + animation.phase + index / 4) % 1;
